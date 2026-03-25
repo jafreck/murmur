@@ -290,7 +290,7 @@ pub fn run() -> Result<()> {
         while let Ok(msg) = rx.try_recv() {
             match msg {
                 AppMessage::KeyDown => {
-                    if toggle_mode {
+                    if !push_to_talk {
                         if is_pressed {
                             start_transcribing(
                                 &mut recorder, &mut is_pressed,
@@ -312,7 +312,7 @@ pub fn run() -> Result<()> {
                     }
                 }
                 AppMessage::KeyUp => {
-                    if !toggle_mode && is_pressed {
+                    if push_to_talk && is_pressed {
                         start_transcribing(
                             &mut recorder, &mut is_pressed,
                             &transcriber, spoken_punctuation,

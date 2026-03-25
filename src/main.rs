@@ -150,21 +150,23 @@ pub fn validate_language(code: &str) -> Result<()> {
 
 pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
     let lang_name = config::language_name(&cfg.language).unwrap_or(&cfg.language);
-    let toggle_str = if cfg.toggle_mode {
-        "on (press to start/stop)"
+    let push_to_talk_str = if cfg.push_to_talk {
+        "on (hold to talk)"
     } else {
-        "off (hold to talk)"
+        "off (press to start/stop)"
     };
+    let streaming_str = if cfg.streaming { "on" } else { "off" };
     let model_ready_str = if model_ready { "yes" } else { "no" };
 
     format!(
         "open-bark v{VERSION}\n\
-         Config:      {}\n\
-         Hotkey:      {}\n\
-         Model:       {}\n\
-         Model ready: {model_ready_str}\n\
-         Language:    {lang_name} ({})\n\
-         Toggle:      {toggle_str}",
+         Config:       {}\n\
+         Hotkey:       {}\n\
+         Model:        {}\n\
+         Model ready:  {model_ready_str}\n\
+         Language:     {lang_name} ({})\n\
+         Push to Talk: {push_to_talk_str}\n\
+         Streaming:    {streaming_str}",
         config::Config::file_path().display(),
         cfg.hotkey,
         cfg.model_size,
@@ -237,7 +239,8 @@ mod tests {
             language: "en".to_string(),
             spoken_punctuation: false,
             max_recordings: 0,
-            toggle_mode: false,
+            push_to_talk: true,
+            streaming: false,
             translate_to_english: false,
         };
         let output = format_status(&cfg, false);
@@ -245,8 +248,9 @@ mod tests {
         assert!(output.contains("f9"));
         assert!(output.contains("base.en"));
         assert!(output.contains("English"));
-        assert!(output.contains("off (hold to talk)"));
-        assert!(output.contains("Model ready: no"));
+        assert!(output.contains("on (hold to talk)"));
+        assert!(output.contains("Model ready:  no"));
+        assert!(output.contains("Streaming:    off"));
     }
 
     #[test]
@@ -257,13 +261,15 @@ mod tests {
             language: "fr".to_string(),
             spoken_punctuation: true,
             max_recordings: 5,
-            toggle_mode: true,
+            push_to_talk: false,
+            streaming: true,
             translate_to_english: false,
         };
         let output = format_status(&cfg, true);
-        assert!(output.contains("on (press to start/stop)"));
-        assert!(output.contains("Model ready: yes"));
+        assert!(output.contains("off (press to start/stop)"));
+        assert!(output.contains("Model ready:  yes"));
         assert!(output.contains("French"));
+        assert!(output.contains("Streaming:    on"));
     }
 
     #[test]
@@ -274,7 +280,8 @@ mod tests {
             language: "zz".to_string(),
             spoken_punctuation: false,
             max_recordings: 0,
-            toggle_mode: false,
+            push_to_talk: true,
+            streaming: false,
             translate_to_english: false,
         };
         let output = format_status(&cfg, false);

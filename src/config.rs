@@ -2,6 +2,28 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputMode {
+    PushToTalk,
+    OpenMic,
+}
+
+impl Default for InputMode {
+    fn default() -> Self {
+        InputMode::PushToTalk
+    }
+}
+
+impl std::fmt::Display for InputMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InputMode::PushToTalk => write!(f, "Push to Talk"),
+            InputMode::OpenMic => write!(f, "Open Mic"),
+        }
+    }
+}
+
 pub const SUPPORTED_MODELS: &[&str] = &[
     "tiny.en", "tiny",
     "base.en", "base",
@@ -100,8 +122,8 @@ pub struct Config {
     pub spoken_punctuation: bool,
     #[serde(default)]
     pub max_recordings: u32,
-    #[serde(default = "default_push_to_talk")]
-    pub push_to_talk: bool,
+    #[serde(default)]
+    pub mode: InputMode,
     #[serde(default)]
     pub streaming: bool,
     #[serde(default)]
@@ -116,15 +138,11 @@ impl Default for Config {
             language: "en".to_string(),
             spoken_punctuation: false,
             max_recordings: 0,
-            push_to_talk: true,
+            mode: InputMode::PushToTalk,
             streaming: false,
             translate_to_english: false,
         }
     }
-}
-
-fn default_push_to_talk() -> bool {
-    true
 }
 
 fn default_hotkey() -> &'static str {
@@ -203,7 +221,7 @@ mod tests {
         assert_eq!(cfg.language, "en");
         assert!(!cfg.spoken_punctuation);
         assert_eq!(cfg.max_recordings, 0);
-        assert!(cfg.push_to_talk);
+        assert_eq!(cfg.mode, InputMode::PushToTalk);
         assert!(!cfg.streaming);
         assert!(!cfg.translate_to_english);
     }
@@ -241,7 +259,7 @@ mod tests {
             language: "fr".to_string(),
             spoken_punctuation: true,
             max_recordings: 10,
-            push_to_talk: false,
+            mode: InputMode::OpenMic,
             streaming: true,
             translate_to_english: true,
         };
@@ -254,7 +272,7 @@ mod tests {
         assert_eq!(parsed.language, "fr");
         assert!(parsed.spoken_punctuation);
         assert_eq!(parsed.max_recordings, 10);
-        assert!(!parsed.push_to_talk);
+        assert_eq!(parsed.mode, InputMode::OpenMic);
         assert!(parsed.streaming);
         assert!(parsed.translate_to_english);
     }
@@ -279,7 +297,7 @@ mod tests {
             language: "de".to_string(),
             spoken_punctuation: true,
             max_recordings: 5,
-            push_to_talk: false,
+            mode: InputMode::OpenMic,
             streaming: false,
             translate_to_english: false,
         };
@@ -291,7 +309,7 @@ mod tests {
         assert_eq!(loaded.language, "de");
         assert!(loaded.spoken_punctuation);
         assert_eq!(loaded.max_recordings, 5);
-        assert!(!loaded.push_to_talk);
+        assert_eq!(loaded.mode, InputMode::OpenMic);
         assert!(!loaded.translate_to_english);
     }
 
@@ -314,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_parse_valid_json() {
-        let json = r#"{"hotkey":"f5","model_size":"tiny","language":"ja","spoken_punctuation":false,"max_recordings":0,"push_to_talk":true,"streaming":false,"translate_to_english":false}"#;
+        let json = r#"{"hotkey":"f5","model_size":"tiny","language":"ja","spoken_punctuation":false,"max_recordings":0,"mode":"push_to_talk","streaming":false,"translate_to_english":false}"#;
         let path = std::path::Path::new("/tmp/test.json");
         let cfg = Config::parse(json, path);
         assert_eq!(cfg.hotkey, "f5");
@@ -329,7 +347,7 @@ mod tests {
         let cfg: Config = serde_json::from_str(json).unwrap();
         assert!(!cfg.spoken_punctuation);
         assert_eq!(cfg.max_recordings, 0);
-        assert!(cfg.push_to_talk);
+        assert_eq!(cfg.mode, InputMode::PushToTalk);
         assert!(!cfg.streaming);
         assert!(!cfg.translate_to_english);
     }

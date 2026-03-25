@@ -150,11 +150,7 @@ pub fn validate_language(code: &str) -> Result<()> {
 
 pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
     let lang_name = config::language_name(&cfg.language).unwrap_or(&cfg.language);
-    let push_to_talk_str = if cfg.push_to_talk {
-        "on (hold to talk)"
-    } else {
-        "off (press to start/stop)"
-    };
+    let mode_str = cfg.mode.to_string();
     let streaming_str = if cfg.streaming { "on" } else { "off" };
     let model_ready_str = if model_ready { "yes" } else { "no" };
 
@@ -165,7 +161,7 @@ pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
          Model:        {}\n\
          Model ready:  {model_ready_str}\n\
          Language:     {lang_name} ({})\n\
-         Push to Talk: {push_to_talk_str}\n\
+         Mode:         {mode_str}\n\
          Streaming:    {streaming_str}",
         config::Config::file_path().display(),
         cfg.hotkey,
@@ -239,7 +235,7 @@ mod tests {
             language: "en".to_string(),
             spoken_punctuation: false,
             max_recordings: 0,
-            push_to_talk: true,
+            mode: config::InputMode::PushToTalk,
             streaming: false,
             translate_to_english: false,
         };
@@ -248,7 +244,7 @@ mod tests {
         assert!(output.contains("f9"));
         assert!(output.contains("base.en"));
         assert!(output.contains("English"));
-        assert!(output.contains("on (hold to talk)"));
+        assert!(output.contains("Mode:         Push to Talk"));
         assert!(output.contains("Model ready:  no"));
         assert!(output.contains("Streaming:    off"));
     }
@@ -261,12 +257,12 @@ mod tests {
             language: "fr".to_string(),
             spoken_punctuation: true,
             max_recordings: 5,
-            push_to_talk: false,
+            mode: config::InputMode::OpenMic,
             streaming: true,
             translate_to_english: false,
         };
         let output = format_status(&cfg, true);
-        assert!(output.contains("off (press to start/stop)"));
+        assert!(output.contains("Mode:         Open Mic"));
         assert!(output.contains("Model ready:  yes"));
         assert!(output.contains("French"));
         assert!(output.contains("Streaming:    on"));
@@ -280,7 +276,7 @@ mod tests {
             language: "zz".to_string(),
             spoken_punctuation: false,
             max_recordings: 0,
-            push_to_talk: true,
+            mode: config::InputMode::PushToTalk,
             streaming: false,
             translate_to_english: false,
         };

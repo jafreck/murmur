@@ -6,7 +6,7 @@ use tray_icon::menu::{
 };
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use crate::config::{self, Config};
+use crate::config::{self, Config, InputMode};
 
 /// App states the tray can display.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,7 +26,7 @@ pub enum TrayAction {
     SetModel(String),
     SetLanguage(String),
     ToggleSpokenPunctuation,
-    TogglePushToTalk,
+    SetMode(InputMode),
     ToggleStreaming,
     ToggleTranslate,
     OpenConfig,
@@ -68,11 +68,11 @@ pub struct MenuActionMap {
     open_config_id: MenuId,
     reload_config_id: MenuId,
     spoken_punct_id: MenuId,
-    push_to_talk_id: MenuId,
     streaming_id: MenuId,
     translate_id: MenuId,
     model_ids: Vec<(MenuId, String)>,
     language_ids: Vec<(MenuId, String)>,
+    mode_ids: Vec<(MenuId, InputMode)>,
 }
 
 impl MenuActionMap {
@@ -82,16 +82,16 @@ impl MenuActionMap {
         open_config_id: MenuId,
         reload_config_id: MenuId,
         spoken_punct_id: MenuId,
-        push_to_talk_id: MenuId,
         streaming_id: MenuId,
         translate_id: MenuId,
         model_ids: Vec<(MenuId, String)>,
         language_ids: Vec<(MenuId, String)>,
+        mode_ids: Vec<(MenuId, InputMode)>,
     ) -> Self {
         Self {
             quit_id, copy_last_id, open_config_id, reload_config_id,
-            spoken_punct_id, push_to_talk_id, streaming_id, translate_id,
-            model_ids, language_ids,
+            spoken_punct_id, streaming_id, translate_id,
+            model_ids, language_ids, mode_ids,
         }
     }
 
@@ -101,7 +101,6 @@ impl MenuActionMap {
         if event_id == &self.open_config_id { return Some(TrayAction::OpenConfig); }
         if event_id == &self.reload_config_id { return Some(TrayAction::ReloadConfig); }
         if event_id == &self.spoken_punct_id { return Some(TrayAction::ToggleSpokenPunctuation); }
-        if event_id == &self.push_to_talk_id { return Some(TrayAction::TogglePushToTalk); }
         if event_id == &self.streaming_id { return Some(TrayAction::ToggleStreaming); }
         if event_id == &self.translate_id { return Some(TrayAction::ToggleTranslate); }
 
@@ -111,6 +110,10 @@ impl MenuActionMap {
 
         for (id, code) in &self.language_ids {
             if event_id == id { return Some(TrayAction::SetLanguage(code.clone())); }
+        }
+
+        for (id, mode) in &self.mode_ids {
+            if event_id == id { return Some(TrayAction::SetMode(mode.clone())); }
         }
 
         None
@@ -123,6 +126,9 @@ struct ModelEntry { id: MenuId, size: String, item: CheckMenuItem }
 /// A language radio item.
 struct LanguageEntry { id: MenuId, code: String, item: CheckMenuItem }
 
+/// A mode radio item.
+struct ModeEntry { id: MenuId, mode: InputMode, item: CheckMenuItem }
+
 /// Manages the system tray icon and context menu.
 pub struct TrayController {
     tray: TrayIcon,
@@ -131,11 +137,10 @@ pub struct TrayController {
 
     model_entries: Vec<ModelEntry>,
     language_entries: Vec<LanguageEntry>,
+    mode_entries: Vec<ModeEntry>,
 
     #[allow(dead_code)]
     spoken_punct_item: CheckMenuItem,
-    #[allow(dead_code)]
-    push_to_talk_item: CheckMenuItem,
     #[allow(dead_code)]
     streaming_item: CheckMenuItem,
     #[allow(dead_code)]
@@ -190,9 +195,23 @@ impl TrayController {
             CheckMenuItem::new("Spoken Punctuation", true, config.spoken_punctuation, None);
         let spoken_punct_id = spoken_punct_item.id().clone();
 
-        let push_to_talk_item =
-            CheckMenuItem::new("Push to Talk", true, config.push_to_talk, None);
-        let push_to_talk_id = push_to_talk_item.id().clone();
+        let mode_submenu = Submenu::new("Mode", true);
+        let mut mode_entries = Vec::new();
+        let mut mode_ids = Vec::new();
+
+        let modes: &[(InputMode, &str)] = &[
+            (InputMode::PushToTalk, "Push to Talk"),
+            (InputMode::OpenMic, "Open Mic"),
+        ];
+        for (mode, name) in modes {
+            let selected = *mode == config.mode;
+            let label = radio_label(name, selected);
+            let item = CheckMenuItem::new(label, true, selected, None);
+            let id = item.id().clone();
+            mode_submenu.append(&item)?;
+            mode_ids.push((id.clone(), mode.clone()));
+            mode_entries.push(ModeEntry { id, mode: mode.clone(), item });
+        }
 
         let streaming_item =
             CheckMenuItem::new("Live Streaming", true, config.streaming, None);
@@ -220,7 +239,7 @@ impl TrayController {
         menu.append(&hotkey_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&spoken_punct_item)?;
-        menu.append(&push_to_talk_item)?;
+        menu.append(&mode_submenu)?;
         menu.append(&streaming_item)?;
         menu.append(&translate_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
@@ -231,8 +250,8 @@ impl TrayController {
 
         let action_map = MenuActionMap::new(
             quit_id, copy_last_id, open_config_id, reload_config_id,
-            spoken_punct_id, push_to_talk_id, streaming_id, translate_id,
-            model_ids, language_ids,
+            spoken_punct_id, streaming_id, translate_id,
+            model_ids, language_ids, mode_ids,
         );
 
         let idle_icon = make_bark_icon(100, 150, 255, 200)?;
@@ -248,8 +267,8 @@ impl TrayController {
 
         Ok(Self {
             tray, state: TrayState::Idle, action_map,
-            model_entries, language_entries,
-            spoken_punct_item, push_to_talk_item, streaming_item, translate_item,
+            model_entries, language_entries, mode_entries,
+            spoken_punct_item, streaming_item, translate_item,
             status_item, hotkey_item,
             idle_icon, recording_icon, transcribing_icon,
         })
@@ -281,6 +300,22 @@ impl TrayController {
             let selected = entry.code == new_code;
             entry.item.set_checked(selected);
             let name = config::language_name(&entry.code).unwrap_or(&entry.code);
+            entry.item.set_text(radio_label(name, selected));
+        }
+    }
+
+    pub fn set_mode(&mut self, mode: &InputMode) {
+        let mode_names: &[(InputMode, &str)] = &[
+            (InputMode::PushToTalk, "Push to Talk"),
+            (InputMode::OpenMic, "Open Mic"),
+        ];
+        for entry in &self.mode_entries {
+            let selected = entry.mode == *mode;
+            let name = mode_names.iter()
+                .find(|(m, _)| *m == entry.mode)
+                .map(|(_, n)| *n)
+                .unwrap_or("Unknown");
+            entry.item.set_checked(selected);
             entry.item.set_text(radio_label(name, selected));
         }
     }
@@ -422,8 +457,8 @@ mod tests {
         let map = MenuActionMap::new(
             quit_id.clone(),
             MenuId::new("copy"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("ptt"), MenuId::new("st"), MenuId::new("tr"),
-            vec![], vec![],
+            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&quit_id), Some(TrayAction::Quit));
     }
@@ -433,8 +468,8 @@ mod tests {
         let id = MenuId::new("copy");
         let map = MenuActionMap::new(
             MenuId::new("q"), id.clone(), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("ptt"), MenuId::new("st"), MenuId::new("tr"),
-            vec![], vec![],
+            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::CopyLastDictation));
     }
@@ -444,8 +479,8 @@ mod tests {
         let id = MenuId::new("oc");
         let map = MenuActionMap::new(
             MenuId::new("q"), MenuId::new("c"), id.clone(), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("ptt"), MenuId::new("st"), MenuId::new("tr"),
-            vec![], vec![],
+            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::OpenConfig));
     }
@@ -455,8 +490,8 @@ mod tests {
         let id = MenuId::new("rc");
         let map = MenuActionMap::new(
             MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), id.clone(),
-            MenuId::new("sp"), MenuId::new("ptt"), MenuId::new("st"), MenuId::new("tr"),
-            vec![], vec![],
+            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ReloadConfig));
     }
@@ -466,21 +501,22 @@ mod tests {
         let id = MenuId::new("sp");
         let map = MenuActionMap::new(
             MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            id.clone(), MenuId::new("ptt"), MenuId::new("st"), MenuId::new("tr"),
-            vec![], vec![],
+            id.clone(), MenuId::new("st"), MenuId::new("tr"),
+            vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ToggleSpokenPunctuation));
     }
 
     #[test]
-    fn menu_action_map_matches_push_to_talk() {
-        let id = MenuId::new("ptt");
+    fn menu_action_map_matches_set_mode() {
+        let id = MenuId::new("mode_ptt");
         let map = MenuActionMap::new(
             MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), id.clone(), MenuId::new("st"), MenuId::new("tr"),
+            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
             vec![], vec![],
+            vec![(id.clone(), InputMode::PushToTalk)],
         );
-        assert_eq!(map.match_event(&id), Some(TrayAction::TogglePushToTalk));
+        assert_eq!(map.match_event(&id), Some(TrayAction::SetMode(InputMode::PushToTalk)));
     }
 
     #[test]
@@ -488,8 +524,8 @@ mod tests {
         let id = MenuId::new("st");
         let map = MenuActionMap::new(
             MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("ptt"), id.clone(), MenuId::new("tr"),
-            vec![], vec![],
+            MenuId::new("sp"), id.clone(), MenuId::new("tr"),
+            vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ToggleStreaming));
     }
@@ -499,8 +535,8 @@ mod tests {
         let id = MenuId::new("tr");
         let map = MenuActionMap::new(
             MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("ptt"), MenuId::new("st"), id.clone(),
-            vec![], vec![],
+            MenuId::new("sp"), MenuId::new("st"), id.clone(),
+            vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ToggleTranslate));
     }
@@ -510,9 +546,9 @@ mod tests {
         let model_id = MenuId::new("m1");
         let map = MenuActionMap::new(
             MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("ptt"), MenuId::new("st"), MenuId::new("tr"),
+            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
             vec![(model_id.clone(), "base.en".to_string())],
-            vec![],
+            vec![], vec![],
         );
         assert_eq!(map.match_event(&model_id), Some(TrayAction::SetModel("base.en".to_string())));
     }
@@ -522,9 +558,10 @@ mod tests {
         let lang_id = MenuId::new("l1");
         let map = MenuActionMap::new(
             MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("ptt"), MenuId::new("st"), MenuId::new("tr"),
+            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
             vec![],
             vec![(lang_id.clone(), "fr".to_string())],
+            vec![],
         );
         assert_eq!(map.match_event(&lang_id), Some(TrayAction::SetLanguage("fr".to_string())));
     }
@@ -533,8 +570,8 @@ mod tests {
     fn menu_action_map_unknown_id() {
         let map = MenuActionMap::new(
             MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("ptt"), MenuId::new("st"), MenuId::new("tr"),
-            vec![], vec![],
+            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&MenuId::new("unknown")), None);
     }
@@ -545,9 +582,9 @@ mod tests {
         let m2 = MenuId::new("m2");
         let map = MenuActionMap::new(
             MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("ptt"), MenuId::new("st"), MenuId::new("tr"),
+            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
             vec![(m1.clone(), "tiny.en".to_string()), (m2.clone(), "large".to_string())],
-            vec![],
+            vec![], vec![],
         );
         assert_eq!(map.match_event(&m1), Some(TrayAction::SetModel("tiny.en".to_string())));
         assert_eq!(map.match_event(&m2), Some(TrayAction::SetModel("large".to_string())));

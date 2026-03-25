@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::audio::AudioRecorder;
 use crate::config::Config;
+use crate::config::InputMode;
 use crate::hotkey::HotkeyManager;
 use crate::inserter::TextInserter;
 use crate::model;
@@ -74,7 +75,7 @@ pub enum AppMessage {
     TraySetModel(String),
     TraySetLanguage(String),
     TrayToggleSpokenPunctuation,
-    TrayTogglePushToTalk,
+    TraySetMode(InputMode),
     TrayToggleStreaming,
     TrayToggleTranslate,
     TrayOpenConfig,
@@ -115,7 +116,7 @@ pub enum TrayStateTag {
 /// Pure state machine for the app's recording logic.
 pub struct AppState {
     pub is_pressed: bool,
-    pub push_to_talk: bool,
+    pub mode: InputMode,
     pub streaming: bool,
     pub spoken_punctuation: bool,
     pub translate_to_english: bool,
@@ -129,7 +130,7 @@ impl AppState {
     pub fn new(config: &Config) -> Self {
         Self {
             is_pressed: false,
-            push_to_talk: config.push_to_talk,
+            mode: config.mode.clone(),
             streaming: config.streaming,
             spoken_punctuation: config.spoken_punctuation,
             translate_to_english: config.translate_to_english,
@@ -159,7 +160,7 @@ impl AppState {
             AppMessage::TraySetModel(size) => self.on_set_model(size),
             AppMessage::TraySetLanguage(code) => self.on_set_language(code),
             AppMessage::TrayToggleSpokenPunctuation => self.on_toggle_spoken_punctuation(),
-            AppMessage::TrayTogglePushToTalk => self.on_toggle_push_to_talk(),
+            AppMessage::TraySetMode(mode) => self.on_set_mode(mode),
             AppMessage::TrayToggleStreaming => self.on_toggle_streaming(),
             AppMessage::TrayToggleTranslate => self.on_toggle_translate(),
             AppMessage::TrayOpenConfig | AppMessage::TrayReloadConfig => vec![AppEffect::None],
@@ -174,7 +175,7 @@ impl AppState {
     }
 
     fn on_key_down(&mut self) -> Vec<AppEffect> {
-        if !self.push_to_talk {
+        if self.mode == InputMode::OpenMic {
             if self.is_pressed {
                 self.is_pressed = false;
                 let mut effects = vec![];
@@ -209,7 +210,7 @@ impl AppState {
     }
 
     fn on_key_up(&mut self) -> Vec<AppEffect> {
-        if self.push_to_talk && self.is_pressed {
+        if self.mode == InputMode::PushToTalk && self.is_pressed {
             self.is_pressed = false;
             let mut effects = vec![];
             if self.streaming {
@@ -274,8 +275,8 @@ impl AppState {
         vec![AppEffect::SaveConfig]
     }
 
-    fn on_toggle_push_to_talk(&mut self) -> Vec<AppEffect> {
-        self.push_to_talk = !self.push_to_talk;
+    fn on_set_mode(&mut self, mode: &InputMode) -> Vec<AppEffect> {
+        self.mode = mode.clone();
         vec![AppEffect::SaveConfig]
     }
 
@@ -296,7 +297,7 @@ impl AppState {
             language: self.language.clone(),
             spoken_punctuation: self.spoken_punctuation,
             max_recordings: base.max_recordings,
-            push_to_talk: self.push_to_talk,
+            mode: self.mode.clone(),
             streaming: self.streaming,
             translate_to_english: self.translate_to_english,
         }
@@ -311,7 +312,7 @@ pub fn tray_action_to_message(action: TrayAction) -> AppMessage {
         TrayAction::SetModel(s) => AppMessage::TraySetModel(s),
         TrayAction::SetLanguage(c) => AppMessage::TraySetLanguage(c),
         TrayAction::ToggleSpokenPunctuation => AppMessage::TrayToggleSpokenPunctuation,
-        TrayAction::TogglePushToTalk => AppMessage::TrayTogglePushToTalk,
+        TrayAction::SetMode(mode) => AppMessage::TraySetMode(mode),
         TrayAction::ToggleStreaming => AppMessage::TrayToggleStreaming,
         TrayAction::ToggleTranslate => AppMessage::TrayToggleTranslate,
         TrayAction::OpenConfig => AppMessage::TrayOpenConfig,
@@ -550,7 +551,7 @@ mod tests {
     fn default_state() -> AppState {
         AppState {
             is_pressed: false,
-            push_to_talk: true,
+            mode: InputMode::PushToTalk,
             streaming: false,
             spoken_punctuation: false,
             translate_to_english: false,
@@ -561,7 +562,7 @@ mod tests {
         }
     }
 
-    // -- Hold-to-talk mode (push_to_talk = true) --
+    // -- Hold-to-talk mode (mode = PushToTalk) --
 
     #[test]
     fn hold_mode_key_down_starts_recording() {
@@ -597,12 +598,12 @@ mod tests {
         assert_eq!(effects, vec![AppEffect::None]);
     }
 
-    // -- Toggle mode (push_to_talk = false) --
+    // -- Toggle mode (mode = OpenMic) --
 
     #[test]
     fn toggle_mode_first_key_down_starts_recording() {
         let mut state = default_state();
-        state.push_to_talk = false;
+        state.mode = InputMode::OpenMic;
         let effects = state.handle_message(&AppMessage::KeyDown);
         assert!(state.is_pressed);
         assert!(effects.iter().any(|e| matches!(e, AppEffect::StartRecording(_))));
@@ -612,7 +613,7 @@ mod tests {
     #[test]
     fn toggle_mode_second_key_down_stops_and_transcribes() {
         let mut state = default_state();
-        state.push_to_talk = false;
+        state.mode = InputMode::OpenMic;
         state.is_pressed = true;
         let effects = state.handle_message(&AppMessage::KeyDown);
         assert!(!state.is_pressed);
@@ -623,7 +624,7 @@ mod tests {
     #[test]
     fn toggle_mode_key_up_noop() {
         let mut state = default_state();
-        state.push_to_talk = false;
+        state.mode = InputMode::OpenMic;
         state.is_pressed = true;
         let effects = state.handle_message(&AppMessage::KeyUp);
         assert_eq!(effects, vec![AppEffect::None]);
@@ -724,9 +725,9 @@ mod tests {
     #[test]
     fn toggle_toggle_mode() {
         let mut state = default_state();
-        assert!(state.push_to_talk);
-        let effects = state.handle_message(&AppMessage::TrayTogglePushToTalk);
-        assert!(!state.push_to_talk);
+        assert_eq!(state.mode, InputMode::PushToTalk);
+        let effects = state.handle_message(&AppMessage::TraySetMode(InputMode::OpenMic));
+        assert_eq!(state.mode, InputMode::OpenMic);
         assert!(effects.contains(&AppEffect::SaveConfig));
     }
 
@@ -749,7 +750,7 @@ mod tests {
             language: "fr".to_string(),
             spoken_punctuation: true,
             max_recordings: 10,
-            push_to_talk: false,
+            mode: InputMode::OpenMic,
             streaming: true,
             translate_to_english: true,
         };
@@ -757,7 +758,7 @@ mod tests {
         assert_eq!(state.model_size, "small.en");
         assert_eq!(state.language, "fr");
         assert!(state.spoken_punctuation);
-        assert!(!state.push_to_talk);
+        assert_eq!(state.mode, InputMode::OpenMic);
         assert!(state.streaming);
         assert!(state.translate_to_english);
         assert_eq!(state.max_recordings, 10);
@@ -772,14 +773,14 @@ mod tests {
         state.model_size = "large".to_string();
         state.language = "de".to_string();
         state.spoken_punctuation = true;
-        state.push_to_talk = false;
+        state.mode = InputMode::OpenMic;
         state.streaming = true;
         state.translate_to_english = true;
         let cfg = state.to_config(&base);
         assert_eq!(cfg.model_size, "large");
         assert_eq!(cfg.language, "de");
         assert!(cfg.spoken_punctuation);
-        assert!(!cfg.push_to_talk);
+        assert_eq!(cfg.mode, InputMode::OpenMic);
         assert!(cfg.streaming);
         assert!(cfg.translate_to_english);
         assert_eq!(cfg.hotkey, base.hotkey);
@@ -887,10 +888,10 @@ mod tests {
     }
 
     #[test]
-    fn tray_action_to_message_toggle_mode() {
-        match tray_action_to_message(TrayAction::TogglePushToTalk) {
-            AppMessage::TrayTogglePushToTalk => {}
-            _ => panic!("expected TrayTogglePushToTalk"),
+    fn tray_action_to_message_set_mode() {
+        match tray_action_to_message(TrayAction::SetMode(InputMode::OpenMic)) {
+            AppMessage::TraySetMode(mode) => assert_eq!(mode, InputMode::OpenMic),
+            _ => panic!("expected TraySetMode"),
         }
     }
 

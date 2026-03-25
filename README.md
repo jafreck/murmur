@@ -99,7 +99,7 @@ Edit the config file:
   "language": "en",
   "spoken_punctuation": false,
   "max_recordings": 0,
-  "push_to_talk": true
+  "mode": "push_to_talk"
 }
 ```
 

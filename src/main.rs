@@ -8,6 +8,7 @@ mod model;
 mod permissions;
 mod postprocess;
 mod recordings;
+mod streaming;
 mod transcriber;
 mod tray;
 

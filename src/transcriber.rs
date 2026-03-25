@@ -96,6 +96,46 @@ impl Transcriber {
 
         Ok(text.trim().to_string())
     }
+
+    /// Transcribe raw 16 kHz mono f32 samples directly (no file I/O).
+    pub fn transcribe_samples(&self, samples: &[f32], translate: bool) -> Result<String> {
+        if samples.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        params.set_language(Some(&self.language));
+        params.set_translate(translate);
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+
+        let mut state = self
+            .ctx
+            .create_state()
+            .map_err(|e| anyhow::anyhow!("Failed to create whisper state: {e}"))?;
+
+        state
+            .full(params, samples)
+            .map_err(|e| anyhow::anyhow!("Transcription failed: {e}"))?;
+
+        let num_segments = state.full_n_segments();
+        if num_segments < 0 {
+            anyhow::bail!("Failed to get segments");
+        }
+
+        let mut text = String::new();
+        for i in 0..num_segments {
+            if let Some(segment) = state.get_segment(i) {
+                if let Ok(segment_text) = segment.to_str_lossy() {
+                    text.push_str(&segment_text);
+                }
+            }
+        }
+
+        Ok(text.trim().to_string())
+    }
 }
 
 /// Check if a model file exists in any known location.

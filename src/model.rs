@@ -7,10 +7,21 @@ use crate::config::Config;
 
 const BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 
+/// Build the expected model filename for a given model size.
+pub fn model_filename(model_size: &str) -> String {
+    format!("ggml-{model_size}.bin")
+}
+
+/// Build the download URL for a given model size.
+pub fn model_url(model_size: &str) -> String {
+    let filename = model_filename(model_size);
+    format!("{BASE_URL}/{filename}")
+}
+
 pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> {
-    let model_filename = format!("ggml-{model_size}.bin");
+    let filename = model_filename(model_size);
     let models_dir = Config::dir().join("models");
-    let dest_path = models_dir.join(&model_filename);
+    let dest_path = models_dir.join(&filename);
 
     if dest_path.exists() {
         log::info!("Model '{model_size}' already exists at {}", dest_path.display());
@@ -20,7 +31,7 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
     std::fs::create_dir_all(&models_dir)
         .context("Failed to create models directory")?;
 
-    let url = format!("{BASE_URL}/{model_filename}");
+    let url = model_url(model_size);
     log::info!("Downloading {model_size} model from {url}...");
 
     let response = reqwest::blocking::get(&url)
@@ -161,5 +172,20 @@ mod tests {
     fn test_base_url_format() {
         assert!(BASE_URL.starts_with("https://"));
         assert!(BASE_URL.contains("huggingface"));
+    }
+
+    #[test]
+    fn test_model_filename() {
+        assert_eq!(model_filename("base.en"), "ggml-base.en.bin");
+        assert_eq!(model_filename("tiny"), "ggml-tiny.bin");
+        assert_eq!(model_filename("large-v3-turbo"), "ggml-large-v3-turbo.bin");
+    }
+
+    #[test]
+    fn test_model_url() {
+        let url = model_url("base.en");
+        assert!(url.starts_with("https://"));
+        assert!(url.contains("ggml-base.en.bin"));
+        assert!(url.contains("huggingface"));
     }
 }

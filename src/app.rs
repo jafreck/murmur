@@ -128,6 +128,10 @@ pub struct AppState {
     pub last_transcription: Option<String>,
     pub model_size: String,
     pub language: String,
+    /// True while a streaming session is actively inserting partial text.
+    /// When set, the final full-transcription result is suppressed to
+    /// avoid duplicating text that was already inserted incrementally.
+    pub streaming_active: bool,
 }
 
 impl AppState {
@@ -142,6 +146,7 @@ impl AppState {
             last_transcription: None,
             model_size: config.model_size.clone(),
             language: config.language.clone(),
+            streaming_active: false,
         }
     }
 
@@ -194,6 +199,7 @@ impl AppState {
                 effects
             } else {
                 self.is_pressed = true;
+                self.streaming_active = self.streaming;
                 let path = self.recording_output_path();
                 let mut effects = vec![AppEffect::StartRecording(path)];
                 if self.streaming {
@@ -204,6 +210,7 @@ impl AppState {
             }
         } else if !self.is_pressed {
             self.is_pressed = true;
+            self.streaming_active = self.streaming;
             let path = self.recording_output_path();
             let mut effects = vec![AppEffect::StartRecording(path)];
             if self.streaming {
@@ -232,6 +239,9 @@ impl AppState {
     }
 
     fn on_transcription_done(&mut self, text: &str) -> Vec<AppEffect> {
+        let was_streaming = self.streaming_active;
+        self.streaming_active = false;
+
         let mut effects = vec![];
         if !text.is_empty() {
             let processed = if self.spoken_punctuation {
@@ -239,7 +249,11 @@ impl AppState {
             } else {
                 text.to_string()
             };
-            effects.push(AppEffect::InsertText(processed.clone()));
+            // When streaming was active, partial text was already inserted
+            // incrementally — skip re-inserting the full transcription.
+            if !was_streaming {
+                effects.push(AppEffect::InsertText(processed.clone()));
+            }
             self.last_transcription = Some(processed);
         }
         effects.push(AppEffect::SetTrayState(TrayStateTag::Idle));
@@ -428,6 +442,7 @@ pub fn run() -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_effect(
     effect: AppEffect,
     recorder: &mut AudioRecorder,
@@ -560,7 +575,7 @@ fn apply_effect(
                 if !crate::transcriber::model_exists(&model_size) {
                     info!("Downloading {model_size} model...");
                     if let Err(e) = model::download(&model_size, |percent| {
-                        if percent as u32 % 25 == 0 {
+                        if (percent as u32).is_multiple_of(25) {
                             info!("Downloading {model_size}... {percent:.0}%");
                         }
                     }) {
@@ -620,6 +635,7 @@ mod tests {
             last_transcription: None,
             model_size: "base.en".to_string(),
             language: "en".to_string(),
+            streaming_active: false,
         }
     }
 
@@ -896,6 +912,26 @@ mod tests {
         let mut state = default_state();
         let effects = state.handle_message(&AppMessage::StreamingPartialText("".to_string()));
         assert_eq!(effects, vec![AppEffect::None]);
+    }
+
+    #[test]
+    fn transcription_done_skips_insert_when_streaming_was_active() {
+        let mut state = default_state();
+        state.streaming_active = true;
+        let effects = state.handle_message(&AppMessage::TranscriptionDone("hello world".to_string()));
+        // Should NOT contain InsertText since streaming already inserted incrementally
+        assert!(!effects.iter().any(|e| matches!(e, AppEffect::InsertText(_))));
+        // But should still save last_transcription for copy-last
+        assert_eq!(state.last_transcription, Some("hello world".to_string()));
+        assert!(!state.streaming_active);
+    }
+
+    #[test]
+    fn transcription_done_inserts_when_not_streaming() {
+        let mut state = default_state();
+        state.streaming_active = false;
+        let effects = state.handle_message(&AppMessage::TranscriptionDone("hello".to_string()));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::InsertText(_))));
     }
 
     #[test]

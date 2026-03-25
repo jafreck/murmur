@@ -267,6 +267,8 @@ impl AppState {
     }
 
     fn on_transcription_error(&mut self, error: &str) -> Vec<AppEffect> {
+        self.is_pressed = false;
+        self.streaming_active = false;
         vec![
             AppEffect::LogError(error.to_string()),
             AppEffect::SetTrayState(TrayStateTag::Error),
@@ -471,6 +473,9 @@ fn apply_effect(
             info!("Recording...");
             if let Err(e) = recorder.start(&path) {
                 error!("Failed to start recording: {e}");
+                let _ = tx.send(AppMessage::TranscriptionError(
+                    format!("Failed to start recording: {e}"),
+                ));
             }
         }
         AppEffect::StopAndTranscribe => {

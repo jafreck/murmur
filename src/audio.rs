@@ -9,6 +9,9 @@ use std::sync::{Arc, Mutex};
 pub struct AudioRecorder {
     stream: Option<cpal::Stream>,
     writer: Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>,
+    /// In-memory buffer of 16 kHz mono f32 samples captured since `start()`.
+    /// Shared with the audio callback so samples accumulate while recording.
+    samples: Arc<Mutex<Vec<f32>>>,
     current_path: Option<PathBuf>,
 }
 
@@ -17,6 +20,7 @@ impl AudioRecorder {
         Self {
             stream: None,
             writer: Arc::new(Mutex::new(None)),
+            samples: Arc::new(Mutex::new(Vec::new())),
             current_path: None,
         }
     }
@@ -50,28 +54,39 @@ impl AudioRecorder {
 
         self.current_path = Some(output_path.to_path_buf());
 
+        // Reset the in-memory sample buffer
+        let samples = Arc::new(Mutex::new(Vec::new()));
+        let samples_clone = Arc::clone(&samples);
+
         let stream = device.build_input_stream(
             &supported_config.into(),
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                // Mix to mono if needed, then resample to 16kHz
+                let mono: Vec<f32> = if native_channels > 1 {
+                    data.chunks(native_channels as usize)
+                        .map(|frame| {
+                            frame.iter().sum::<f32>() / native_channels as f32
+                        })
+                        .collect()
+                } else {
+                    data.to_vec()
+                };
+
+                let resampled = resample(&mono, native_rate, target_rate);
+
+                // Write to WAV file
                 if let Ok(mut guard) = writer_clone.try_lock() {
                     if let Some(ref mut w) = *guard {
-                        // Mix to mono if needed, then resample to 16kHz
-                        let mono: Vec<f32> = if native_channels > 1 {
-                            data.chunks(native_channels as usize)
-                                .map(|frame| {
-                                    frame.iter().sum::<f32>() / native_channels as f32
-                                })
-                                .collect()
-                        } else {
-                            data.to_vec()
-                        };
-
-                        let resampled = resample(&mono, native_rate, target_rate);
-                        for sample in resampled {
+                        for &sample in &resampled {
                             let clamped = sample.clamp(-1.0, 1.0);
                             let _ = w.write_sample((clamped * 32767.0) as i16);
                         }
                     }
+                }
+
+                // Append to in-memory buffer for streaming access
+                if let Ok(mut buf) = samples_clone.try_lock() {
+                    buf.extend_from_slice(&resampled);
                 }
             },
             |err| {
@@ -83,8 +98,33 @@ impl AudioRecorder {
         stream.play().context("Failed to start audio stream")?;
         self.stream = Some(stream);
         self.writer = writer;
+        self.samples = samples;
 
         Ok(())
+    }
+
+    /// Return a copy of samples captured since `start()`, beginning at `offset`.
+    /// Samples are 16 kHz mono f32 in the range \[−1, 1\].
+    pub fn snapshot(&self, offset: usize) -> Vec<f32> {
+        if let Ok(buf) = self.samples.lock() {
+            if offset < buf.len() {
+                buf[offset..].to_vec()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Number of 16 kHz samples captured since `start()`.
+    pub fn sample_count(&self) -> usize {
+        self.samples.lock().map(|b| b.len()).unwrap_or(0)
+    }
+
+    /// A shared handle to the sample buffer for streaming access.
+    pub fn sample_buffer(&self) -> Arc<Mutex<Vec<f32>>> {
+        Arc::clone(&self.samples)
     }
 
     pub fn stop(&mut self) -> Option<PathBuf> {

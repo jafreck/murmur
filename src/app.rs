@@ -10,6 +10,7 @@ use crate::inserter::TextInserter;
 use crate::model;
 use crate::postprocess;
 use crate::recordings::RecordingStore;
+use crate::streaming;
 use crate::transcriber::Transcriber;
 use crate::tray::{TrayAction, TrayController, TrayState};
 use crate::VERSION;
@@ -79,6 +80,7 @@ pub enum AppMessage {
     TrayReloadConfig,
     TranscriptionDone(String),
     TranscriptionError(String),
+    StreamingPartialText(String),
 }
 
 /// Effect returned by the app state machine in response to a message.
@@ -87,6 +89,10 @@ pub enum AppEffect {
     None,
     StartRecording(std::path::PathBuf),
     StopAndTranscribe,
+    /// Start streaming transcription (toggle mode only).
+    StartStreaming,
+    /// Stop the streaming transcription thread.
+    StopStreaming,
     InsertText(String),
     CopyToClipboard(String),
     SaveConfig,
@@ -153,6 +159,13 @@ impl AppState {
             AppMessage::TrayToggleToggleMode => self.on_toggle_toggle_mode(),
             AppMessage::TrayToggleTranslate => self.on_toggle_translate(),
             AppMessage::TrayOpenConfig | AppMessage::TrayReloadConfig => vec![AppEffect::None],
+            AppMessage::StreamingPartialText(text) => {
+                if !text.is_empty() {
+                    vec![AppEffect::InsertText(text.clone())]
+                } else {
+                    vec![AppEffect::None]
+                }
+            }
         }
     }
 
@@ -161,6 +174,7 @@ impl AppState {
             if self.is_pressed {
                 self.is_pressed = false;
                 vec![
+                    AppEffect::StopStreaming,
                     AppEffect::StopAndTranscribe,
                     AppEffect::SetTrayState(TrayStateTag::Transcribing),
                 ]
@@ -169,6 +183,7 @@ impl AppState {
                 let path = self.recording_output_path();
                 vec![
                     AppEffect::StartRecording(path),
+                    AppEffect::StartStreaming,
                     AppEffect::SetTrayState(TrayStateTag::Recording),
                 ]
             }
@@ -319,6 +334,7 @@ pub fn run() -> Result<()> {
 
     let mut recorder = AudioRecorder::new();
     let mut state = AppState::new(&config);
+    let mut streaming_stop: Option<mpsc::Sender<()>> = None;
 
     println!("open-bark v{VERSION}");
     println!("Hotkey: {}", config.hotkey);
@@ -332,6 +348,7 @@ pub fn run() -> Result<()> {
                 apply_effect(
                     effect, &mut recorder, &transcriber,
                     &mut tray, &mut config, &state, &tx,
+                    &mut streaming_stop,
                 )?;
             }
         }
@@ -367,6 +384,7 @@ fn apply_effect(
     config: &mut Config,
     state: &AppState,
     tx: &mpsc::Sender<AppMessage>,
+    streaming_stop: &mut Option<mpsc::Sender<()>>,
 ) -> Result<()> {
     match effect {
         AppEffect::None => {}
@@ -377,6 +395,11 @@ fn apply_effect(
             }
         }
         AppEffect::StopAndTranscribe => {
+            // Stop streaming first (if running)
+            if let Some(stop) = streaming_stop.take() {
+                let _ = stop.send(());
+            }
+
             if let Some(audio_path) = recorder.stop() {
                 info!("Transcribing...");
                 let transcriber = Arc::clone(transcriber);
@@ -405,6 +428,44 @@ fn apply_effect(
                         }
                     }
                 });
+            }
+        }
+        AppEffect::StartStreaming => {
+            info!("Starting streaming transcription...");
+            let sample_buffer = recorder.sample_buffer();
+            let transcriber = Arc::clone(transcriber);
+            let tx_app = tx.clone();
+            let language = state.language.clone();
+            let translate = state.translate_to_english;
+            let spoken_punct = state.spoken_punctuation;
+
+            let (streaming_tx, streaming_rx) = mpsc::channel::<streaming::StreamingEvent>();
+
+            // Forward streaming events to app messages
+            std::thread::spawn(move || {
+                while let Ok(event) = streaming_rx.recv() {
+                    match event {
+                        streaming::StreamingEvent::PartialText(text) => {
+                            let _ = tx_app.send(AppMessage::StreamingPartialText(text));
+                        }
+                    }
+                }
+            });
+
+            let stop = streaming::start_streaming(
+                sample_buffer,
+                transcriber,
+                language,
+                translate,
+                spoken_punct,
+                streaming_tx,
+            );
+            *streaming_stop = Some(stop);
+        }
+        AppEffect::StopStreaming => {
+            if let Some(stop) = streaming_stop.take() {
+                info!("Stopping streaming transcription");
+                let _ = stop.send(());
             }
         }
         AppEffect::InsertText(text) => {

@@ -59,12 +59,16 @@ enum AppMessage {
     KeyUp,
     TrayQuit,
     TrayCopyLast,
+    TraySetModel(String),
+    TraySetLanguage(String),
+    TrayToggleSpokenPunctuation,
+    TrayToggleToggleMode,
     TranscriptionDone(String),
     TranscriptionError(String),
 }
 
 pub fn run() -> Result<()> {
-    let config = Config::load();
+    let mut config = Config::load();
 
     // Ensure model is available
     if !crate::transcriber::model_exists(&config.model_size) {
@@ -97,7 +101,7 @@ pub fn run() -> Result<()> {
     init_macos_app();
 
     // Create tray on the main thread
-    let mut tray = TrayController::new()?;
+    let mut tray = TrayController::new(&config)?;
 
     // Channel for all app events
     let (tx, rx) = mpsc::channel::<AppMessage>();
@@ -124,8 +128,8 @@ pub fn run() -> Result<()> {
     let mut recorder = AudioRecorder::new();
     let mut is_pressed = false;
     let mut last_transcription: Option<String> = None;
-    let toggle_mode = config.toggle_mode;
-    let spoken_punctuation = config.spoken_punctuation;
+    let mut toggle_mode = config.toggle_mode;
+    let mut spoken_punctuation = config.spoken_punctuation;
     let max_recordings = Config::effective_max_recordings(config.max_recordings);
 
     println!("open-bark v{VERSION}");
@@ -198,6 +202,41 @@ pub fn run() -> Result<()> {
                     info!("Quit requested via tray");
                     return Ok(());
                 }
+                AppMessage::TraySetModel(size) => {
+                    info!("Model changed to: {size}");
+                    config.model_size = size.clone();
+                    if let Err(e) = config.save() {
+                        error!("Failed to save config: {e}");
+                    }
+                    tray.set_model(&size);
+                    info!("Restart open-bark for model change to take effect");
+                }
+                AppMessage::TraySetLanguage(code) => {
+                    let name = crate::config::language_name(&code).unwrap_or(&code);
+                    info!("Language changed to: {name} ({code})");
+                    config.language = code.clone();
+                    if let Err(e) = config.save() {
+                        error!("Failed to save config: {e}");
+                    }
+                    tray.set_language(&code);
+                    info!("Restart open-bark for language change to take effect");
+                }
+                AppMessage::TrayToggleSpokenPunctuation => {
+                    spoken_punctuation = !spoken_punctuation;
+                    config.spoken_punctuation = spoken_punctuation;
+                    if let Err(e) = config.save() {
+                        error!("Failed to save config: {e}");
+                    }
+                    info!("Spoken punctuation: {}", if spoken_punctuation { "on" } else { "off" });
+                }
+                AppMessage::TrayToggleToggleMode => {
+                    toggle_mode = !toggle_mode;
+                    config.toggle_mode = toggle_mode;
+                    if let Err(e) = config.save() {
+                        error!("Failed to save config: {e}");
+                    }
+                    info!("Toggle mode: {}", if toggle_mode { "on" } else { "off" });
+                }
             }
         }
 
@@ -210,6 +249,18 @@ pub fn run() -> Result<()> {
                     }
                     TrayAction::CopyLastDictation => {
                         let _ = tx.send(AppMessage::TrayCopyLast);
+                    }
+                    TrayAction::SetModel(size) => {
+                        let _ = tx.send(AppMessage::TraySetModel(size));
+                    }
+                    TrayAction::SetLanguage(code) => {
+                        let _ = tx.send(AppMessage::TraySetLanguage(code));
+                    }
+                    TrayAction::ToggleSpokenPunctuation => {
+                        let _ = tx.send(AppMessage::TrayToggleSpokenPunctuation);
+                    }
+                    TrayAction::ToggleToggleMode => {
+                        let _ = tx.send(AppMessage::TrayToggleToggleMode);
                     }
                 }
             }

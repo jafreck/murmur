@@ -14,11 +14,11 @@ categories = ["multimedia::audio"]
 whisper-rs = "0.16"
 
 # Audio capture + WAV writing
-cpal = "0.15"
+cpal = "0.17"
 hound = "3.5"
 
 # System tray icon + context menu (re-exports muda as tray_icon::menu)
-tray-icon = "0.19"
+tray-icon = "0.21"
 
 # Global keyboard events (key-down + key-up for hold-to-talk)
 rdev = "0.5"
@@ -27,17 +27,17 @@ rdev = "0.5"
 arboard = "3"
 
 # Simulated keyboard input (Ctrl+V / Cmd+V paste)
-enigo = "0.2"
+enigo = "0.6"
 
 # Config + serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Model download from HuggingFace
-reqwest = { version = "0.12", features = ["blocking"] }
+reqwest = { version = "0.13", features = ["blocking"] }
 
 # Cross-platform config/data directories
-dirs = "5"
+dirs = "6"
 
 # Text post-processing (spoken punctuation)
 regex = "1"

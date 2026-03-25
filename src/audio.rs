@@ -31,7 +31,7 @@ impl AudioRecorder {
             .default_input_config()
             .context("Failed to get default input config")?;
 
-        let native_rate = supported_config.sample_rate().0;
+        let native_rate = supported_config.sample_rate();
         let native_channels = supported_config.channels() as u32;
 
         // Whisper expects 16kHz, 16-bit, mono PCM WAV

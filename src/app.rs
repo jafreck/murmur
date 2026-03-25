@@ -797,6 +797,20 @@ mod tests {
     }
 
     #[test]
+    fn streaming_partial_text_inserts() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::StreamingPartialText("hello".to_string()));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello")));
+    }
+
+    #[test]
+    fn streaming_partial_text_empty_noop() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::StreamingPartialText("".to_string()));
+        assert_eq!(effects, vec![AppEffect::None]);
+    }
+
+    #[test]
     fn recording_output_path_with_max_recordings() {
         let mut state = default_state();
         state.max_recordings = 5;

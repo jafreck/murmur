@@ -1,4 +1,4 @@
-/// Platform-specific permission checks.
+//! Platform-specific permission checks.
 
 #[cfg(target_os = "macos")]
 pub fn check_accessibility() -> bool {

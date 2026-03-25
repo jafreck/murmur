@@ -52,6 +52,10 @@ pub fn run() -> Result<()> {
     let parsed = crate::keycodes::parse(&config.hotkey)
         .ok_or_else(|| anyhow::anyhow!("Invalid hotkey: {}", config.hotkey))?;
 
+    // Log platform-specific permission hints
+    crate::permissions::check_accessibility();
+    crate::permissions::check_microphone();
+
     // Create tray on the main thread
     let mut tray = TrayController::new()?;
 

@@ -1,8 +1,8 @@
-/// System tray UI.
-///
-/// Uses `tray-icon` (which re-exports `muda` as `tray_icon::menu`) to provide
-/// a cross-platform system tray icon with a context menu. On macOS this appears
-/// in the menu bar; on Windows in the taskbar; on Linux via AppIndicator.
+//! System tray UI.
+//!
+//! Uses `tray-icon` (which re-exports `muda` as `tray_icon::menu`) to provide
+//! a cross-platform system tray icon with a context menu. On macOS this appears
+//! in the menu bar; on Windows in the taskbar; on Linux via AppIndicator.
 
 use anyhow::Result;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, MenuId, PredefinedMenuItem};
@@ -14,6 +14,7 @@ pub enum TrayState {
     Idle,
     Recording,
     Transcribing,
+    #[allow(dead_code)]
     Downloading,
     Error,
 }

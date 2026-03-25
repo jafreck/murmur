@@ -71,6 +71,7 @@ impl RecordingStore {
         }
     }
 
+    #[allow(dead_code)]
     pub fn delete_all() {
         for (path, _) in Self::list_recordings() {
             let _ = std::fs::remove_file(&path);

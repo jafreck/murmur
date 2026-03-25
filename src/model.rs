@@ -24,8 +24,15 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
     let dest_path = models_dir.join(&filename);
 
     if dest_path.exists() {
-        log::info!("Model '{model_size}' already exists at {}", dest_path.display());
-        return Ok(dest_path);
+        if is_valid_ggml_file(&dest_path) {
+            log::info!("Model '{model_size}' already exists at {}", dest_path.display());
+            return Ok(dest_path);
+        }
+        log::warn!(
+            "Existing model file at {} is invalid (possibly a partial download), re-downloading",
+            dest_path.display()
+        );
+        let _ = std::fs::remove_file(&dest_path);
     }
 
     std::fs::create_dir_all(&models_dir)
@@ -154,11 +161,14 @@ mod tests {
 
     #[test]
     fn test_download_already_exists() {
-        // Create a fake model file in the models dir
+        // Create a fake model file with valid GGML magic in the models dir
         let models_dir = Config::dir().join("models");
         let _ = std::fs::create_dir_all(&models_dir);
         let model_path = models_dir.join("ggml-test_download_exists.bin");
-        std::fs::write(&model_path, b"fake model").unwrap();
+        let mut f = std::fs::File::create(&model_path).unwrap();
+        f.write_all(&0x67676d6cu32.to_le_bytes()).unwrap();
+        f.write_all(&[0u8; 100]).unwrap();
+        drop(f);
 
         // download should return early with the existing path
         let result = download("test_download_exists", |_| {});

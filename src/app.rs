@@ -83,6 +83,8 @@ pub enum AppMessage {
     TranscriptionDone(String),
     TranscriptionError(String),
     StreamingPartialText(String),
+    /// A new Transcriber has been loaded in the background and is ready to swap in.
+    TranscriberReady(Arc<Transcriber>),
 }
 
 /// Effect returned by the app state machine in response to a message.
@@ -101,6 +103,8 @@ pub enum AppEffect {
     SetTrayState(TrayStateTag),
     SetTrayModel(String),
     SetTrayLanguage(String),
+    /// Download the model if needed and rebuild the Transcriber in a background thread.
+    ReloadTranscriber,
     Quit,
     LogError(String),
 }
@@ -164,6 +168,9 @@ impl AppState {
             AppMessage::TrayToggleStreaming => self.on_toggle_streaming(),
             AppMessage::TrayToggleTranslate => self.on_toggle_translate(),
             AppMessage::TrayOpenConfig | AppMessage::TrayReloadConfig => vec![AppEffect::None],
+            // TranscriberReady is handled directly in the run() loop before
+            // reaching handle_message, but we need an arm for exhaustiveness.
+            AppMessage::TranscriberReady(_) => vec![AppEffect::None],
             AppMessage::StreamingPartialText(text) => {
                 if !text.is_empty() {
                     vec![AppEffect::InsertText(text.clone())]
@@ -259,6 +266,7 @@ impl AppState {
         vec![
             AppEffect::SaveConfig,
             AppEffect::SetTrayModel(size.to_string()),
+            AppEffect::ReloadTranscriber,
         ]
     }
 
@@ -267,6 +275,7 @@ impl AppState {
         vec![
             AppEffect::SaveConfig,
             AppEffect::SetTrayLanguage(code.to_string()),
+            AppEffect::ReloadTranscriber,
         ]
     }
 
@@ -346,7 +355,7 @@ pub fn run() -> Result<()> {
     let model_path = crate::transcriber::find_model(&config.model_size)
         .ok_or_else(|| anyhow::anyhow!("Model '{}' not found after download", config.model_size))?;
 
-    let transcriber = Arc::new(Transcriber::new(&model_path, &config.language)?);
+    let mut transcriber = Arc::new(Transcriber::new(&model_path, &config.language)?);
 
     info!("Hotkey: {}", config.hotkey);
     info!("Model: {}", config.model_size);
@@ -388,10 +397,17 @@ pub fn run() -> Result<()> {
 
     loop {
         while let Ok(msg) = rx.try_recv() {
+            // TranscriberReady carries an Arc that must be moved out,
+            // so handle it directly instead of going through the state machine.
+            if let AppMessage::TranscriberReady(new_t) = msg {
+                transcriber = new_t;
+                info!("Transcriber reloaded with new model");
+                continue;
+            }
             let effects = state.handle_message(&msg);
             for effect in effects {
                 apply_effect(
-                    effect, &mut recorder, &transcriber,
+                    effect, &mut recorder, &mut transcriber,
                     &mut tray, &mut config, &state, &tx,
                     &mut streaming_stop,
                 )?;
@@ -413,7 +429,7 @@ pub fn run() -> Result<()> {
 fn apply_effect(
     effect: AppEffect,
     recorder: &mut AudioRecorder,
-    transcriber: &Arc<Transcriber>,
+    transcriber: &mut Arc<Transcriber>,
     tray: &mut TrayController,
     config: &mut Config,
     state: &AppState,
@@ -532,6 +548,49 @@ fn apply_effect(
             let name = crate::config::language_name(&code).unwrap_or(&code);
             info!("Language changed to: {name} ({code})");
             tray.set_language(&code);
+        }
+        AppEffect::ReloadTranscriber => {
+            let model_size = state.model_size.clone();
+            let language = state.language.clone();
+            let tx = tx.clone();
+            info!("Loading model '{model_size}'...");
+            std::thread::spawn(move || {
+                if !crate::transcriber::model_exists(&model_size) {
+                    info!("Downloading {model_size} model...");
+                    if let Err(e) = model::download(&model_size, |percent| {
+                        if percent as u32 % 25 == 0 {
+                            info!("Downloading {model_size}... {percent:.0}%");
+                        }
+                    }) {
+                        error!("Failed to download model '{model_size}': {e}");
+                        let _ = tx.send(AppMessage::TranscriptionError(
+                            format!("Failed to download model '{model_size}': {e}"),
+                        ));
+                        return;
+                    }
+                }
+
+                match crate::transcriber::find_model(&model_size) {
+                    Some(model_path) => match Transcriber::new(&model_path, &language) {
+                        Ok(t) => {
+                            info!("Model '{model_size}' loaded successfully");
+                            let _ = tx.send(AppMessage::TranscriberReady(Arc::new(t)));
+                        }
+                        Err(e) => {
+                            error!("Failed to load model '{model_size}': {e}");
+                            let _ = tx.send(AppMessage::TranscriptionError(
+                                format!("Failed to load model '{model_size}': {e}"),
+                            ));
+                        }
+                    },
+                    None => {
+                        error!("Model '{model_size}' not found after download");
+                        let _ = tx.send(AppMessage::TranscriptionError(
+                            format!("Model '{model_size}' not found after download"),
+                        ));
+                    }
+                }
+            });
         }
         AppEffect::Quit => {
             info!("Quit requested via tray");
@@ -699,6 +758,7 @@ mod tests {
         assert_eq!(state.model_size, "small.en");
         assert!(effects.contains(&AppEffect::SaveConfig));
         assert!(effects.contains(&AppEffect::SetTrayModel("small.en".to_string())));
+        assert!(effects.contains(&AppEffect::ReloadTranscriber));
     }
 
     #[test]
@@ -708,6 +768,7 @@ mod tests {
         assert_eq!(state.language, "fr");
         assert!(effects.contains(&AppEffect::SaveConfig));
         assert!(effects.contains(&AppEffect::SetTrayLanguage("fr".to_string())));
+        assert!(effects.contains(&AppEffect::ReloadTranscriber));
     }
 
     #[test]

@@ -12,6 +12,34 @@ Everything runs on-device. No audio or text ever leaves your machine. Powered by
 
 ## Install
 
+### Quick install (recommended)
+
+Pre-built binaries — no build tools required. macOS Apple Silicon builds include Metal GPU acceleration.
+
+**macOS / Linux:**
+
+```bash
+curl -sSf https://raw.githubusercontent.com/jacobfreck/open-bark/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/jacobfreck/open-bark/main/scripts/install.ps1 | iex
+```
+
+The installer downloads the correct binary for your platform, installs it, and registers open-bark as a service that starts at login.
+
+To install a specific version:
+
+```bash
+# macOS / Linux
+OPEN_BARK_VERSION=v0.1.0 bash <(curl -sSf https://raw.githubusercontent.com/jacobfreck/open-bark/main/scripts/install.sh)
+
+# Windows
+.\scripts\install.ps1 -Version v0.1.0
+```
+
 ### From source
 
 ```bash
@@ -22,10 +50,10 @@ cargo build --release
 
 The binary is at `target/release/open-bark`.
 
-### GPU acceleration (optional)
+#### GPU acceleration (optional)
 
 ```bash
-# macOS (Metal)
+# macOS Apple Silicon (Metal)
 cargo build --release --features metal
 
 # NVIDIA (CUDA)
@@ -33,6 +61,12 @@ cargo build --release --features cuda
 
 # Cross-vendor (Vulkan)
 cargo build --release --features vulkan
+```
+
+### From crates.io
+
+```bash
+cargo install open-bark
 ```
 
 ## Usage

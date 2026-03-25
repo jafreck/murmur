@@ -30,22 +30,35 @@ fn init_macos_app() {
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 }
 
-/// Pump the macOS run loop for `seconds`, allowing Cocoa to process events
-/// (tray icon rendering, menu interactions, etc.).
+/// Pump the macOS AppKit event loop, dispatching all pending Cocoa events
+/// (tray icon clicks, menu interactions, rendering, etc.).
 #[cfg(target_os = "macos")]
 fn pump_event_loop() {
-    #[link(name = "CoreFoundation", kind = "framework")]
-    unsafe extern "C" {
-        static kCFRunLoopDefaultMode: *const std::ffi::c_void;
-        fn CFRunLoopRunInMode(
-            mode: *const std::ffi::c_void,
-            seconds: f64,
-            return_after_source_handled: u8,
-        ) -> i32;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSEventMask};
+    use objc2_foundation::{NSDate, NSDefaultRunLoopMode};
+
+    let mtm = MainThreadMarker::new().expect("must be on main thread");
+    let app = NSApplication::sharedApplication(mtm);
+
+    // Drain all pending events
+    loop {
+        let event = unsafe {
+            app.nextEventMatchingMask_untilDate_inMode_dequeue(
+                NSEventMask::Any,
+                Some(&NSDate::distantPast()),
+                NSDefaultRunLoopMode,
+                true,
+            )
+        };
+        match event {
+            Some(event) => app.sendEvent(&event),
+            None => break,
+        }
     }
-    unsafe {
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0 / 60.0, 0);
-    }
+
+    // Sleep briefly to avoid busy-looping
+    std::thread::sleep(std::time::Duration::from_millis(16));
 }
 
 /// On non-macOS platforms, just sleep briefly.

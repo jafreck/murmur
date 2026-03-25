@@ -35,15 +35,6 @@ pub fn read_wav_samples(audio_path: &Path) -> Result<Vec<f32>> {
     Ok(samples)
 }
 
-/// Concatenate whisper segments into a single trimmed string.
-pub fn join_segments(segments: &[&str]) -> String {
-    let mut text = String::new();
-    for seg in segments {
-        text.push_str(seg);
-    }
-    text.trim().to_string()
-}
-
 impl Transcriber {
     pub fn new(model_path: &Path, language: &str) -> Result<Self> {
         let ctx = WhisperContext::new_with_params(
@@ -58,6 +49,15 @@ impl Transcriber {
         })
     }
 
+    /// Return the language parameter for whisper. `None` means auto-detect.
+    fn language_param(&self) -> Option<&str> {
+        if self.language == "auto" {
+            None
+        } else {
+            Some(&self.language)
+        }
+    }
+
     pub fn transcribe(&self, audio_path: &Path, translate: bool) -> Result<String> {
         let samples = read_wav_samples(audio_path)?;
 
@@ -66,7 +66,7 @@ impl Transcriber {
         }
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        params.set_language(Some(&self.language));
+        params.set_language(self.language_param());
         params.set_translate(translate);
         params.set_print_special(false);
         params.set_print_progress(false);
@@ -104,7 +104,7 @@ impl Transcriber {
         }
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        params.set_language(Some(&self.language));
+        params.set_language(self.language_param());
         params.set_translate(translate);
         params.set_print_special(false);
         params.set_print_progress(false);
@@ -286,25 +286,4 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // -- join_segments --
-
-    #[test]
-    fn test_join_segments_empty() {
-        assert_eq!(join_segments(&[]), "");
-    }
-
-    #[test]
-    fn test_join_segments_single() {
-        assert_eq!(join_segments(&[" hello world "]), "hello world");
-    }
-
-    #[test]
-    fn test_join_segments_multiple() {
-        assert_eq!(join_segments(&["hello ", "world"]), "hello world");
-    }
-
-    #[test]
-    fn test_join_segments_trims() {
-        assert_eq!(join_segments(&["  ", " test ", "  "]), "test");
-    }
 }

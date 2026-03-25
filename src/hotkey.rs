@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use log::error;
 use rdev::{listen, Event, EventType, Key};
+use std::collections::HashSet;
+use std::sync::Mutex;
 
 pub struct ParsedHotkey {
     pub key: Key,
@@ -22,19 +24,63 @@ impl ParsedHotkey {
     }
 }
 
+/// Return true if `key` is any modifier key (Shift, Ctrl, Alt, Meta).
+fn is_modifier(key: &Key) -> bool {
+    matches!(
+        key,
+        Key::ShiftLeft
+            | Key::ShiftRight
+            | Key::ControlLeft
+            | Key::ControlRight
+            | Key::Alt
+            | Key::AltGr
+            | Key::MetaLeft
+            | Key::MetaRight
+    )
+}
+
 pub struct HotkeyManager;
 
 impl HotkeyManager {
     /// Start listening for global key events. This blocks the calling thread.
+    ///
+    /// When `required_modifiers` is non-empty, the key-down callback only fires
+    /// when all listed modifier keys are currently held.
     pub fn start(
         target_key: Key,
+        required_modifiers: Vec<Key>,
         on_key_down: impl Fn() + Send + 'static,
         on_key_up: impl Fn() + Send + 'static,
     ) -> Result<()> {
+        let required: HashSet<Key> = required_modifiers.into_iter().collect();
+        let held_modifiers: Mutex<HashSet<Key>> = Mutex::new(HashSet::new());
+
         listen(move |event: Event| {
             match event.event_type {
+                EventType::KeyPress(key) if is_modifier(&key) => {
+                    if let Ok(mut held) = held_modifiers.lock() {
+                        held.insert(key);
+                    }
+                }
+                EventType::KeyRelease(key) if is_modifier(&key) => {
+                    if let Ok(mut held) = held_modifiers.lock() {
+                        held.remove(&key);
+                    }
+                    if key == target_key {
+                        on_key_up();
+                    }
+                }
                 EventType::KeyPress(key) if key == target_key => {
-                    on_key_down();
+                    let mods_ok = if required.is_empty() {
+                        true
+                    } else if let Ok(held) = held_modifiers.lock() {
+                        required.is_subset(&held)
+                    } else {
+                        false
+                    };
+                    if mods_ok {
+                        on_key_down();
+                    }
                 }
                 EventType::KeyRelease(key) if key == target_key => {
                     on_key_up();
@@ -94,5 +140,24 @@ mod tests {
         let s = hk.to_config_string();
         assert!(s.contains("metaleft"));
         assert!(s.contains("keyv"));
+    }
+
+    #[test]
+    fn is_modifier_recognizes_all_modifiers() {
+        assert!(is_modifier(&Key::ShiftLeft));
+        assert!(is_modifier(&Key::ShiftRight));
+        assert!(is_modifier(&Key::ControlLeft));
+        assert!(is_modifier(&Key::ControlRight));
+        assert!(is_modifier(&Key::Alt));
+        assert!(is_modifier(&Key::AltGr));
+        assert!(is_modifier(&Key::MetaLeft));
+        assert!(is_modifier(&Key::MetaRight));
+    }
+
+    #[test]
+    fn is_modifier_rejects_non_modifiers() {
+        assert!(!is_modifier(&Key::Space));
+        assert!(!is_modifier(&Key::KeyA));
+        assert!(!is_modifier(&Key::F9));
     }
 }

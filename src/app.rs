@@ -376,9 +376,11 @@ pub fn run() -> Result<()> {
     let tx_up = tx.clone();
 
     let hotkey_key = parsed.key;
+    let hotkey_mods = parsed.modifiers;
     std::thread::spawn(move || {
         if let Err(e) = HotkeyManager::start(
             hotkey_key,
+            hotkey_mods,
             move || { let _ = tx_down.send(AppMessage::KeyDown); },
             move || { let _ = tx_up.send(AppMessage::KeyUp); },
         ) {

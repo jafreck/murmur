@@ -85,8 +85,10 @@ fn streaming_loop(
 
     loop {
         // Check for stop signal (non-blocking).
-        if stop_rx.try_recv().is_ok() {
-            break;
+        // Breaks on both explicit message and sender being dropped.
+        match stop_rx.try_recv() {
+            Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
+            Err(mpsc::TryRecvError::Empty) => {}
         }
 
         // How many samples are available?

@@ -4,6 +4,7 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use std::io::BufWriter;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub struct AudioRecorder {
@@ -13,6 +14,8 @@ pub struct AudioRecorder {
     /// Shared with the audio callback so samples accumulate while recording.
     samples: Arc<Mutex<Vec<f32>>>,
     current_path: Option<PathBuf>,
+    /// Count of samples dropped due to lock contention in the audio callback.
+    dropped_samples: Arc<AtomicU64>,
 }
 
 /// Mix multi-channel audio to mono by averaging channels.
@@ -48,6 +51,7 @@ impl AudioRecorder {
             writer: Arc::new(Mutex::new(None)),
             samples: Arc::new(Mutex::new(Vec::new())),
             current_path: None,
+            dropped_samples: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -75,6 +79,9 @@ impl AudioRecorder {
         let samples = Arc::new(Mutex::new(Vec::new()));
         let samples_clone = Arc::clone(&samples);
 
+        let dropped = Arc::new(AtomicU64::new(0));
+        let dropped_clone = Arc::clone(&dropped);
+
         let stream = device.build_input_stream(
             &supported_config.into(),
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
@@ -88,6 +95,8 @@ impl AudioRecorder {
                             let _ = w.write_sample(f32_to_i16(sample));
                         }
                     }
+                } else {
+                    dropped_clone.fetch_add(resampled.len() as u64, Ordering::Relaxed);
                 }
 
                 // Append to in-memory buffer for streaming access
@@ -105,12 +114,14 @@ impl AudioRecorder {
         self.stream = Some(stream);
         self.writer = writer;
         self.samples = samples;
+        self.dropped_samples = dropped;
 
         Ok(())
     }
 
     /// Return a copy of samples captured since `start()`, beginning at `offset`.
     /// Samples are 16 kHz mono f32 in the range \[−1, 1\].
+    #[allow(dead_code)]
     pub fn snapshot(&self, offset: usize) -> Vec<f32> {
         if let Ok(buf) = self.samples.lock() {
             if offset < buf.len() {
@@ -124,6 +135,7 @@ impl AudioRecorder {
     }
 
     /// Number of 16 kHz samples captured since `start()`.
+    #[allow(dead_code)]
     pub fn sample_count(&self) -> usize {
         self.samples.lock().map(|b| b.len()).unwrap_or(0)
     }
@@ -136,6 +148,11 @@ impl AudioRecorder {
     pub fn stop(&mut self) -> Option<PathBuf> {
         // Drop the stream first to stop callbacks
         drop(self.stream.take());
+
+        let dropped = self.dropped_samples.load(Ordering::Relaxed);
+        if dropped > 0 {
+            log::warn!("Dropped {dropped} audio samples due to lock contention during recording");
+        }
 
         // Finalize the WAV file
         if let Ok(mut guard) = self.writer.lock() {

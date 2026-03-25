@@ -2,6 +2,7 @@ use anyhow::Result;
 use log::{error, info};
 use std::sync::mpsc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::audio::AudioRecorder;
 use crate::config::Config;
@@ -11,20 +12,19 @@ use crate::model;
 use crate::postprocess;
 use crate::recordings::RecordingStore;
 use crate::transcriber::Transcriber;
+use crate::tray::{TrayAction, TrayController, TrayState};
 use crate::VERSION;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum AppState {
-    Idle,
-    Recording,
-    Transcribing,
-    Downloading(String),
-    Error(String),
-}
+use tray_icon::menu::MenuEvent;
+use tray_icon::TrayIconEvent;
 
 enum AppMessage {
     KeyDown,
     KeyUp,
+    TrayQuit,
+    TrayCopyLast,
+    TranscriptionDone(String),
+    TranscriptionError(String),
 }
 
 pub fn run() -> Result<()> {
@@ -52,23 +52,25 @@ pub fn run() -> Result<()> {
     let parsed = crate::keycodes::parse(&config.hotkey)
         .ok_or_else(|| anyhow::anyhow!("Invalid hotkey: {}", config.hotkey))?;
 
-    println!("open-bark v{VERSION}");
-    println!("Hotkey: {}", config.hotkey);
-    println!("Model: {}", config.model_size);
-    println!("Ready.");
+    // Create tray on the main thread
+    let mut tray = TrayController::new()?;
 
-    // Channel for hotkey events → main loop
+    // Channel for all app events
     let (tx, rx) = mpsc::channel::<AppMessage>();
     let tx_down = tx.clone();
-    let tx_up = tx;
+    let tx_up = tx.clone();
 
     // Start hotkey listener in a background thread
     let hotkey_key = parsed.key;
     std::thread::spawn(move || {
         if let Err(e) = HotkeyManager::start(
             hotkey_key,
-            move || { let _ = tx_down.send(AppMessage::KeyDown); },
-            move || { let _ = tx_up.send(AppMessage::KeyUp); },
+            move || {
+                let _ = tx_down.send(AppMessage::KeyDown);
+            },
+            move || {
+                let _ = tx_up.send(AppMessage::KeyUp);
+            },
         ) {
             error!("Hotkey listener failed: {e}");
         }
@@ -77,44 +79,106 @@ pub fn run() -> Result<()> {
     // Main event loop — owns the AudioRecorder (which is !Send)
     let mut recorder = AudioRecorder::new();
     let mut is_pressed = false;
+    let mut last_transcription: Option<String> = None;
     let toggle_mode = config.toggle_mode;
     let spoken_punctuation = config.spoken_punctuation;
     let max_recordings = Config::effective_max_recordings(config.max_recordings);
 
-    for msg in rx {
-        match msg {
-            AppMessage::KeyDown => {
-                if toggle_mode {
-                    if is_pressed {
-                        handle_stop(
+    println!("open-bark v{VERSION}");
+    println!("Hotkey: {}", config.hotkey);
+    println!("Model: {}", config.model_size);
+    println!("Ready.");
+
+    // Unified event loop polling three receivers
+    loop {
+        // 1. Drain app message channel (non-blocking)
+        while let Ok(msg) = rx.try_recv() {
+            match msg {
+                AppMessage::KeyDown => {
+                    if toggle_mode {
+                        if is_pressed {
+                            start_transcribing(
+                                &mut recorder,
+                                &mut is_pressed,
+                                &transcriber,
+                                spoken_punctuation,
+                                max_recordings,
+                                tx.clone(),
+                            );
+                            tray.set_state(TrayState::Transcribing);
+                        } else {
+                            handle_start(&mut recorder, &mut is_pressed, max_recordings);
+                            tray.set_state(TrayState::Recording);
+                        }
+                    } else if !is_pressed {
+                        handle_start(&mut recorder, &mut is_pressed, max_recordings);
+                        tray.set_state(TrayState::Recording);
+                    }
+                }
+                AppMessage::KeyUp => {
+                    if !toggle_mode && is_pressed {
+                        start_transcribing(
                             &mut recorder,
                             &mut is_pressed,
                             &transcriber,
                             spoken_punctuation,
                             max_recordings,
+                            tx.clone(),
                         );
-                    } else {
-                        handle_start(&mut recorder, &mut is_pressed, max_recordings);
+                        tray.set_state(TrayState::Transcribing);
                     }
-                } else if !is_pressed {
-                    handle_start(&mut recorder, &mut is_pressed, max_recordings);
                 }
-            }
-            AppMessage::KeyUp => {
-                if !toggle_mode {
-                    handle_stop(
-                        &mut recorder,
-                        &mut is_pressed,
-                        &transcriber,
-                        spoken_punctuation,
-                        max_recordings,
-                    );
+                AppMessage::TranscriptionDone(text) => {
+                    if !text.is_empty() {
+                        info!("Transcription: {text}");
+                        if let Err(e) = TextInserter::insert(&text) {
+                            error!("Insert failed: {e}");
+                        }
+                        last_transcription = Some(text);
+                    }
+                    tray.set_state(TrayState::Idle);
+                }
+                AppMessage::TranscriptionError(e) => {
+                    error!("Transcription: {e}");
+                    tray.set_state(TrayState::Error);
+                }
+                AppMessage::TrayCopyLast => {
+                    if let Some(ref text) = last_transcription {
+                        if let Ok(mut cb) = arboard::Clipboard::new() {
+                            let _ = cb.set_text(text.clone());
+                            info!("Copied last dictation to clipboard");
+                        }
+                    }
+                }
+                AppMessage::TrayQuit => {
+                    info!("Quit requested via tray");
+                    return Ok(());
                 }
             }
         }
-    }
 
-    Ok(())
+        // 2. Drain tray menu events (non-blocking)
+        while let Ok(event) = MenuEvent::receiver().try_recv() {
+            if let Some(action) = tray.match_menu_event(&event) {
+                match action {
+                    TrayAction::Quit => {
+                        let _ = tx.send(AppMessage::TrayQuit);
+                    }
+                    TrayAction::CopyLastDictation => {
+                        let _ = tx.send(AppMessage::TrayCopyLast);
+                    }
+                }
+            }
+        }
+
+        // 3. Drain tray icon events (click handling)
+        while let Ok(_event) = TrayIconEvent::receiver().try_recv() {
+            // Future: left-click to toggle recording, etc.
+        }
+
+        // Sleep to avoid busy-looping (~60 iterations/sec)
+        std::thread::sleep(Duration::from_millis(16));
+    }
 }
 
 fn handle_start(recorder: &mut AudioRecorder, is_pressed: &mut bool, max_recordings: u32) {
@@ -136,12 +200,13 @@ fn handle_start(recorder: &mut AudioRecorder, is_pressed: &mut bool, max_recordi
     }
 }
 
-fn handle_stop(
+fn start_transcribing(
     recorder: &mut AudioRecorder,
     is_pressed: &mut bool,
     transcriber: &Arc<Transcriber>,
     spoken_punctuation: bool,
     max_recordings: u32,
+    tx: mpsc::Sender<AppMessage>,
 ) {
     if !*is_pressed {
         return;
@@ -154,12 +219,10 @@ fn handle_stop(
 
     info!("Transcribing...");
 
-    // Transcribe in a background thread to keep the main loop responsive
     let transcriber = Arc::clone(transcriber);
     std::thread::spawn(move || {
         let result = transcriber.transcribe(&audio_path);
 
-        // Clean up
         if max_recordings == 0 {
             let _ = std::fs::remove_file(&audio_path);
         } else {
@@ -173,16 +236,10 @@ fn handle_stop(
                 } else {
                     raw
                 };
-
-                if !text.is_empty() {
-                    info!("Transcription: {text}");
-                    if let Err(e) = TextInserter::insert(&text) {
-                        error!("Failed to insert text: {e}");
-                    }
-                }
+                let _ = tx.send(AppMessage::TranscriptionDone(text));
             }
             Err(e) => {
-                error!("Transcription failed: {e}");
+                let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
             }
         }
     });

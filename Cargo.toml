@@ -17,9 +17,8 @@ whisper-rs = "0.16"
 cpal = "0.15"
 hound = "3.5"
 
-# System tray icon + context menu
+# System tray icon + context menu (re-exports muda as tray_icon::menu)
 tray-icon = "0.19"
-muda = "0.15"
 
 # Global keyboard events (key-down + key-up for hold-to-talk)
 rdev = "0.5"

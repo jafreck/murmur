@@ -2201,7 +2201,6 @@ dependencies = [
  "env_logger",
  "hound",
  "log",
- "muda",
  "rdev",
  "regex",
  "reqwest",

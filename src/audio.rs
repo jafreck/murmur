@@ -12,6 +12,32 @@ pub struct AudioRecorder {
     current_path: Option<PathBuf>,
 }
 
+/// Mix multi-channel audio to mono by averaging channels.
+pub fn mix_to_mono(data: &[f32], channels: u32) -> Vec<f32> {
+    if channels <= 1 {
+        return data.to_vec();
+    }
+    data.chunks(channels as usize)
+        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+        .collect()
+}
+
+/// Convert f32 sample to 16-bit PCM i16, clamping to [-1.0, 1.0].
+pub fn f32_to_i16(sample: f32) -> i16 {
+    (sample.clamp(-1.0, 1.0) * 32767.0) as i16
+}
+
+/// The WAV spec Whisper expects: 16kHz, 16-bit, mono PCM.
+pub const WHISPER_WAV_SPEC: WavSpec = WavSpec {
+    channels: 1,
+    sample_rate: 16_000,
+    bits_per_sample: 16,
+    sample_format: SampleFormat::Int,
+};
+
+/// Target sample rate for Whisper input.
+pub const TARGET_RATE: u32 = 16_000;
+
 impl AudioRecorder {
     pub fn new() -> Self {
         Self {
@@ -34,16 +60,7 @@ impl AudioRecorder {
         let native_rate = supported_config.sample_rate();
         let native_channels = supported_config.channels() as u32;
 
-        // Whisper expects 16kHz, 16-bit, mono PCM WAV
-        let target_rate: u32 = 16_000;
-        let spec = WavSpec {
-            channels: 1,
-            sample_rate: target_rate,
-            bits_per_sample: 16,
-            sample_format: SampleFormat::Int,
-        };
-
-        let writer = WavWriter::create(output_path, spec)
+        let writer = WavWriter::create(output_path, WHISPER_WAV_SPEC)
             .context("Failed to create WAV file")?;
         let writer = Arc::new(Mutex::new(Some(writer)));
         let writer_clone = Arc::clone(&writer);
@@ -55,21 +72,10 @@ impl AudioRecorder {
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
                 if let Ok(mut guard) = writer_clone.try_lock() {
                     if let Some(ref mut w) = *guard {
-                        // Mix to mono if needed, then resample to 16kHz
-                        let mono: Vec<f32> = if native_channels > 1 {
-                            data.chunks(native_channels as usize)
-                                .map(|frame| {
-                                    frame.iter().sum::<f32>() / native_channels as f32
-                                })
-                                .collect()
-                        } else {
-                            data.to_vec()
-                        };
-
-                        let resampled = resample(&mono, native_rate, target_rate);
+                        let mono = mix_to_mono(data, native_channels);
+                        let resampled = resample(&mono, native_rate, TARGET_RATE);
                         for sample in resampled {
-                            let clamped = sample.clamp(-1.0, 1.0);
-                            let _ = w.write_sample((clamped * 32767.0) as i16);
+                            let _ = w.write_sample(f32_to_i16(sample));
                         }
                     }
                 }
@@ -192,6 +198,87 @@ mod tests {
         let mut recorder = AudioRecorder::new();
         let path = recorder.stop();
         assert!(path.is_none());
+    }
+
+    // -- mix_to_mono --
+
+    #[test]
+    fn test_mix_to_mono_single_channel() {
+        let data = vec![0.1, 0.2, 0.3];
+        let mono = mix_to_mono(&data, 1);
+        assert_eq!(mono, data);
+    }
+
+    #[test]
+    fn test_mix_to_mono_stereo() {
+        let data = vec![0.0, 1.0, 0.5, 0.5, 1.0, 0.0];
+        let mono = mix_to_mono(&data, 2);
+        assert_eq!(mono.len(), 3);
+        assert!((mono[0] - 0.5).abs() < 0.001);
+        assert!((mono[1] - 0.5).abs() < 0.001);
+        assert!((mono[2] - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_mix_to_mono_quad() {
+        let data = vec![1.0, 0.0, 0.0, 0.0]; // 4 channels, 1 frame
+        let mono = mix_to_mono(&data, 4);
+        assert_eq!(mono.len(), 1);
+        assert!((mono[0] - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_mix_to_mono_empty() {
+        let mono = mix_to_mono(&[], 2);
+        assert!(mono.is_empty());
+    }
+
+    // -- f32_to_i16 --
+
+    #[test]
+    fn test_f32_to_i16_zero() {
+        assert_eq!(f32_to_i16(0.0), 0);
+    }
+
+    #[test]
+    fn test_f32_to_i16_max() {
+        assert_eq!(f32_to_i16(1.0), 32767);
+    }
+
+    #[test]
+    fn test_f32_to_i16_min() {
+        assert_eq!(f32_to_i16(-1.0), -32767);
+    }
+
+    #[test]
+    fn test_f32_to_i16_clamps_over() {
+        assert_eq!(f32_to_i16(2.0), 32767);
+    }
+
+    #[test]
+    fn test_f32_to_i16_clamps_under() {
+        assert_eq!(f32_to_i16(-2.0), -32767);
+    }
+
+    #[test]
+    fn test_f32_to_i16_half() {
+        let v = f32_to_i16(0.5);
+        assert!(v > 16000 && v < 17000);
+    }
+
+    // -- WHISPER_WAV_SPEC --
+
+    #[test]
+    fn test_whisper_wav_spec() {
+        assert_eq!(WHISPER_WAV_SPEC.channels, 1);
+        assert_eq!(WHISPER_WAV_SPEC.sample_rate, 16_000);
+        assert_eq!(WHISPER_WAV_SPEC.bits_per_sample, 16);
+        assert_eq!(WHISPER_WAV_SPEC.sample_format, SampleFormat::Int);
+    }
+
+    #[test]
+    fn test_target_rate() {
+        assert_eq!(TARGET_RATE, 16_000);
     }
 
     #[test]

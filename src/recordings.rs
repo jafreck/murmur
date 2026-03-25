@@ -238,4 +238,38 @@ mod tests {
         let p2 = RecordingStore::new_recording_path_in(tmp.path());
         assert_ne!(p1, p2);
     }
+
+    #[test]
+    fn test_ensure_dir_wrapper() {
+        // Just verify it doesn't panic — uses the real config dir
+        RecordingStore::ensure_dir();
+    }
+
+    #[test]
+    fn test_list_recordings_wrapper() {
+        // Calls the real dir but should not panic
+        let _ = RecordingStore::list_recordings();
+    }
+
+    #[test]
+    fn test_prune_wrapper() {
+        // Calls the real dir but safe with a large limit
+        RecordingStore::prune(1000);
+    }
+
+    #[test]
+    fn test_delete_all_wrapper() {
+        // We don't actually want to delete real recordings,
+        // so test via delete_all_in with an empty temp dir
+        let tmp = tempfile::TempDir::new().unwrap();
+        RecordingStore::delete_all_in(tmp.path());
+    }
+
+    #[test]
+    fn test_new_recording_path_wrapper() {
+        let path = RecordingStore::new_recording_path();
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("recording-"));
+        assert!(name.ends_with(".wav"));
+    }
 }

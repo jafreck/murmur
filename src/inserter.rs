@@ -6,6 +6,14 @@ use std::time::Duration;
 
 pub struct TextInserter;
 
+/// The modifier key used for paste: Cmd on macOS, Ctrl elsewhere.
+pub fn paste_modifier() -> Key {
+    #[cfg(target_os = "macos")]
+    { Key::Meta }
+    #[cfg(not(target_os = "macos"))]
+    { Key::Control }
+}
+
 impl TextInserter {
     pub fn insert(text: &str) -> Result<()> {
         let mut clipboard = Clipboard::new().context("Failed to access clipboard")?;
@@ -37,10 +45,7 @@ impl TextInserter {
         let mut enigo =
             Enigo::new(&Settings::default()).map_err(|e| anyhow::anyhow!("Enigo init: {e}"))?;
 
-        #[cfg(target_os = "macos")]
-        let modifier = Key::Meta;
-        #[cfg(not(target_os = "macos"))]
-        let modifier = Key::Control;
+        let modifier = paste_modifier();
 
         enigo
             .key(modifier, Direction::Press)
@@ -53,5 +58,19 @@ impl TextInserter {
             .map_err(|e| anyhow::anyhow!("Key release failed: {e}"))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paste_modifier_returns_expected() {
+        let m = paste_modifier();
+        #[cfg(target_os = "macos")]
+        assert_eq!(m, Key::Meta);
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(m, Key::Control);
     }
 }

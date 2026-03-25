@@ -9,6 +9,41 @@ pub struct Transcriber {
     language: String,
 }
 
+/// Read a WAV file and return f32 samples normalized to [-1.0, 1.0].
+pub fn read_wav_samples(audio_path: &Path) -> Result<Vec<f32>> {
+    let reader = hound::WavReader::open(audio_path)
+        .context("Failed to open audio file")?;
+
+    let spec = reader.spec();
+    let samples: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Int => {
+            let max_val = (1 << (spec.bits_per_sample - 1)) as f32;
+            reader
+                .into_samples::<i32>()
+                .filter_map(|s| s.ok())
+                .map(|s| s as f32 / max_val)
+                .collect()
+        }
+        hound::SampleFormat::Float => {
+            reader
+                .into_samples::<f32>()
+                .filter_map(|s| s.ok())
+                .collect()
+        }
+    };
+
+    Ok(samples)
+}
+
+/// Concatenate whisper segments into a single trimmed string.
+pub fn join_segments(segments: &[&str]) -> String {
+    let mut text = String::new();
+    for seg in segments {
+        text.push_str(seg);
+    }
+    text.trim().to_string()
+}
+
 impl Transcriber {
     pub fn new(model_path: &Path, language: &str) -> Result<Self> {
         let ctx = WhisperContext::new_with_params(
@@ -24,27 +59,7 @@ impl Transcriber {
     }
 
     pub fn transcribe(&self, audio_path: &Path, translate: bool) -> Result<String> {
-        // Read WAV file into f32 samples
-        let reader = hound::WavReader::open(audio_path)
-            .context("Failed to open audio file")?;
-
-        let spec = reader.spec();
-        let samples: Vec<f32> = match spec.sample_format {
-            hound::SampleFormat::Int => {
-                let max_val = (1 << (spec.bits_per_sample - 1)) as f32;
-                reader
-                    .into_samples::<i32>()
-                    .filter_map(|s| s.ok())
-                    .map(|s| s as f32 / max_val)
-                    .collect()
-            }
-            hound::SampleFormat::Float => {
-                reader
-                    .into_samples::<f32>()
-                    .filter_map(|s| s.ok())
-                    .collect()
-            }
-        };
+        let samples = read_wav_samples(audio_path)?;
 
         if samples.is_empty() {
             return Ok(String::new());
@@ -148,19 +163,108 @@ mod tests {
 
     #[test]
     fn test_find_model_checks_config_dir() {
-        // Create a temporary model file in the config dir location
         let models_dir = Config::dir().join("models");
         let _ = std::fs::create_dir_all(&models_dir);
         let model_path = models_dir.join("ggml-test_temp_model.bin");
-
-        // Write valid GGML-ish content
         std::fs::write(&model_path, b"test model content").unwrap();
 
         let result = find_model("test_temp_model");
         assert!(result.is_some());
         assert_eq!(result.unwrap(), model_path);
 
-        // Clean up
         let _ = std::fs::remove_file(&model_path);
+    }
+
+    // -- read_wav_samples --
+
+    #[test]
+    fn test_read_wav_samples_int16() {
+        use hound::{SampleFormat, WavSpec, WavWriter};
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 16,
+            sample_format: SampleFormat::Int,
+        };
+        let mut writer = WavWriter::create(tmp.path(), spec).unwrap();
+        writer.write_sample(0i16).unwrap();
+        writer.write_sample(16384i16).unwrap();
+        writer.write_sample(-16384i16).unwrap();
+        writer.finalize().unwrap();
+
+        let samples = read_wav_samples(tmp.path()).unwrap();
+        assert_eq!(samples.len(), 3);
+        assert!((samples[0] - 0.0).abs() < 0.01);
+        assert!(samples[1] > 0.4 && samples[1] < 0.6);
+        assert!(samples[2] < -0.4 && samples[2] > -0.6);
+    }
+
+    #[test]
+    fn test_read_wav_samples_float32() {
+        use hound::{SampleFormat, WavSpec, WavWriter};
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 32,
+            sample_format: SampleFormat::Float,
+        };
+        let mut writer = WavWriter::create(tmp.path(), spec).unwrap();
+        writer.write_sample(0.0f32).unwrap();
+        writer.write_sample(0.5f32).unwrap();
+        writer.write_sample(-0.5f32).unwrap();
+        writer.finalize().unwrap();
+
+        let samples = read_wav_samples(tmp.path()).unwrap();
+        assert_eq!(samples.len(), 3);
+        assert!((samples[0] - 0.0).abs() < 0.001);
+        assert!((samples[1] - 0.5).abs() < 0.001);
+        assert!((samples[2] + 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_read_wav_samples_empty() {
+        use hound::{SampleFormat, WavSpec, WavWriter};
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 16,
+            sample_format: SampleFormat::Int,
+        };
+        let writer = WavWriter::create(tmp.path(), spec).unwrap();
+        writer.finalize().unwrap();
+
+        let samples = read_wav_samples(tmp.path()).unwrap();
+        assert!(samples.is_empty());
+    }
+
+    #[test]
+    fn test_read_wav_samples_nonexistent() {
+        let result = read_wav_samples(std::path::Path::new("/nonexistent/file.wav"));
+        assert!(result.is_err());
+    }
+
+    // -- join_segments --
+
+    #[test]
+    fn test_join_segments_empty() {
+        assert_eq!(join_segments(&[]), "");
+    }
+
+    #[test]
+    fn test_join_segments_single() {
+        assert_eq!(join_segments(&[" hello world "]), "hello world");
+    }
+
+    #[test]
+    fn test_join_segments_multiple() {
+        assert_eq!(join_segments(&["hello ", "world"]), "hello world");
+    }
+
+    #[test]
+    fn test_join_segments_trims() {
+        assert_eq!(join_segments(&["  ", " test ", "  "]), "test");
     }
 }

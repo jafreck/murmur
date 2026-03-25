@@ -140,4 +140,26 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         assert!(!is_valid_ggml_file(tmp.path()));
     }
+
+    #[test]
+    fn test_download_already_exists() {
+        // Create a fake model file in the models dir
+        let models_dir = Config::dir().join("models");
+        let _ = std::fs::create_dir_all(&models_dir);
+        let model_path = models_dir.join("ggml-test_download_exists.bin");
+        std::fs::write(&model_path, b"fake model").unwrap();
+
+        // download should return early with the existing path
+        let result = download("test_download_exists", |_| {});
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), model_path);
+
+        let _ = std::fs::remove_file(&model_path);
+    }
+
+    #[test]
+    fn test_base_url_format() {
+        assert!(BASE_URL.starts_with("https://"));
+        assert!(BASE_URL.contains("huggingface"));
+    }
 }

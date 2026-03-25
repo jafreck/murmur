@@ -270,6 +270,31 @@ impl AppState {
     }
 }
 
+/// Convert a TrayAction to the corresponding AppMessage.
+pub fn tray_action_to_message(action: TrayAction) -> AppMessage {
+    match action {
+        TrayAction::Quit => AppMessage::TrayQuit,
+        TrayAction::CopyLastDictation => AppMessage::TrayCopyLast,
+        TrayAction::SetModel(s) => AppMessage::TraySetModel(s),
+        TrayAction::SetLanguage(c) => AppMessage::TraySetLanguage(c),
+        TrayAction::ToggleSpokenPunctuation => AppMessage::TrayToggleSpokenPunctuation,
+        TrayAction::ToggleToggleMode => AppMessage::TrayToggleToggleMode,
+        TrayAction::ToggleTranslate => AppMessage::TrayToggleTranslate,
+        TrayAction::OpenConfig => AppMessage::TrayOpenConfig,
+        TrayAction::ReloadConfig => AppMessage::TrayReloadConfig,
+    }
+}
+
+/// Convert a TrayStateTag to the corresponding TrayState.
+pub fn tag_to_tray_state(tag: &TrayStateTag) -> TrayState {
+    match tag {
+        TrayStateTag::Idle => TrayState::Idle,
+        TrayStateTag::Recording => TrayState::Recording,
+        TrayStateTag::Transcribing => TrayState::Transcribing,
+        TrayStateTag::Error => TrayState::Error,
+    }
+}
+
 pub fn run() -> Result<()> {
     let mut config = Config::load();
 
@@ -338,18 +363,7 @@ pub fn run() -> Result<()> {
 
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             if let Some(action) = tray.match_menu_event(&event) {
-                let msg = match action {
-                    TrayAction::Quit => AppMessage::TrayQuit,
-                    TrayAction::CopyLastDictation => AppMessage::TrayCopyLast,
-                    TrayAction::SetModel(s) => AppMessage::TraySetModel(s),
-                    TrayAction::SetLanguage(c) => AppMessage::TraySetLanguage(c),
-                    TrayAction::ToggleSpokenPunctuation => AppMessage::TrayToggleSpokenPunctuation,
-                    TrayAction::ToggleToggleMode => AppMessage::TrayToggleToggleMode,
-                    TrayAction::ToggleTranslate => AppMessage::TrayToggleTranslate,
-                    TrayAction::OpenConfig => AppMessage::TrayOpenConfig,
-                    TrayAction::ReloadConfig => AppMessage::TrayReloadConfig,
-                };
-                let _ = tx.send(msg);
+                let _ = tx.send(tray_action_to_message(action));
             }
         }
 
@@ -427,13 +441,7 @@ fn apply_effect(
             }
         }
         AppEffect::SetTrayState(tag) => {
-            let ts = match tag {
-                TrayStateTag::Idle => TrayState::Idle,
-                TrayStateTag::Recording => TrayState::Recording,
-                TrayStateTag::Transcribing => TrayState::Transcribing,
-                TrayStateTag::Error => TrayState::Error,
-            };
-            tray.set_state(ts);
+            tray.set_state(tag_to_tray_state(&tag));
         }
         AppEffect::SetTrayModel(size) => {
             tray.set_model(&size);
@@ -735,5 +743,89 @@ mod tests {
         let name = path.file_name().unwrap().to_string_lossy();
         assert!(name.starts_with("recording-"));
         assert!(name.ends_with(".wav"));
+    }
+
+    // -- tray_action_to_message --
+
+    #[test]
+    fn tray_action_to_message_quit() {
+        match tray_action_to_message(TrayAction::Quit) {
+            AppMessage::TrayQuit => {}
+            _ => panic!("expected TrayQuit"),
+        }
+    }
+
+    #[test]
+    fn tray_action_to_message_copy_last() {
+        match tray_action_to_message(TrayAction::CopyLastDictation) {
+            AppMessage::TrayCopyLast => {}
+            _ => panic!("expected TrayCopyLast"),
+        }
+    }
+
+    #[test]
+    fn tray_action_to_message_set_model() {
+        match tray_action_to_message(TrayAction::SetModel("base.en".into())) {
+            AppMessage::TraySetModel(s) => assert_eq!(s, "base.en"),
+            _ => panic!("expected TraySetModel"),
+        }
+    }
+
+    #[test]
+    fn tray_action_to_message_set_language() {
+        match tray_action_to_message(TrayAction::SetLanguage("fr".into())) {
+            AppMessage::TraySetLanguage(c) => assert_eq!(c, "fr"),
+            _ => panic!("expected TraySetLanguage"),
+        }
+    }
+
+    #[test]
+    fn tray_action_to_message_toggle_spoken_punct() {
+        match tray_action_to_message(TrayAction::ToggleSpokenPunctuation) {
+            AppMessage::TrayToggleSpokenPunctuation => {}
+            _ => panic!("expected TrayToggleSpokenPunctuation"),
+        }
+    }
+
+    #[test]
+    fn tray_action_to_message_toggle_mode() {
+        match tray_action_to_message(TrayAction::ToggleToggleMode) {
+            AppMessage::TrayToggleToggleMode => {}
+            _ => panic!("expected TrayToggleToggleMode"),
+        }
+    }
+
+    #[test]
+    fn tray_action_to_message_toggle_translate() {
+        match tray_action_to_message(TrayAction::ToggleTranslate) {
+            AppMessage::TrayToggleTranslate => {}
+            _ => panic!("expected TrayToggleTranslate"),
+        }
+    }
+
+    #[test]
+    fn tray_action_to_message_open_config() {
+        match tray_action_to_message(TrayAction::OpenConfig) {
+            AppMessage::TrayOpenConfig => {}
+            _ => panic!("expected TrayOpenConfig"),
+        }
+    }
+
+    #[test]
+    fn tray_action_to_message_reload_config() {
+        match tray_action_to_message(TrayAction::ReloadConfig) {
+            AppMessage::TrayReloadConfig => {}
+            _ => panic!("expected TrayReloadConfig"),
+        }
+    }
+
+    // -- tag_to_tray_state --
+
+    #[test]
+    fn tag_to_tray_state_all() {
+        assert_eq!(tag_to_tray_state(&TrayStateTag::Idle), TrayState::Idle);
+        assert_eq!(tag_to_tray_state(&TrayStateTag::Recording), TrayState::Recording);
+        assert_eq!(tag_to_tray_state(&TrayStateTag::Transcribing), TrayState::Transcribing);
+        assert_eq!(tag_to_tray_state(&TrayStateTag::Error), TrayState::Error);
     }
 }

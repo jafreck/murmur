@@ -35,19 +35,20 @@ TOTAL_STEPS=7
 
 # ── Animated helpers ─────────────────────────────────────────────────────────
 
-# Braille spinner with pulsing color
+# Pulsing circle indicator
 spinner_start() {
     local msg="$1"
-    local frames=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-    local colors=("\033[1;34m" "\033[1;36m" "\033[1;35m" "\033[1;36m" "\033[1;34m")
+    local frames=("○" "◎" "●" "◉" "●" "◎")
+    local colors=("\033[34m" "\033[36m" "\033[1;36m" "\033[1;37m" "\033[1;36m" "\033[36m")
 
     (
         local i=0
         while true; do
-            local frame="${frames[$((i % ${#frames[@]}))]}"
-            local color="${colors[$((i / 2 % ${#colors[@]}))]}"
+            local idx=$((i % ${#frames[@]}))
+            local frame="${frames[$idx]}"
+            local color="${colors[$idx]}"
             printf "\r  ${color}${frame}${RESET} ${DIM}%s${RESET}  " "$msg"
-            sleep 0.08
+            sleep 0.15
             i=$((i + 1))
         done
     ) &

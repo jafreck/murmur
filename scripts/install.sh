@@ -2,22 +2,25 @@
 #
 # open-bark install script
 #
-# Detects OS and architecture, builds with appropriate feature flags
-# (Metal on Apple Silicon macOS), installs the binary, and registers
-# open-bark as a user-level service (launchd on macOS, systemd on Linux).
+# Downloads a pre-built binary from GitHub releases, installs it, and
+# registers open-bark as a user-level service (launchd/systemd).
+#
+# No build tools required — just curl.
 #
 # Usage:
 #   curl -sSf https://raw.githubusercontent.com/jacobfreck/open-bark/main/scripts/install.sh | bash
 #   # or from a local clone:
 #   ./scripts/install.sh
+#   # specific version:
+#   OPEN_BARK_VERSION=v0.1.0 ./scripts/install.sh
 
 set -euo pipefail
 
-REPO_URL="https://github.com/jacobfreck/open-bark.git"
+REPO="jacobfreck/open-bark"
 INSTALL_DIR="/usr/local/bin"
 APP_NAME="open-bark"
 
-# ── Colors & symbols ────────────────────────────────────────────────────────
+# ── Colors ───────────────────────────────────────────────────────────────────
 
 BOLD="\033[1m"
 DIM="\033[2m"
@@ -25,17 +28,15 @@ RESET="\033[0m"
 RED="\033[1;31m"
 GREEN="\033[1;32m"
 YELLOW="\033[1;33m"
-BLUE="\033[1;34m"
 CYAN="\033[1;36m"
 WHITE="\033[1;37m"
 
 SPINNER_PID=""
 STEP_COUNT=0
-TOTAL_STEPS=7
+TOTAL_STEPS=5
 
 # ── Animated helpers ─────────────────────────────────────────────────────────
 
-# Pulsing circle indicator
 spinner_start() {
     local msg="$1"
     local frames=("○" "◎" "●" "◉" "●" "◎")
@@ -45,9 +46,7 @@ spinner_start() {
         local i=0
         while true; do
             local idx=$((i % ${#frames[@]}))
-            local frame="${frames[$idx]}"
-            local color="${colors[$idx]}"
-            printf "\r  ${color}${frame}${RESET} ${DIM}%s${RESET}  " "$msg"
+            printf "\r  ${colors[$idx]}${frames[$idx]}${RESET} ${DIM}%s${RESET}  " "$msg"
             sleep 0.15
             i=$((i + 1))
         done
@@ -64,97 +63,29 @@ spinner_stop() {
     fi
 }
 
-# Run a command with a spinner, show result
 run_step() {
-    local label="$1"
-    shift
-
-    STEP_COUNT=$((STEP_COUNT + 1))
+    local label="$1"; shift
     spinner_start "$label"
-
-    local output
-    local exit_code=0
+    local output exit_code=0
     output=$("$@" 2>&1) || exit_code=$?
-
     spinner_stop
-
     if [ $exit_code -eq 0 ]; then
         printf "  ${GREEN}✔${RESET} %s\n" "$label"
     else
         printf "  ${RED}✖${RESET} %s\n" "$label"
-        if [ -n "$output" ]; then
-            echo ""
-            printf "${DIM}%s${RESET}\n" "$output"
-        fi
+        [ -n "$output" ] && printf "\n${DIM}%s${RESET}\n" "$output"
         exit 1
     fi
 }
 
 step_header() {
-    local label="$1"
     STEP_COUNT=$((STEP_COUNT + 1))
-    printf "\n  ${WHITE}[${STEP_COUNT}/${TOTAL_STEPS}]${RESET} ${BOLD}%s${RESET}\n" "$label"
+    printf "\n  ${WHITE}[${STEP_COUNT}/${TOTAL_STEPS}]${RESET} ${BOLD}%s${RESET}\n" "$1"
 }
 
-info()  { printf "  ${BLUE}│${RESET} %s\n" "$1"; }
-detail(){ printf "  ${DIM}│ %s${RESET}\n" "$1"; }
+info()  { printf "  ${CYAN}│${RESET} %s\n" "$1"; }
 warn()  { printf "  ${YELLOW}⚠${RESET}  %s\n" "$1"; }
 error() { spinner_stop; printf "\n  ${RED}✖ Error:${RESET} %s\n\n" "$1" >&2; exit 1; }
-
-require() {
-    command -v "$1" >/dev/null 2>&1 || error "'$1' is required but not found. Please install it first."
-}
-
-# Animated progress bar for long builds
-progress_bar() {
-    local label="$1"
-    local log_file="$2"
-
-    local bar_width=30
-    local frames=("░" "▒" "▓" "█")
-    local pulse_colors=("\033[34m" "\033[36m" "\033[35m" "\033[36m" "\033[34m")
-    local i=0
-    local crate_count=0
-    local last_crate=""
-
-    (
-        while true; do
-            # Count compiled crates from build log
-            if [ -f "$log_file" ]; then
-                crate_count=$(grep -c "Compiling\|Downloading" "$log_file" 2>/dev/null || echo "0")
-                last_crate=$(grep "Compiling" "$log_file" 2>/dev/null | tail -1 | sed 's/.*Compiling //' | sed 's/ v.*//' || echo "")
-            fi
-
-            # Build animated bar
-            local bar=""
-            for j in $(seq 0 $((bar_width - 1))); do
-                local offset=$(( (i + j) % 20 ))
-                if [ $offset -lt 5 ]; then
-                    local ci=$(( (i + j) / 3 % ${#pulse_colors[@]} ))
-                    bar="${bar}${pulse_colors[$ci]}${frames[$((offset % 4))]}${RESET}"
-                else
-                    bar="${bar}${DIM}─${RESET}"
-                fi
-            done
-
-            local status_text="$label"
-            if [ -n "$last_crate" ]; then
-                status_text="Compiling ${last_crate}"
-            fi
-            # Truncate status to 35 chars
-            if [ ${#status_text} -gt 35 ]; then
-                status_text="${status_text:0:32}..."
-            fi
-
-            printf "\r  ${CYAN}⟫${RESET} ${bar} ${DIM}%s${RESET} ${DIM}(%d crates)${RESET}    " \
-                "$status_text" "$crate_count"
-
-            sleep 0.1
-            i=$((i + 1))
-        done
-    ) &
-    SPINNER_PID=$!
-}
 
 # ── Detect platform ─────────────────────────────────────────────────────────
 
@@ -165,7 +96,7 @@ detect_platform() {
     case "$OS" in
         Darwin) PLATFORM="macos" ;;
         Linux)  PLATFORM="linux" ;;
-        *)      error "Unsupported OS: $OS. Only macOS and Linux are supported." ;;
+        *)      error "Unsupported OS: $OS. Use install.ps1 for Windows." ;;
     esac
 
     case "$ARCH" in
@@ -173,119 +104,72 @@ detect_platform() {
         x86_64)        ARCH_LABEL="x86_64" ;;
         *)             error "Unsupported architecture: $ARCH" ;;
     esac
-}
-
-# ── Choose build features ───────────────────────────────────────────────────
-
-choose_features() {
-    CARGO_FEATURES=""
-    GPU_LABEL="CPU-only"
 
     if [ "$PLATFORM" = "macos" ] && [ "$ARCH_LABEL" = "arm64" ]; then
-        CARGO_FEATURES="--features metal"
+        ARTIFACT="open-bark-darwin-arm64"
         GPU_LABEL="Metal"
-    elif [ "$PLATFORM" = "linux" ]; then
-        if command -v nvcc >/dev/null 2>&1; then
-            CARGO_FEATURES="--features cuda"
-            GPU_LABEL="CUDA"
-        elif command -v vulkaninfo >/dev/null 2>&1; then
-            CARGO_FEATURES="--features vulkan"
-            GPU_LABEL="Vulkan"
-        fi
-    fi
-}
-
-# ── Install system dependencies ──────────────────────────────────────────────
-
-install_dependencies() {
-    if [ "$PLATFORM" = "linux" ]; then
-        if command -v apt-get >/dev/null 2>&1; then
-            run_step "Installing system libraries (apt)" \
-                sudo apt-get install -y -qq build-essential cmake libasound2-dev \
-                    libgtk-3-dev libayatana-appindicator3-dev pkg-config
-        elif command -v dnf >/dev/null 2>&1; then
-            run_step "Installing system libraries (dnf)" \
-                sudo dnf install -y -q gcc gcc-c++ cmake alsa-lib-devel \
-                    gtk3-devel libayatana-appindicator-gtk3-devel pkg-config
-        elif command -v pacman >/dev/null 2>&1; then
-            run_step "Installing system libraries (pacman)" \
-                sudo pacman -Sy --noconfirm --quiet base-devel cmake alsa-lib \
-                    gtk3 libayatana-appindicator pkg-config
-        else
-            warn "Unknown package manager — ensure build deps are installed manually"
-        fi
-    fi
-}
-
-# ── Install Rust (if needed) ────────────────────────────────────────────────
-
-install_rust() {
-    if ! command -v cargo >/dev/null 2>&1; then
-        run_step "Installing Rust via rustup" \
-            bash -c 'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y'
-        # shellcheck source=/dev/null
-        source "$HOME/.cargo/env"
-    fi
-}
-
-# ── Clone & build ───────────────────────────────────────────────────────────
-
-build() {
-    BUILD_DIR="$(mktemp -d)"
-    trap 'rm -rf "$BUILD_DIR"' EXIT
-
-    if [ -f "Cargo.toml" ] && grep -q 'name = "open-bark"' Cargo.toml 2>/dev/null; then
-        BUILD_DIR="$(pwd)"
-        trap - EXIT
-        detail "Building from local repository"
+    elif [ "$PLATFORM" = "macos" ]; then
+        ARTIFACT="open-bark-darwin-x86_64"
+        GPU_LABEL="CPU"
     else
-        run_step "Cloning repository" \
-            git clone --depth 1 "$REPO_URL" "$BUILD_DIR"
-        cd "$BUILD_DIR"
-    fi
-
-    # Build with animated progress
-    local log_file
-    log_file="$(mktemp)"
-
-    progress_bar "Building release" "$log_file"
-
-    local exit_code=0
-    # shellcheck disable=SC2086
-    cargo build --release $CARGO_FEATURES >"$log_file" 2>&1 || exit_code=$?
-
-    spinner_stop
-    rm -f "$log_file"
-
-    if [ $exit_code -eq 0 ]; then
-        printf "\r  ${GREEN}✔${RESET} Build complete\n"
-    else
-        printf "\r  ${RED}✖${RESET} Build failed\n"
-        exit 1
+        ARTIFACT="open-bark-linux-x86_64"
+        GPU_LABEL="CPU"
     fi
 }
 
-# ── Install binary ──────────────────────────────────────────────────────────
+# ── Resolve version ─────────────────────────────────────────────────────────
+
+resolve_version() {
+    VERSION="${OPEN_BARK_VERSION:-latest}"
+
+    if [ "$VERSION" = "latest" ]; then
+        VERSION=$(curl -sI "https://github.com/$REPO/releases/latest" \
+            | grep -i '^location:' \
+            | sed 's|.*/tag/||' \
+            | tr -d '\r\n')
+        [ -n "$VERSION" ] || error "Could not determine latest release. Set OPEN_BARK_VERSION=v0.1.0 to specify."
+    fi
+}
+
+# ── Download ─────────────────────────────────────────────────────────────────
+
+download_binary() {
+    local url="https://github.com/$REPO/releases/download/${VERSION}/${ARTIFACT}.tar.gz"
+    TMP_DIR="$(mktemp -d)"
+
+    curl -fsSL "$url" -o "$TMP_DIR/$ARTIFACT.tar.gz" \
+        || error "Download failed.\n         URL: $url\n         Does release $VERSION have artifact $ARTIFACT?"
+
+    tar xzf "$TMP_DIR/$ARTIFACT.tar.gz" -C "$TMP_DIR"
+    chmod +x "$TMP_DIR/$ARTIFACT"
+}
+
+# ── Install ──────────────────────────────────────────────────────────────────
 
 install_binary() {
-    BINARY="target/release/$APP_NAME"
-    [ -f "$BINARY" ] || error "Build artifact not found at $BINARY"
-
-    run_step "Installing binary to $INSTALL_DIR" \
-        sudo install -m 755 "$BINARY" "$INSTALL_DIR/$APP_NAME"
+    sudo install -m 755 "$TMP_DIR/$ARTIFACT" "$INSTALL_DIR/$APP_NAME"
+    rm -rf "$TMP_DIR"
 }
 
-# ── Register as service ─────────────────────────────────────────────────────
+# ── Service setup ────────────────────────────────────────────────────────────
+
+setup_service() {
+    if [ "$PLATFORM" = "macos" ]; then
+        setup_service_macos
+    else
+        setup_service_linux
+    fi
+}
 
 setup_service_macos() {
-    PLIST_DIR="$HOME/Library/LaunchAgents"
-    PLIST="$PLIST_DIR/com.jacobfreck.open-bark.plist"
-    BINARY_PATH="$INSTALL_DIR/$APP_NAME"
-    LOG_DIR="$HOME/Library/Logs/open-bark"
+    local plist_dir="$HOME/Library/LaunchAgents"
+    local plist="$plist_dir/com.jacobfreck.open-bark.plist"
+    local bin="$INSTALL_DIR/$APP_NAME"
+    local log_dir="$HOME/Library/Logs/open-bark"
 
-    mkdir -p "$PLIST_DIR" "$LOG_DIR"
+    mkdir -p "$plist_dir" "$log_dir"
 
-    cat > "$PLIST" <<EOF
+    cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -293,28 +177,22 @@ setup_service_macos() {
 <dict>
     <key>Label</key>
     <string>com.jacobfreck.open-bark</string>
-
     <key>ProgramArguments</key>
     <array>
-        <string>${BINARY_PATH}</string>
+        <string>${bin}</string>
         <string>start</string>
     </array>
-
     <key>RunAtLoad</key>
     <true/>
-
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
         <false/>
     </dict>
-
     <key>StandardOutPath</key>
-    <string>${LOG_DIR}/stdout.log</string>
-
+    <string>${log_dir}/stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>${LOG_DIR}/stderr.log</string>
-
+    <string>${log_dir}/stderr.log</string>
     <key>ProcessType</key>
     <string>Interactive</string>
 </dict>
@@ -322,24 +200,24 @@ setup_service_macos() {
 EOF
 
     launchctl bootout "gui/$(id -u)/com.jacobfreck.open-bark" 2>/dev/null || true
-    launchctl bootstrap "gui/$(id -u)" "$PLIST"
+    launchctl bootstrap "gui/$(id -u)" "$plist"
 }
 
 setup_service_linux() {
-    SERVICE_DIR="$HOME/.config/systemd/user"
-    SERVICE="$SERVICE_DIR/open-bark.service"
-    BINARY_PATH="$INSTALL_DIR/$APP_NAME"
+    local svc_dir="$HOME/.config/systemd/user"
+    local svc="$svc_dir/open-bark.service"
+    local bin="$INSTALL_DIR/$APP_NAME"
 
-    mkdir -p "$SERVICE_DIR"
+    mkdir -p "$svc_dir"
 
-    cat > "$SERVICE" <<EOF
+    cat > "$svc" <<EOF
 [Unit]
 Description=open-bark voice dictation
 After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=${BINARY_PATH} start
+ExecStart=${bin} start
 Restart=on-failure
 RestartSec=5
 Environment=DISPLAY=:0
@@ -352,15 +230,7 @@ EOF
     systemctl --user enable --now open-bark.service
 }
 
-setup_service() {
-    if [ "$PLATFORM" = "macos" ]; then
-        run_step "Registering launchd service" setup_service_macos
-    else
-        run_step "Registering systemd service" setup_service_linux
-    fi
-}
-
-# ── Post-install ─────────────────────────────────────────────────────────────
+# ── Output ───────────────────────────────────────────────────────────────────
 
 print_banner() {
     echo ""
@@ -372,9 +242,6 @@ print_banner() {
 }
 
 print_summary() {
-    local rust_ver
-    rust_ver="$(rustc --version 2>/dev/null | cut -d' ' -f2 || echo "?")"
-
     echo ""
     printf "  ${CYAN}┌──────────────────────────────────────┐${RESET}\n"
     printf "  ${CYAN}│${RESET}                                      ${CYAN}│${RESET}\n"
@@ -385,7 +252,7 @@ print_summary() {
     printf "  ${DIM}────────────────────────────────────────${RESET}\n"
     printf "  ${WHITE}Platform${RESET}   %s (%s)\n" "$PLATFORM" "$ARCH_LABEL"
     printf "  ${WHITE}GPU${RESET}        %s\n" "$GPU_LABEL"
-    printf "  ${WHITE}Rust${RESET}       %s\n" "$rust_ver"
+    printf "  ${WHITE}Version${RESET}    %s\n" "$VERSION"
     printf "  ${WHITE}Binary${RESET}     %s\n" "$INSTALL_DIR/$APP_NAME"
     printf "  ${DIM}────────────────────────────────────────${RESET}\n"
     echo ""
@@ -417,9 +284,7 @@ print_summary() {
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-cleanup() {
-    spinner_stop
-}
+cleanup() { spinner_stop; }
 trap cleanup EXIT
 
 main() {
@@ -427,31 +292,21 @@ main() {
 
     step_header "Detecting platform"
     detect_platform
-    choose_features
     info "$PLATFORM ($ARCH_LABEL) · GPU: $GPU_LABEL"
 
-    step_header "Checking prerequisites"
-    install_rust
-    require git
-    require cmake
-    printf "  ${GREEN}✔${RESET} All prerequisites met\n"
+    step_header "Resolving version"
+    run_step "Finding latest release" resolve_version
+    info "Version: $VERSION"
 
-    step_header "Installing dependencies"
-    install_dependencies
-    if [ "$PLATFORM" = "macos" ]; then
-        printf "  ${GREEN}✔${RESET} Xcode tools provide everything needed\n"
-    fi
+    step_header "Downloading"
+    run_step "Downloading $ARTIFACT ($VERSION)" download_binary
 
-    step_header "Building open-bark"
-    build
-
-    step_header "Installing binary"
-    install_binary
+    step_header "Installing"
+    run_step "Installing to $INSTALL_DIR" install_binary
 
     step_header "Configuring service"
-    setup_service
+    run_step "Registering service" setup_service
 
-    step_header "Done"
     print_summary
 }
 

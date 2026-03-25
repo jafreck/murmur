@@ -2,7 +2,6 @@ use anyhow::Result;
 use log::{error, info};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::audio::AudioRecorder;
 use crate::config::Config;
@@ -17,6 +16,43 @@ use crate::VERSION;
 
 use tray_icon::menu::MenuEvent;
 use tray_icon::TrayIconEvent;
+
+/// On macOS, initialize NSApplication with Accessory policy (no dock icon)
+/// so the system tray icon renders and Cocoa events are dispatched.
+#[cfg(target_os = "macos")]
+fn init_macos_app() {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+
+    let mtm = MainThreadMarker::new()
+        .expect("init_macos_app must be called on the main thread");
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+}
+
+/// Pump the macOS run loop for `seconds`, allowing Cocoa to process events
+/// (tray icon rendering, menu interactions, etc.).
+#[cfg(target_os = "macos")]
+fn pump_event_loop() {
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        static kCFRunLoopDefaultMode: *const std::ffi::c_void;
+        fn CFRunLoopRunInMode(
+            mode: *const std::ffi::c_void,
+            seconds: f64,
+            return_after_source_handled: u8,
+        ) -> i32;
+    }
+    unsafe {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0 / 60.0, 0);
+    }
+}
+
+/// On non-macOS platforms, just sleep briefly.
+#[cfg(not(target_os = "macos"))]
+fn pump_event_loop() {
+    std::thread::sleep(std::time::Duration::from_millis(16));
+}
 
 enum AppMessage {
     KeyDown,
@@ -55,6 +91,10 @@ pub fn run() -> Result<()> {
     // Log platform-specific permission hints
     crate::permissions::check_accessibility();
     crate::permissions::check_microphone();
+
+    // Initialize macOS NSApplication (required for tray icon rendering)
+    #[cfg(target_os = "macos")]
+    init_macos_app();
 
     // Create tray on the main thread
     let mut tray = TrayController::new()?;
@@ -180,8 +220,8 @@ pub fn run() -> Result<()> {
             // Future: left-click to toggle recording, etc.
         }
 
-        // Sleep to avoid busy-looping (~60 iterations/sec)
-        std::thread::sleep(Duration::from_millis(16));
+        // Pump the platform event loop (~60 Hz)
+        pump_event_loop();
     }
 }
 

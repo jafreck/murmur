@@ -1,0 +1,68 @@
+[package]
+name = "open-bark"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-platform, local voice dictation. Hold a key, speak, release — your words appear at the cursor. Powered by whisper.cpp, runs 100% on-device."
+license = "MIT"
+repository = "https://github.com/jacobfreck/open-bark"
+readme = "README.md"
+keywords = ["whisper", "dictation", "voice", "speech-to-text"]
+categories = ["multimedia::audio"]
+
+[dependencies]
+# Speech-to-text: direct FFI bindings to whisper.cpp (statically linked)
+whisper-rs = "0.16"
+
+# Audio capture + WAV writing
+cpal = "0.15"
+hound = "3.5"
+
+# System tray icon + context menu
+tray-icon = "0.19"
+muda = "0.15"
+
+# Global keyboard events (key-down + key-up for hold-to-talk)
+rdev = "0.5"
+
+# Clipboard access (by 1Password)
+arboard = "3"
+
+# Simulated keyboard input (Ctrl+V / Cmd+V paste)
+enigo = "0.2"
+
+# Config + serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Model download from HuggingFace
+reqwest = { version = "0.12", features = ["blocking"] }
+
+# Cross-platform config/data directories
+dirs = "5"
+
+# Text post-processing (spoken punctuation)
+regex = "1"
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
+# Error handling
+anyhow = "1"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+[features]
+default = []
+cuda = ["whisper-rs/cuda"]
+metal = ["whisper-rs/metal"]
+vulkan = ["whisper-rs/vulkan"]
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+
+[dev-dependencies]
+tempfile = "3"

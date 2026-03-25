@@ -1,6 +1,8 @@
 use regex::Regex;
 
 /// Replacement rules for spoken punctuation.
+/// Multi-word patterns must come before their single-word substrings
+/// (e.g. "semi colon" before "colon") to avoid partial matches.
 const REPLACEMENTS: &[(&str, &str)] = &[
     (r"\bperiod\b", "."),
     (r"\bfull stop\b", "."),
@@ -8,9 +10,9 @@ const REPLACEMENTS: &[(&str, &str)] = &[
     (r"\bquestion mark\b", "?"),
     (r"\bexclamation mark\b", "!"),
     (r"\bexclamation point\b", "!"),
-    (r"\bcolon\b", ":"),
     (r"\bsemicolon\b", ";"),
     (r"\bsemi colon\b", ";"),
+    (r"\bcolon\b", ":"),
     (r"\bellipsis\b", "..."),
     (r"\bdash\b", " —"),
     (r"\bhyphen\b", "-"),
@@ -134,11 +136,9 @@ mod tests {
 
     #[test]
     fn test_semi_colon() {
-        // "colon" is matched before "semi colon" in REPLACEMENTS, so
-        // "semi colon" → "semi :" (the colon rule fires first).
-        // "semicolon" (one word) works correctly:
-        let result = process("first semicolon second");
+        let result = process("first semi colon second");
         assert!(result.contains(';'), "result was: {result}");
+        assert!(!result.contains("semi"), "result was: {result}");
     }
 
     #[test]

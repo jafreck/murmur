@@ -51,6 +51,7 @@ anyhow = "1"
 # Logging
 log = "0.4"
 env_logger = "0.11"
+png = "0.18.1"
 
 # macOS: Cocoa event loop for system tray (already transitive deps of tray-icon)
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -31,6 +31,7 @@ pub enum TrayAction {
     SetLanguage(String),
     ToggleSpokenPunctuation,
     ToggleToggleMode,
+    ToggleTranslate,
     Quit,
 }
 
@@ -57,6 +58,7 @@ pub struct TrayController {
     copy_last_id: MenuId,
     spoken_punct_id: MenuId,
     toggle_mode_id: MenuId,
+    translate_id: MenuId,
     quit_id: MenuId,
 
     // Radio groups
@@ -68,6 +70,8 @@ pub struct TrayController {
     spoken_punct_item: CheckMenuItem,
     #[allow(dead_code)]
     toggle_mode_item: CheckMenuItem,
+    #[allow(dead_code)]
+    translate_item: CheckMenuItem,
 
     // Status display
     status_item: MenuItem,
@@ -157,6 +161,10 @@ impl TrayController {
             CheckMenuItem::new("Toggle Mode", true, config.toggle_mode, None);
         let toggle_mode_id = toggle_mode_item.id().clone();
 
+        let translate_item =
+            CheckMenuItem::new("Translate to English", true, config.translate_to_english, None);
+        let translate_id = translate_item.id().clone();
+
         // ── Quit ────────────────────────────────────────────────────────
         let quit = MenuItem::new("Quit", true, None);
         let quit_id = quit.id().clone();
@@ -173,6 +181,7 @@ impl TrayController {
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&spoken_punct_item)?;
         menu.append(&toggle_mode_item)?;
+        menu.append(&translate_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&quit)?;
 
@@ -194,11 +203,13 @@ impl TrayController {
             copy_last_id,
             spoken_punct_id,
             toggle_mode_id,
+            translate_id,
             quit_id,
             model_entries,
             language_entries,
             spoken_punct_item,
             toggle_mode_item,
+            translate_item,
             status_item,
             hotkey_item,
             idle_icon,
@@ -290,6 +301,9 @@ impl TrayController {
         if id == &self.toggle_mode_id {
             return Some(TrayAction::ToggleToggleMode);
         }
+        if id == &self.translate_id {
+            return Some(TrayAction::ToggleTranslate);
+        }
 
         for entry in &self.model_entries {
             if id == &entry.id {
@@ -307,70 +321,54 @@ impl TrayController {
     }
 }
 
-/// 32×32 pixel-art shade map for a full-body barking dog.
+/// The bark icon PNG, embedded at compile time.
+const BARK_PNG: &[u8] = include_bytes!("../assets/icons/bark.png");
+
+/// Decode [`BARK_PNG`] and tint it to the given base colour.
 ///
-/// Shade key:
-///   `#` outline · `D` dark · `M` mid · `L` light · `H` highlight
-///   `W` white (eye) · `R` red accent (collar / tongue) · `.` transparent
-const BARK_SHADES: [&str; 32] = [
-    "......................#.........",
-    ".....................#D#........",
-    ".....................#DD##......",
-    "....................#######.....",
-    "...................#MLLLLLM#....",
-    "..................#MMHHHHHMM#...",
-    "..................#MMLLLLL###...",
-    "..................#MMMMW#M#LL##",
-    ".##...............#MMMMMMM#MM##",
-    "..M...............#MMMMMMM####.",
-    "..M................#RRRRDD.....",
-    "..M.................#MMMMMRR#..",
-    "..M#................L######M#..",
-    "...M.......######..#MMMM####..",
-    "...M#...LLLLLLLLLLLMMMMM.......",
-    "....M..#HHHHHHHHHHHMMMMM.......",
-    ".....##MLLLLLLLLLLLMMMM........",
-    ".....#MMMMMMMMMMMMMMMM#........",
-    ".....#MMMMMMMMMMMMMMMM#........",
-    ".....#MMMMMMMMMMMMMMMM#........",
-    ".....#MMMMMMMMMMMMMMMM#........",
-    "......#MMMMMMMMMMMMMM#.........",
-    ".......#DDDDDDDDDDDM#.........",
-    "......######DDD######..........",
-    "......#D##L#####D##L#..........",
-    "......#D##M#...#D##M#..........",
-    "......#D##M#...#D##M#..........",
-    "......#D##M#...#D##M#..........",
-    ".....########.########.........",
-    ".....########.########.........",
-    "................................",
-    "................................",
-];
-
-/// Apply a brightness percentage to a colour channel, clamping to 255.
-fn shade(base: u8, pct: u16) -> u8 {
-    ((base as u16 * pct) / 100).min(255) as u8
-}
-
-/// Generate a 32×32 RGBA icon using the barking-dog shade map tinted to the
-/// given base colour.
+/// Source pixels are treated as a grayscale luminance mask: brighter pixels map
+/// closer to the supplied (r, g, b) colour while darker pixels stay dark.
+/// Fully transparent pixels remain transparent.
 fn make_bark_icon(r: u8, g: u8, b: u8, a: u8) -> Result<Icon> {
-    let size = 32u32;
-    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
-    for row in &BARK_SHADES {
-        for ch in row.bytes() {
-            let px: [u8; 4] = match ch {
-                b'#' => [shade(r, 15), shade(g, 15), shade(b, 15), a],
-                b'D' => [shade(r, 40), shade(g, 40), shade(b, 40), a],
-                b'M' => [shade(r, 65), shade(g, 65), shade(b, 65), a],
-                b'L' => [shade(r, 85), shade(g, 85), shade(b, 85), a],
-                b'H' => [r, g, b, a],
-                b'W' => [240, 240, 240, a],
-                b'R' => [200, 60, 60, a],
-                _ => [0, 0, 0, 0],
-            };
-            rgba.extend_from_slice(&px);
+    let cursor = std::io::Cursor::new(BARK_PNG);
+    let decoder = png::Decoder::new(cursor);
+    let mut reader = decoder.read_info().map_err(|e| anyhow::anyhow!("PNG decode: {e}"))?;
+    let mut buf = vec![0u8; reader.output_buffer_size().expect("PNG info missing")];
+    let info = reader.next_frame(&mut buf).map_err(|e| anyhow::anyhow!("PNG frame: {e}"))?;
+    let width = info.width;
+    let height = info.height;
+
+    let src = &buf[..info.buffer_size()];
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+
+    let stride = match info.color_type {
+        png::ColorType::Rgba => 4,
+        png::ColorType::Rgb => 3,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Grayscale => 1,
+        other => anyhow::bail!("Unsupported PNG colour type: {other:?}"),
+    };
+
+    for pixel in src.chunks_exact(stride) {
+        let (lum, pa) = match stride {
+            4 => (pixel[0] as u16, pixel[3]),
+            3 => (pixel[0] as u16, 255),
+            2 => (pixel[0] as u16, pixel[1]),
+            1 => (pixel[0] as u16, 255),
+            _ => unreachable!(),
+        };
+
+        if pa == 0 {
+            rgba.extend_from_slice(&[0, 0, 0, 0]);
+        } else {
+            // Tint: use source luminance to scale the target colour.
+            let tr = ((r as u16 * lum) / 255u16).min(255) as u8;
+            let tg = ((g as u16 * lum) / 255u16).min(255) as u8;
+            let tb = ((b as u16 * lum) / 255u16).min(255) as u8;
+            let ta = ((a as u16 * pa as u16) / 255u16).min(255) as u8;
+            rgba.extend_from_slice(&[tr, tg, tb, ta]);
         }
     }
-    Icon::from_rgba(rgba, size, size).map_err(|e| anyhow::anyhow!("Icon error: {e}"))
+
+    Icon::from_rgba(rgba, width, height).map_err(|e| anyhow::anyhow!("Icon error: {e}"))
 }

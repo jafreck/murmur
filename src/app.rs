@@ -63,6 +63,7 @@ enum AppMessage {
     TraySetLanguage(String),
     TrayToggleSpokenPunctuation,
     TrayToggleToggleMode,
+    TrayToggleTranslate,
     TranscriptionDone(String),
     TranscriptionError(String),
 }
@@ -130,6 +131,7 @@ pub fn run() -> Result<()> {
     let mut last_transcription: Option<String> = None;
     let mut toggle_mode = config.toggle_mode;
     let mut spoken_punctuation = config.spoken_punctuation;
+    let mut translate_to_english = config.translate_to_english;
     let max_recordings = Config::effective_max_recordings(config.max_recordings);
 
     println!("open-bark v{VERSION}");
@@ -150,6 +152,7 @@ pub fn run() -> Result<()> {
                                 &mut is_pressed,
                                 &transcriber,
                                 spoken_punctuation,
+                                translate_to_english,
                                 max_recordings,
                                 tx.clone(),
                             );
@@ -170,6 +173,7 @@ pub fn run() -> Result<()> {
                             &mut is_pressed,
                             &transcriber,
                             spoken_punctuation,
+                            translate_to_english,
                             max_recordings,
                             tx.clone(),
                         );
@@ -237,6 +241,14 @@ pub fn run() -> Result<()> {
                     }
                     info!("Toggle mode: {}", if toggle_mode { "on" } else { "off" });
                 }
+                AppMessage::TrayToggleTranslate => {
+                    translate_to_english = !translate_to_english;
+                    config.translate_to_english = translate_to_english;
+                    if let Err(e) = config.save() {
+                        error!("Failed to save config: {e}");
+                    }
+                    info!("Translate to English: {}", if translate_to_english { "on" } else { "off" });
+                }
             }
         }
 
@@ -261,6 +273,9 @@ pub fn run() -> Result<()> {
                     }
                     TrayAction::ToggleToggleMode => {
                         let _ = tx.send(AppMessage::TrayToggleToggleMode);
+                    }
+                    TrayAction::ToggleTranslate => {
+                        let _ = tx.send(AppMessage::TrayToggleTranslate);
                     }
                 }
             }
@@ -300,6 +315,7 @@ fn start_transcribing(
     is_pressed: &mut bool,
     transcriber: &Arc<Transcriber>,
     spoken_punctuation: bool,
+    translate_to_english: bool,
     max_recordings: u32,
     tx: mpsc::Sender<AppMessage>,
 ) {
@@ -316,7 +332,7 @@ fn start_transcribing(
 
     let transcriber = Arc::clone(transcriber);
     std::thread::spawn(move || {
-        let result = transcriber.transcribe(&audio_path);
+        let result = transcriber.transcribe(&audio_path, translate_to_english);
 
         if max_recordings == 0 {
             let _ = std::fs::remove_file(&audio_path);

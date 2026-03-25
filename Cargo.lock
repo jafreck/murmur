@@ -2181,6 +2181,7 @@ dependencies = [
  "log",
  "objc2",
  "objc2-app-kit",
+ "png 0.18.1",
  "rdev",
  "regex",
  "reqwest",

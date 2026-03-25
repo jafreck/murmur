@@ -102,6 +102,8 @@ pub struct Config {
     pub max_recordings: u32,
     #[serde(default)]
     pub toggle_mode: bool,
+    #[serde(default)]
+    pub translate_to_english: bool,
 }
 
 impl Default for Config {
@@ -113,6 +115,7 @@ impl Default for Config {
             spoken_punctuation: false,
             max_recordings: 0,
             toggle_mode: false,
+            translate_to_english: false,
         }
     }
 }
@@ -218,6 +221,7 @@ mod tests {
             spoken_punctuation: true,
             max_recordings: 10,
             toggle_mode: true,
+            translate_to_english: true,
         };
 
         let json = serde_json::to_string(&cfg).unwrap();
@@ -229,5 +233,6 @@ mod tests {
         assert!(parsed.spoken_punctuation);
         assert_eq!(parsed.max_recordings, 10);
         assert!(parsed.toggle_mode);
+        assert!(parsed.translate_to_english);
     }
 }

@@ -84,7 +84,8 @@ pub enum AppMessage {
     TranscriptionError(String),
     StreamingPartialText(String),
     /// A new Transcriber has been loaded in the background and is ready to swap in.
-    TranscriberReady(Arc<Transcriber>),
+    /// The u64 is the reload generation; stale reloads are discarded.
+    TranscriberReady(Arc<Transcriber>, u64),
 }
 
 /// Effect returned by the app state machine in response to a message.
@@ -104,7 +105,7 @@ pub enum AppEffect {
     SetTrayModel(String),
     SetTrayLanguage(String),
     /// Download the model if needed and rebuild the Transcriber in a background thread.
-    ReloadTranscriber,
+    ReloadTranscriber(u64),
     Quit,
     LogError(String),
 }
@@ -132,6 +133,10 @@ pub struct AppState {
     /// When set, the final full-transcription result is suppressed to
     /// avoid duplicating text that was already inserted incrementally.
     pub streaming_active: bool,
+    /// Monotonic counter incremented on each ReloadTranscriber request.
+    /// Used to discard stale transcriber loads when the user changes
+    /// model/language multiple times quickly.
+    pub reload_generation: u64,
 }
 
 impl AppState {
@@ -147,6 +152,7 @@ impl AppState {
             model_size: config.model_size.clone(),
             language: config.language.clone(),
             streaming_active: false,
+            reload_generation: 0,
         }
     }
 
@@ -175,7 +181,7 @@ impl AppState {
             AppMessage::TrayOpenConfig | AppMessage::TrayReloadConfig => vec![AppEffect::None],
             // TranscriberReady is handled directly in the run() loop before
             // reaching handle_message, but we need an arm for exhaustiveness.
-            AppMessage::TranscriberReady(_) => vec![AppEffect::None],
+            AppMessage::TranscriberReady(_, _) => vec![AppEffect::None],
             AppMessage::StreamingPartialText(text) => {
                 if !text.is_empty() {
                     vec![AppEffect::InsertText(text.clone())]
@@ -277,19 +283,21 @@ impl AppState {
 
     fn on_set_model(&mut self, size: &str) -> Vec<AppEffect> {
         self.model_size = size.to_string();
+        self.reload_generation += 1;
         vec![
             AppEffect::SaveConfig,
             AppEffect::SetTrayModel(size.to_string()),
-            AppEffect::ReloadTranscriber,
+            AppEffect::ReloadTranscriber(self.reload_generation),
         ]
     }
 
     fn on_set_language(&mut self, code: &str) -> Vec<AppEffect> {
         self.language = code.to_string();
+        self.reload_generation += 1;
         vec![
             AppEffect::SaveConfig,
             AppEffect::SetTrayLanguage(code.to_string()),
-            AppEffect::ReloadTranscriber,
+            AppEffect::ReloadTranscriber(self.reload_generation),
         ]
     }
 
@@ -415,9 +423,13 @@ pub fn run() -> Result<()> {
         while let Ok(msg) = rx.try_recv() {
             // TranscriberReady carries an Arc that must be moved out,
             // so handle it directly instead of going through the state machine.
-            if let AppMessage::TranscriberReady(new_t) = msg {
-                transcriber = new_t;
-                info!("Transcriber reloaded with new model");
+            if let AppMessage::TranscriberReady(new_t, generation) = msg {
+                if generation == state.reload_generation {
+                    transcriber = new_t;
+                    info!("Transcriber reloaded with new model");
+                } else {
+                    info!("Discarding stale transcriber reload (gen {generation}, current {})", state.reload_generation);
+                }
                 continue;
             }
             let effects = state.handle_message(&msg);
@@ -566,7 +578,7 @@ fn apply_effect(
             info!("Language changed to: {name} ({code})");
             tray.set_language(&code);
         }
-        AppEffect::ReloadTranscriber => {
+        AppEffect::ReloadTranscriber(generation) => {
             let model_size = state.model_size.clone();
             let language = state.language.clone();
             let tx = tx.clone();
@@ -591,7 +603,7 @@ fn apply_effect(
                     Some(model_path) => match Transcriber::new(&model_path, &language) {
                         Ok(t) => {
                             info!("Model '{model_size}' loaded successfully");
-                            let _ = tx.send(AppMessage::TranscriberReady(Arc::new(t)));
+                            let _ = tx.send(AppMessage::TranscriberReady(Arc::new(t), generation));
                         }
                         Err(e) => {
                             error!("Failed to load model '{model_size}': {e}");
@@ -636,6 +648,7 @@ mod tests {
             model_size: "base.en".to_string(),
             language: "en".to_string(),
             streaming_active: false,
+            reload_generation: 0,
         }
     }
 
@@ -776,7 +789,8 @@ mod tests {
         assert_eq!(state.model_size, "small.en");
         assert!(effects.contains(&AppEffect::SaveConfig));
         assert!(effects.contains(&AppEffect::SetTrayModel("small.en".to_string())));
-        assert!(effects.contains(&AppEffect::ReloadTranscriber));
+        assert!(effects.contains(&AppEffect::ReloadTranscriber(1)));
+        assert_eq!(state.reload_generation, 1);
     }
 
     #[test]
@@ -786,7 +800,19 @@ mod tests {
         assert_eq!(state.language, "fr");
         assert!(effects.contains(&AppEffect::SaveConfig));
         assert!(effects.contains(&AppEffect::SetTrayLanguage("fr".to_string())));
-        assert!(effects.contains(&AppEffect::ReloadTranscriber));
+        assert!(effects.contains(&AppEffect::ReloadTranscriber(1)));
+        assert_eq!(state.reload_generation, 1);
+    }
+
+    #[test]
+    fn reload_generation_increments_on_each_change() {
+        let mut state = default_state();
+        state.handle_message(&AppMessage::TraySetModel("small.en".to_string()));
+        assert_eq!(state.reload_generation, 1);
+        state.handle_message(&AppMessage::TraySetLanguage("fr".to_string()));
+        assert_eq!(state.reload_generation, 2);
+        state.handle_message(&AppMessage::TraySetModel("tiny".to_string()));
+        assert_eq!(state.reload_generation, 3);
     }
 
     #[test]

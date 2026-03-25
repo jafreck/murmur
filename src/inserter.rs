@@ -1,8 +1,15 @@
 use anyhow::{Context, Result};
-use arboard::Clipboard;
+use arboard::{Clipboard, ImageData};
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::thread;
 use std::time::Duration;
+
+/// Saved clipboard content for restore after paste.
+enum SavedClipboard {
+    Text(String),
+    Image(ImageData<'static>),
+    Empty,
+}
 
 pub struct TextInserter;
 
@@ -18,8 +25,14 @@ impl TextInserter {
     pub fn insert(text: &str) -> Result<()> {
         let mut clipboard = Clipboard::new().context("Failed to access clipboard")?;
 
-        // Save current clipboard contents
-        let saved = clipboard.get_text().ok();
+        // Save current clipboard contents (try text first, then image)
+        let saved = if let Ok(text) = clipboard.get_text() {
+            SavedClipboard::Text(text)
+        } else if let Ok(img) = clipboard.get_image() {
+            SavedClipboard::Image(img.to_owned_img())
+        } else {
+            SavedClipboard::Empty
+        };
 
         // Set transcription text
         clipboard
@@ -34,8 +47,10 @@ impl TextInserter {
 
         // Restore previous clipboard after paste completes
         thread::sleep(Duration::from_millis(150));
-        if let Some(prev) = saved {
-            let _ = clipboard.set_text(prev);
+        match saved {
+            SavedClipboard::Text(prev) => { let _ = clipboard.set_text(prev); }
+            SavedClipboard::Image(img) => { let _ = clipboard.set_image(img); }
+            SavedClipboard::Empty => {}
         }
 
         Ok(())

@@ -325,4 +325,71 @@ mod tests {
         let b: Vec<String> = vec!["a".into(), "b".into()];
         assert_eq!(longest_suffix_prefix_match(&a, &b), 2);
     }
+
+    #[test]
+    fn test_split_words_basic() {
+        assert_eq!(split_words("hello world"), vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn test_split_words_extra_whitespace() {
+        assert_eq!(split_words("  hello   world  "), vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn test_split_words_empty() {
+        assert!(split_words("").is_empty());
+        assert!(split_words("   ").is_empty());
+    }
+
+    #[test]
+    fn test_split_words_single() {
+        assert_eq!(split_words("hello"), vec!["hello"]);
+    }
+
+    #[test]
+    fn test_constants() {
+        assert!(CHUNK_DURATION_SECS > 0.0);
+        assert!(OVERLAP_DURATION_SECS > 0.0);
+        assert!(OVERLAP_DURATION_SECS < CHUNK_DURATION_SECS);
+        assert!(POLL_INTERVAL_MS > 0);
+        assert!(SILENCE_RMS_THRESHOLD > 0.0);
+        assert_eq!(SAMPLE_RATE, 16_000);
+    }
+
+    #[test]
+    fn test_streaming_event_partial_text() {
+        let event = StreamingEvent::PartialText("hello".to_string());
+        match event {
+            StreamingEvent::PartialText(s) => assert_eq!(s, "hello"),
+        }
+    }
+
+    #[test]
+    fn test_is_silent_threshold_boundary() {
+        // Just below threshold
+        let val = SILENCE_RMS_THRESHOLD * 0.9;
+        let samples = vec![val; 1000];
+        assert!(is_silent(&samples));
+
+        // Just above threshold
+        let val = SILENCE_RMS_THRESHOLD * 1.1;
+        let samples = vec![val; 1000];
+        assert!(!is_silent(&samples));
+    }
+
+    #[test]
+    fn test_stitch_long_committed_short_chunk() {
+        let committed: Vec<String> = (0..100).map(|i| format!("w{i}")).collect();
+        let chunk: Vec<String> = vec!["w99".into(), "new1".into()];
+        let result = stitch(&committed, &chunk);
+        assert_eq!(result, vec!["new1"]);
+    }
+
+    #[test]
+    fn test_longest_suffix_prefix_match_case_insensitive() {
+        let a: Vec<String> = vec!["Hello".into(), "WORLD".into()];
+        let b: Vec<String> = vec!["hello".into(), "world".into(), "test".into()];
+        assert_eq!(longest_suffix_prefix_match(&a, &b), 2);
+    }
 }

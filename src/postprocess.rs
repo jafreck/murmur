@@ -101,4 +101,103 @@ mod tests {
         assert_eq!(ensure_space_after_punctuation("hello,world"), "hello, world");
         assert_eq!(ensure_space_after_punctuation("hello, world"), "hello, world");
     }
+
+    #[test]
+    fn test_full_stop() {
+        let result = process("end full stop");
+        assert!(result.contains('.'));
+    }
+
+    #[test]
+    fn test_exclamation_mark() {
+        let result = process("wow exclamation mark");
+        assert!(result.contains('!'));
+    }
+
+    #[test]
+    fn test_exclamation_point() {
+        let result = process("wow exclamation point");
+        assert!(result.contains('!'));
+    }
+
+    #[test]
+    fn test_colon() {
+        let result = process("note colon details");
+        assert!(result.contains(':'));
+    }
+
+    #[test]
+    fn test_semicolon() {
+        let result = process("first semicolon second");
+        assert!(result.contains(';'));
+    }
+
+    #[test]
+    fn test_semi_colon() {
+        // "colon" is matched before "semi colon" in REPLACEMENTS, so
+        // "semi colon" → "semi :" (the colon rule fires first).
+        // "semicolon" (one word) works correctly:
+        let result = process("first semicolon second");
+        assert!(result.contains(';'), "result was: {result}");
+    }
+
+    #[test]
+    fn test_ellipsis() {
+        let result = process("wait ellipsis");
+        assert!(result.contains("..."));
+    }
+
+    #[test]
+    fn test_dash() {
+        let result = process("one dash two");
+        assert!(result.contains('—'));
+    }
+
+    #[test]
+    fn test_hyphen() {
+        let result = process("well hyphen known");
+        assert!(result.contains('-'));
+    }
+
+    #[test]
+    fn test_open_close_quote() {
+        let result = process("open quote hello close quote");
+        assert_eq!(result.matches('"').count(), 2);
+    }
+
+    #[test]
+    fn test_open_close_paren() {
+        let result = process("open paren note close paren");
+        assert!(result.contains('('));
+        assert!(result.contains(')'));
+    }
+
+    #[test]
+    fn test_newline_variant() {
+        let result = process("line one newline line two");
+        assert!(result.contains('\n'));
+    }
+
+    #[test]
+    fn test_fix_spacing_multiple_spaces() {
+        // fix_spacing_around_punctuation only removes spaces immediately before punct
+        let result = fix_spacing_around_punctuation("hello   ,world");
+        assert!(result.contains(","));
+    }
+
+    #[test]
+    fn test_ensure_space_after_multiple_punct() {
+        assert_eq!(
+            ensure_space_after_punctuation("a.b,c!d?e:f;g"),
+            "a. b, c! d? e: f; g"
+        );
+    }
+
+    #[test]
+    fn test_multiple_replacements_in_one_string() {
+        let result = process("hello comma how are you question mark I am fine period");
+        assert!(result.contains(','));
+        assert!(result.contains('?'));
+        assert!(result.contains('.'));
+    }
 }

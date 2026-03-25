@@ -105,12 +105,7 @@ fn cmd_get_hotkey() -> Result<()> {
 }
 
 fn cmd_set_model(size: &str) -> Result<()> {
-    if !config::SUPPORTED_MODELS.contains(&size) {
-        anyhow::bail!(
-            "Unknown model '{size}'. Available: {}",
-            config::SUPPORTED_MODELS.join(", ")
-        );
-    }
+    validate_model(size)?;
 
     let mut cfg = config::Config::load();
     cfg.model_size = size.to_string();
@@ -123,10 +118,18 @@ fn cmd_set_model(size: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_set_language(code: &str) -> Result<()> {
-    if !config::is_valid_language(code) {
-        anyhow::bail!("Unknown language '{code}'. Examples: en, fr, de, es, auto");
+pub fn validate_model(size: &str) -> Result<()> {
+    if !config::SUPPORTED_MODELS.contains(&size) {
+        anyhow::bail!(
+            "Unknown model '{size}'. Available: {}",
+            config::SUPPORTED_MODELS.join(", ")
+        );
     }
+    Ok(())
+}
+
+fn cmd_set_language(code: &str) -> Result<()> {
+    validate_language(code)?;
 
     let mut cfg = config::Config::load();
     cfg.language = code.to_string();
@@ -135,6 +138,37 @@ fn cmd_set_language(code: &str) -> Result<()> {
     let name = config::language_name(code).unwrap_or(code);
     println!("Language set to: {name} ({code})");
     Ok(())
+}
+
+pub fn validate_language(code: &str) -> Result<()> {
+    if !config::is_valid_language(code) {
+        anyhow::bail!("Unknown language '{code}'. Examples: en, fr, de, es, auto");
+    }
+    Ok(())
+}
+
+pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
+    let lang_name = config::language_name(&cfg.language).unwrap_or(&cfg.language);
+    let toggle_str = if cfg.toggle_mode {
+        "on (press to start/stop)"
+    } else {
+        "off (hold to talk)"
+    };
+    let model_ready_str = if model_ready { "yes" } else { "no" };
+
+    format!(
+        "open-bark v{VERSION}\n\
+         Config:      {}\n\
+         Hotkey:      {}\n\
+         Model:       {}\n\
+         Model ready: {model_ready_str}\n\
+         Language:    {lang_name} ({})\n\
+         Toggle:      {toggle_str}",
+        config::Config::file_path().display(),
+        cfg.hotkey,
+        cfg.model_size,
+        cfg.language,
+    )
 }
 
 fn cmd_download_model(size: &str) -> Result<()> {
@@ -148,20 +182,164 @@ fn cmd_download_model(size: &str) -> Result<()> {
 
 fn cmd_status() -> Result<()> {
     let cfg = config::Config::load();
-    let lang_name = config::language_name(&cfg.language).unwrap_or(&cfg.language);
-
-    println!("open-bark v{VERSION}");
-    println!("Config:      {}", config::Config::file_path().display());
-    println!("Hotkey:      {}", cfg.hotkey);
-    println!("Model:       {}", cfg.model_size);
-    println!(
-        "Model ready: {}",
-        if transcriber::model_exists(&cfg.model_size) { "yes" } else { "no" }
-    );
-    println!("Language:    {lang_name} ({})", cfg.language);
-    println!(
-        "Toggle:      {}",
-        if cfg.toggle_mode { "on (press to start/stop)" } else { "off (hold to talk)" }
-    );
+    let model_ready = transcriber::model_exists(&cfg.model_size);
+    println!("{}", format_status(&cfg, model_ready));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_version_is_set() {
+        assert!(!VERSION.is_empty());
+    }
+
+    #[test]
+    fn test_validate_model_valid() {
+        assert!(validate_model("base.en").is_ok());
+        assert!(validate_model("tiny.en").is_ok());
+        assert!(validate_model("small.en").is_ok());
+        assert!(validate_model("medium.en").is_ok());
+        assert!(validate_model("large-v3-turbo").is_ok());
+        assert!(validate_model("large").is_ok());
+    }
+
+    #[test]
+    fn test_validate_model_invalid() {
+        assert!(validate_model("nonexistent").is_err());
+        assert!(validate_model("").is_err());
+        assert!(validate_model("huge").is_err());
+    }
+
+    #[test]
+    fn test_validate_language_valid() {
+        assert!(validate_language("en").is_ok());
+        assert!(validate_language("fr").is_ok());
+        assert!(validate_language("auto").is_ok());
+        assert!(validate_language("de").is_ok());
+    }
+
+    #[test]
+    fn test_validate_language_invalid() {
+        assert!(validate_language("xx").is_err());
+        assert!(validate_language("").is_err());
+        assert!(validate_language("klingon").is_err());
+    }
+
+    #[test]
+    fn test_format_status_hold_mode() {
+        let cfg = config::Config {
+            hotkey: "f9".to_string(),
+            model_size: "base.en".to_string(),
+            language: "en".to_string(),
+            spoken_punctuation: false,
+            max_recordings: 0,
+            toggle_mode: false,
+            translate_to_english: false,
+        };
+        let output = format_status(&cfg, false);
+        assert!(output.contains("open-bark v"));
+        assert!(output.contains("f9"));
+        assert!(output.contains("base.en"));
+        assert!(output.contains("English"));
+        assert!(output.contains("off (hold to talk)"));
+        assert!(output.contains("Model ready: no"));
+    }
+
+    #[test]
+    fn test_format_status_toggle_mode() {
+        let cfg = config::Config {
+            hotkey: "ctrl+shift+space".to_string(),
+            model_size: "small.en".to_string(),
+            language: "fr".to_string(),
+            spoken_punctuation: true,
+            max_recordings: 5,
+            toggle_mode: true,
+            translate_to_english: false,
+        };
+        let output = format_status(&cfg, true);
+        assert!(output.contains("on (press to start/stop)"));
+        assert!(output.contains("Model ready: yes"));
+        assert!(output.contains("French"));
+    }
+
+    #[test]
+    fn test_format_status_unknown_language_fallback() {
+        let cfg = config::Config {
+            hotkey: "f9".to_string(),
+            model_size: "base.en".to_string(),
+            language: "zz".to_string(),
+            spoken_punctuation: false,
+            max_recordings: 0,
+            toggle_mode: false,
+            translate_to_english: false,
+        };
+        let output = format_status(&cfg, false);
+        // Should fall back to code itself
+        assert!(output.contains("zz"));
+    }
+
+    #[test]
+    fn test_cmd_get_hotkey() {
+        // This reads from real config but doesn't modify it
+        assert!(cmd_get_hotkey().is_ok());
+    }
+
+    #[test]
+    fn test_cmd_set_hotkey_valid() {
+        // Save current config
+        let original = config::Config::load();
+        // Set a known valid hotkey
+        assert!(cmd_set_hotkey("f9").is_ok());
+        // Verify it was saved
+        let cfg = config::Config::load();
+        assert_eq!(cfg.hotkey, "f9");
+        // Restore original
+        let _ = original.save();
+    }
+
+    #[test]
+    fn test_cmd_set_hotkey_invalid() {
+        assert!(cmd_set_hotkey("nonexistentkey123").is_err());
+    }
+
+    #[test]
+    fn test_cmd_set_model_valid() {
+        let original = config::Config::load();
+        assert!(cmd_set_model("base.en").is_ok());
+        let _ = original.save();
+    }
+
+    #[test]
+    fn test_cmd_set_model_prints_download_hint() {
+        // Use a model that almost certainly doesn't exist locally
+        let original = config::Config::load();
+        // "tiny" is a valid model but likely not downloaded
+        assert!(cmd_set_model("tiny").is_ok());
+        let _ = original.save();
+    }
+
+    #[test]
+    fn test_cmd_set_model_invalid() {
+        assert!(cmd_set_model("nonexistent_model").is_err());
+    }
+
+    #[test]
+    fn test_cmd_set_language_valid() {
+        let original = config::Config::load();
+        assert!(cmd_set_language("en").is_ok());
+        let _ = original.save();
+    }
+
+    #[test]
+    fn test_cmd_set_language_invalid() {
+        assert!(cmd_set_language("zzz_invalid").is_err());
+    }
+
+    #[test]
+    fn test_cmd_status() {
+        assert!(cmd_status().is_ok());
+    }
 }

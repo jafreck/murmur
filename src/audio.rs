@@ -147,7 +147,6 @@ mod tests {
     fn test_resample_downsample() {
         let input: Vec<f32> = (0..48000).map(|i| i as f32 / 48000.0).collect();
         let output = resample(&input, 48000, 16000);
-        // Should produce roughly 16000 samples from 48000
         assert!((output.len() as i64 - 16000).abs() <= 1);
     }
 
@@ -155,5 +154,58 @@ mod tests {
     fn test_resample_empty() {
         let output = resample(&[], 48000, 16000);
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_resample_upsample() {
+        let input: Vec<f32> = (0..8000).map(|i| i as f32 / 8000.0).collect();
+        let output = resample(&input, 8000, 16000);
+        // Should produce roughly 16000 samples from 8000
+        assert!((output.len() as i64 - 16000).abs() <= 1);
+    }
+
+    #[test]
+    fn test_resample_interpolates() {
+        let input = vec![0.0, 1.0];
+        let output = resample(&input, 2, 4);
+        // Middle values should be interpolated between 0.0 and 1.0
+        assert!(output.len() >= 3);
+        assert!(output[1] > 0.0 && output[1] < 1.0);
+    }
+
+    #[test]
+    fn test_resample_single_sample() {
+        let input = vec![0.5];
+        let output = resample(&input, 16000, 16000);
+        assert_eq!(output, vec![0.5]);
+    }
+
+    #[test]
+    fn test_new_recorder() {
+        let recorder = AudioRecorder::new();
+        assert!(recorder.stream.is_none());
+        assert!(recorder.current_path.is_none());
+    }
+
+    #[test]
+    fn test_stop_without_start() {
+        let mut recorder = AudioRecorder::new();
+        let path = recorder.stop();
+        assert!(path.is_none());
+    }
+
+    #[test]
+    fn test_resample_preserves_endpoints() {
+        let input = vec![0.0, 0.25, 0.5, 0.75, 1.0];
+        let output = resample(&input, 44100, 16000);
+        // First sample should be close to 0.0
+        assert!((output[0] - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_resample_large_ratio() {
+        let input: Vec<f32> = (0..96000).map(|i| (i as f32).sin()).collect();
+        let output = resample(&input, 96000, 16000);
+        assert!((output.len() as i64 - 16000).abs() <= 1);
     }
 }

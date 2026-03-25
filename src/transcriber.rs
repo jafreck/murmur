@@ -123,3 +123,44 @@ pub fn find_model(model_size: &str) -> Option<PathBuf> {
 
     candidates.into_iter().find(|p| p.exists())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_exists_nonexistent() {
+        assert!(!model_exists("nonexistent_model_that_doesnt_exist_xyz"));
+    }
+
+    #[test]
+    fn test_find_model_nonexistent() {
+        assert!(find_model("nonexistent_model_that_doesnt_exist_xyz").is_none());
+    }
+
+    #[test]
+    fn test_find_model_builds_correct_filename() {
+        // We can't guarantee a model exists, but we can verify the function runs
+        // without panicking and returns None for a clearly nonexistent model
+        let result = find_model("test_does_not_exist");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_model_checks_config_dir() {
+        // Create a temporary model file in the config dir location
+        let models_dir = Config::dir().join("models");
+        let _ = std::fs::create_dir_all(&models_dir);
+        let model_path = models_dir.join("ggml-test_temp_model.bin");
+
+        // Write valid GGML-ish content
+        std::fs::write(&model_path, b"test model content").unwrap();
+
+        let result = find_model("test_temp_model");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), model_path);
+
+        // Clean up
+        let _ = std::fs::remove_file(&model_path);
+    }
+}

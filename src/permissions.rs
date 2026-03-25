@@ -30,3 +30,18 @@ pub fn check_microphone() {
     // is not accessible. We handle that in AudioRecorder::start().
     log::info!("Microphone access will be requested when recording starts.");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_check_accessibility_returns_true() {
+        assert!(check_accessibility());
+    }
+
+    #[test]
+    fn test_check_microphone_does_not_panic() {
+        check_microphone();
+    }
+}

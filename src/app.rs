@@ -41,7 +41,6 @@ fn pump_event_loop() {
     let mtm = MainThreadMarker::new().expect("must be on main thread");
     let app = NSApplication::sharedApplication(mtm);
 
-    // Drain all pending events
     loop {
         let event = unsafe {
             app.nextEventMatchingMask_untilDate_inMode_dequeue(
@@ -57,7 +56,6 @@ fn pump_event_loop() {
         }
     }
 
-    // Sleep briefly to avoid busy-looping
     std::thread::sleep(std::time::Duration::from_millis(16));
 }
 
@@ -67,7 +65,7 @@ fn pump_event_loop() {
     std::thread::sleep(std::time::Duration::from_millis(16));
 }
 
-enum AppMessage {
+pub enum AppMessage {
     KeyDown,
     KeyUp,
     TrayQuit,
@@ -77,8 +75,199 @@ enum AppMessage {
     TrayToggleSpokenPunctuation,
     TrayToggleToggleMode,
     TrayToggleTranslate,
+    TrayOpenConfig,
+    TrayReloadConfig,
     TranscriptionDone(String),
     TranscriptionError(String),
+}
+
+/// Effect returned by the app state machine in response to a message.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppEffect {
+    None,
+    StartRecording(std::path::PathBuf),
+    StopAndTranscribe,
+    InsertText(String),
+    CopyToClipboard(String),
+    SaveConfig,
+    SetTrayState(TrayStateTag),
+    SetTrayModel(String),
+    SetTrayLanguage(String),
+    Quit,
+    LogError(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TrayStateTag {
+    Idle,
+    Recording,
+    Transcribing,
+    Error,
+}
+
+/// Pure state machine for the app's recording logic.
+pub struct AppState {
+    pub is_pressed: bool,
+    pub toggle_mode: bool,
+    pub spoken_punctuation: bool,
+    pub translate_to_english: bool,
+    pub max_recordings: u32,
+    pub last_transcription: Option<String>,
+    pub model_size: String,
+    pub language: String,
+}
+
+impl AppState {
+    pub fn new(config: &Config) -> Self {
+        Self {
+            is_pressed: false,
+            toggle_mode: config.toggle_mode,
+            spoken_punctuation: config.spoken_punctuation,
+            translate_to_english: config.translate_to_english,
+            max_recordings: Config::effective_max_recordings(config.max_recordings),
+            last_transcription: None,
+            model_size: config.model_size.clone(),
+            language: config.language.clone(),
+        }
+    }
+
+    pub fn recording_output_path(&self) -> std::path::PathBuf {
+        if self.max_recordings == 0 {
+            RecordingStore::temp_recording_path()
+        } else {
+            RecordingStore::new_recording_path()
+        }
+    }
+
+    pub fn handle_message(&mut self, msg: &AppMessage) -> Vec<AppEffect> {
+        match msg {
+            AppMessage::KeyDown => self.on_key_down(),
+            AppMessage::KeyUp => self.on_key_up(),
+            AppMessage::TranscriptionDone(text) => self.on_transcription_done(text),
+            AppMessage::TranscriptionError(e) => self.on_transcription_error(e),
+            AppMessage::TrayCopyLast => self.on_copy_last(),
+            AppMessage::TrayQuit => vec![AppEffect::Quit],
+            AppMessage::TraySetModel(size) => self.on_set_model(size),
+            AppMessage::TraySetLanguage(code) => self.on_set_language(code),
+            AppMessage::TrayToggleSpokenPunctuation => self.on_toggle_spoken_punctuation(),
+            AppMessage::TrayToggleToggleMode => self.on_toggle_toggle_mode(),
+            AppMessage::TrayToggleTranslate => self.on_toggle_translate(),
+            AppMessage::TrayOpenConfig | AppMessage::TrayReloadConfig => vec![AppEffect::None],
+        }
+    }
+
+    fn on_key_down(&mut self) -> Vec<AppEffect> {
+        if self.toggle_mode {
+            if self.is_pressed {
+                self.is_pressed = false;
+                vec![
+                    AppEffect::StopAndTranscribe,
+                    AppEffect::SetTrayState(TrayStateTag::Transcribing),
+                ]
+            } else {
+                self.is_pressed = true;
+                let path = self.recording_output_path();
+                vec![
+                    AppEffect::StartRecording(path),
+                    AppEffect::SetTrayState(TrayStateTag::Recording),
+                ]
+            }
+        } else if !self.is_pressed {
+            self.is_pressed = true;
+            let path = self.recording_output_path();
+            vec![
+                AppEffect::StartRecording(path),
+                AppEffect::SetTrayState(TrayStateTag::Recording),
+            ]
+        } else {
+            vec![AppEffect::None]
+        }
+    }
+
+    fn on_key_up(&mut self) -> Vec<AppEffect> {
+        if !self.toggle_mode && self.is_pressed {
+            self.is_pressed = false;
+            vec![
+                AppEffect::StopAndTranscribe,
+                AppEffect::SetTrayState(TrayStateTag::Transcribing),
+            ]
+        } else {
+            vec![AppEffect::None]
+        }
+    }
+
+    fn on_transcription_done(&mut self, text: &str) -> Vec<AppEffect> {
+        let mut effects = vec![];
+        if !text.is_empty() {
+            let processed = if self.spoken_punctuation {
+                crate::postprocess::process(text)
+            } else {
+                text.to_string()
+            };
+            effects.push(AppEffect::InsertText(processed.clone()));
+            self.last_transcription = Some(processed);
+        }
+        effects.push(AppEffect::SetTrayState(TrayStateTag::Idle));
+        effects
+    }
+
+    fn on_transcription_error(&mut self, error: &str) -> Vec<AppEffect> {
+        vec![
+            AppEffect::LogError(error.to_string()),
+            AppEffect::SetTrayState(TrayStateTag::Error),
+        ]
+    }
+
+    fn on_copy_last(&self) -> Vec<AppEffect> {
+        if let Some(ref text) = self.last_transcription {
+            vec![AppEffect::CopyToClipboard(text.clone())]
+        } else {
+            vec![AppEffect::None]
+        }
+    }
+
+    fn on_set_model(&mut self, size: &str) -> Vec<AppEffect> {
+        self.model_size = size.to_string();
+        vec![
+            AppEffect::SaveConfig,
+            AppEffect::SetTrayModel(size.to_string()),
+        ]
+    }
+
+    fn on_set_language(&mut self, code: &str) -> Vec<AppEffect> {
+        self.language = code.to_string();
+        vec![
+            AppEffect::SaveConfig,
+            AppEffect::SetTrayLanguage(code.to_string()),
+        ]
+    }
+
+    fn on_toggle_spoken_punctuation(&mut self) -> Vec<AppEffect> {
+        self.spoken_punctuation = !self.spoken_punctuation;
+        vec![AppEffect::SaveConfig]
+    }
+
+    fn on_toggle_toggle_mode(&mut self) -> Vec<AppEffect> {
+        self.toggle_mode = !self.toggle_mode;
+        vec![AppEffect::SaveConfig]
+    }
+
+    fn on_toggle_translate(&mut self) -> Vec<AppEffect> {
+        self.translate_to_english = !self.translate_to_english;
+        vec![AppEffect::SaveConfig]
+    }
+
+    pub fn to_config(&self, base: &Config) -> Config {
+        Config {
+            hotkey: base.hotkey.clone(),
+            model_size: self.model_size.clone(),
+            language: self.language.clone(),
+            spoken_punctuation: self.spoken_punctuation,
+            max_recordings: base.max_recordings,
+            toggle_mode: self.toggle_mode,
+            translate_to_english: self.translate_to_english,
+        }
+    }
 }
 
 pub fn run() -> Result<()> {
@@ -102,269 +291,449 @@ pub fn run() -> Result<()> {
     info!("Hotkey: {}", config.hotkey);
     info!("Model: {}", config.model_size);
 
-    // Parse hotkey
     let parsed = crate::keycodes::parse(&config.hotkey)
         .ok_or_else(|| anyhow::anyhow!("Invalid hotkey: {}", config.hotkey))?;
 
-    // Log platform-specific permission hints
     crate::permissions::check_accessibility();
     crate::permissions::check_microphone();
 
-    // Initialize macOS NSApplication (required for tray icon rendering)
     #[cfg(target_os = "macos")]
     init_macos_app();
 
-    // Create tray on the main thread
     let mut tray = TrayController::new(&config)?;
 
-    // Channel for all app events
     let (tx, rx) = mpsc::channel::<AppMessage>();
     let tx_down = tx.clone();
     let tx_up = tx.clone();
 
-    // Start hotkey listener in a background thread
     let hotkey_key = parsed.key;
     std::thread::spawn(move || {
         if let Err(e) = HotkeyManager::start(
             hotkey_key,
-            move || {
-                let _ = tx_down.send(AppMessage::KeyDown);
-            },
-            move || {
-                let _ = tx_up.send(AppMessage::KeyUp);
-            },
+            move || { let _ = tx_down.send(AppMessage::KeyDown); },
+            move || { let _ = tx_up.send(AppMessage::KeyUp); },
         ) {
             error!("Hotkey listener failed: {e}");
         }
     });
 
-    // Main event loop — owns the AudioRecorder (which is !Send)
     let mut recorder = AudioRecorder::new();
-    let mut is_pressed = false;
-    let mut last_transcription: Option<String> = None;
-    let mut toggle_mode = config.toggle_mode;
-    let mut spoken_punctuation = config.spoken_punctuation;
-    let mut translate_to_english = config.translate_to_english;
-    let max_recordings = Config::effective_max_recordings(config.max_recordings);
+    let mut state = AppState::new(&config);
 
     println!("open-bark v{VERSION}");
     println!("Hotkey: {}", config.hotkey);
     println!("Model: {}", config.model_size);
     println!("Ready.");
 
-    // Unified event loop polling three receivers
     loop {
-        // 1. Drain app message channel (non-blocking)
         while let Ok(msg) = rx.try_recv() {
-            match msg {
-                AppMessage::KeyDown => {
-                    if toggle_mode {
-                        if is_pressed {
-                            start_transcribing(
-                                &mut recorder,
-                                &mut is_pressed,
-                                &transcriber,
-                                spoken_punctuation,
-                                translate_to_english,
-                                max_recordings,
-                                tx.clone(),
-                            );
-                            tray.set_state(TrayState::Transcribing);
-                        } else {
-                            handle_start(&mut recorder, &mut is_pressed, max_recordings);
-                            tray.set_state(TrayState::Recording);
-                        }
-                    } else if !is_pressed {
-                        handle_start(&mut recorder, &mut is_pressed, max_recordings);
-                        tray.set_state(TrayState::Recording);
-                    }
-                }
-                AppMessage::KeyUp => {
-                    if !toggle_mode && is_pressed {
-                        start_transcribing(
-                            &mut recorder,
-                            &mut is_pressed,
-                            &transcriber,
-                            spoken_punctuation,
-                            translate_to_english,
-                            max_recordings,
-                            tx.clone(),
-                        );
-                        tray.set_state(TrayState::Transcribing);
-                    }
-                }
-                AppMessage::TranscriptionDone(text) => {
-                    if !text.is_empty() {
-                        info!("Transcription: {text}");
-                        if let Err(e) = TextInserter::insert(&text) {
-                            error!("Insert failed: {e}");
-                        }
-                        last_transcription = Some(text);
-                    }
-                    tray.set_state(TrayState::Idle);
-                }
-                AppMessage::TranscriptionError(e) => {
-                    error!("Transcription: {e}");
-                    tray.set_state(TrayState::Error);
-                }
-                AppMessage::TrayCopyLast => {
-                    if let Some(ref text) = last_transcription {
-                        if let Ok(mut cb) = arboard::Clipboard::new() {
-                            let _ = cb.set_text(text.clone());
-                            info!("Copied last dictation to clipboard");
-                        }
-                    }
-                }
-                AppMessage::TrayQuit => {
-                    info!("Quit requested via tray");
-                    return Ok(());
-                }
-                AppMessage::TraySetModel(size) => {
-                    info!("Model changed to: {size}");
-                    config.model_size = size.clone();
-                    if let Err(e) = config.save() {
-                        error!("Failed to save config: {e}");
-                    }
-                    tray.set_model(&size);
-                    info!("Restart open-bark for model change to take effect");
-                }
-                AppMessage::TraySetLanguage(code) => {
-                    let name = crate::config::language_name(&code).unwrap_or(&code);
-                    info!("Language changed to: {name} ({code})");
-                    config.language = code.clone();
-                    if let Err(e) = config.save() {
-                        error!("Failed to save config: {e}");
-                    }
-                    tray.set_language(&code);
-                    info!("Restart open-bark for language change to take effect");
-                }
-                AppMessage::TrayToggleSpokenPunctuation => {
-                    spoken_punctuation = !spoken_punctuation;
-                    config.spoken_punctuation = spoken_punctuation;
-                    if let Err(e) = config.save() {
-                        error!("Failed to save config: {e}");
-                    }
-                    info!("Spoken punctuation: {}", if spoken_punctuation { "on" } else { "off" });
-                }
-                AppMessage::TrayToggleToggleMode => {
-                    toggle_mode = !toggle_mode;
-                    config.toggle_mode = toggle_mode;
-                    if let Err(e) = config.save() {
-                        error!("Failed to save config: {e}");
-                    }
-                    info!("Toggle mode: {}", if toggle_mode { "on" } else { "off" });
-                }
-                AppMessage::TrayToggleTranslate => {
-                    translate_to_english = !translate_to_english;
-                    config.translate_to_english = translate_to_english;
-                    if let Err(e) = config.save() {
-                        error!("Failed to save config: {e}");
-                    }
-                    info!("Translate to English: {}", if translate_to_english { "on" } else { "off" });
-                }
+            let effects = state.handle_message(&msg);
+            for effect in effects {
+                apply_effect(
+                    effect, &mut recorder, &transcriber,
+                    &mut tray, &mut config, &state, &tx,
+                )?;
             }
         }
 
-        // 2. Drain tray menu events (non-blocking)
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             if let Some(action) = tray.match_menu_event(&event) {
-                match action {
-                    TrayAction::Quit => {
-                        let _ = tx.send(AppMessage::TrayQuit);
-                    }
-                    TrayAction::CopyLastDictation => {
-                        let _ = tx.send(AppMessage::TrayCopyLast);
-                    }
-                    TrayAction::SetModel(size) => {
-                        let _ = tx.send(AppMessage::TraySetModel(size));
-                    }
-                    TrayAction::SetLanguage(code) => {
-                        let _ = tx.send(AppMessage::TraySetLanguage(code));
-                    }
-                    TrayAction::ToggleSpokenPunctuation => {
-                        let _ = tx.send(AppMessage::TrayToggleSpokenPunctuation);
-                    }
-                    TrayAction::ToggleToggleMode => {
-                        let _ = tx.send(AppMessage::TrayToggleToggleMode);
-                    }
-                    TrayAction::ToggleTranslate => {
-                        let _ = tx.send(AppMessage::TrayToggleTranslate);
-                    }
-                }
+                let msg = match action {
+                    TrayAction::Quit => AppMessage::TrayQuit,
+                    TrayAction::CopyLastDictation => AppMessage::TrayCopyLast,
+                    TrayAction::SetModel(s) => AppMessage::TraySetModel(s),
+                    TrayAction::SetLanguage(c) => AppMessage::TraySetLanguage(c),
+                    TrayAction::ToggleSpokenPunctuation => AppMessage::TrayToggleSpokenPunctuation,
+                    TrayAction::ToggleToggleMode => AppMessage::TrayToggleToggleMode,
+                    TrayAction::ToggleTranslate => AppMessage::TrayToggleTranslate,
+                    TrayAction::OpenConfig => AppMessage::TrayOpenConfig,
+                    TrayAction::ReloadConfig => AppMessage::TrayReloadConfig,
+                };
+                let _ = tx.send(msg);
             }
         }
 
-        // 3. Drain tray icon events (click handling)
-        while let Ok(_event) = TrayIconEvent::receiver().try_recv() {
-            // Future: left-click to toggle recording, etc.
-        }
+        while let Ok(_event) = TrayIconEvent::receiver().try_recv() {}
 
-        // Pump the platform event loop (~60 Hz)
         pump_event_loop();
     }
 }
 
-fn handle_start(recorder: &mut AudioRecorder, is_pressed: &mut bool, max_recordings: u32) {
-    if *is_pressed {
-        return;
+fn apply_effect(
+    effect: AppEffect,
+    recorder: &mut AudioRecorder,
+    transcriber: &Arc<Transcriber>,
+    tray: &mut TrayController,
+    config: &mut Config,
+    state: &AppState,
+    tx: &mpsc::Sender<AppMessage>,
+) -> Result<()> {
+    match effect {
+        AppEffect::None => {}
+        AppEffect::StartRecording(path) => {
+            info!("Recording...");
+            if let Err(e) = recorder.start(&path) {
+                error!("Failed to start recording: {e}");
+            }
+        }
+        AppEffect::StopAndTranscribe => {
+            if let Some(audio_path) = recorder.stop() {
+                info!("Transcribing...");
+                let transcriber = Arc::clone(transcriber);
+                let spoken_punctuation = state.spoken_punctuation;
+                let translate_to_english = state.translate_to_english;
+                let max_recordings = state.max_recordings;
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    let result = transcriber.transcribe(&audio_path, translate_to_english);
+                    if max_recordings == 0 {
+                        let _ = std::fs::remove_file(&audio_path);
+                    } else {
+                        RecordingStore::prune(max_recordings);
+                    }
+                    match result {
+                        Ok(raw) => {
+                            let text = if spoken_punctuation {
+                                postprocess::process(&raw)
+                            } else {
+                                raw
+                            };
+                            let _ = tx.send(AppMessage::TranscriptionDone(text));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
+                        }
+                    }
+                });
+            }
+        }
+        AppEffect::InsertText(text) => {
+            info!("Transcription: {text}");
+            if let Err(e) = TextInserter::insert(&text) {
+                error!("Insert failed: {e}");
+            }
+        }
+        AppEffect::CopyToClipboard(text) => {
+            if let Ok(mut cb) = arboard::Clipboard::new() {
+                let _ = cb.set_text(text);
+                info!("Copied last dictation to clipboard");
+            }
+        }
+        AppEffect::SaveConfig => {
+            let new_config = state.to_config(config);
+            *config = new_config;
+            if let Err(e) = config.save() {
+                error!("Failed to save config: {e}");
+            }
+        }
+        AppEffect::SetTrayState(tag) => {
+            let ts = match tag {
+                TrayStateTag::Idle => TrayState::Idle,
+                TrayStateTag::Recording => TrayState::Recording,
+                TrayStateTag::Transcribing => TrayState::Transcribing,
+                TrayStateTag::Error => TrayState::Error,
+            };
+            tray.set_state(ts);
+        }
+        AppEffect::SetTrayModel(size) => {
+            tray.set_model(&size);
+            info!("Model changed to: {size}");
+        }
+        AppEffect::SetTrayLanguage(code) => {
+            let name = crate::config::language_name(&code).unwrap_or(&code);
+            info!("Language changed to: {name} ({code})");
+            tray.set_language(&code);
+        }
+        AppEffect::Quit => {
+            info!("Quit requested via tray");
+            std::process::exit(0);
+        }
+        AppEffect::LogError(e) => {
+            error!("Transcription: {e}");
+        }
     }
-    *is_pressed = true;
-    info!("Recording...");
-
-    let output_path = if max_recordings == 0 {
-        RecordingStore::temp_recording_path()
-    } else {
-        RecordingStore::new_recording_path()
-    };
-
-    if let Err(e) = recorder.start(&output_path) {
-        error!("Failed to start recording: {e}");
-        *is_pressed = false;
-    }
+    Ok(())
 }
 
-fn start_transcribing(
-    recorder: &mut AudioRecorder,
-    is_pressed: &mut bool,
-    transcriber: &Arc<Transcriber>,
-    spoken_punctuation: bool,
-    translate_to_english: bool,
-    max_recordings: u32,
-    tx: mpsc::Sender<AppMessage>,
-) {
-    if !*is_pressed {
-        return;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_state() -> AppState {
+        AppState {
+            is_pressed: false,
+            toggle_mode: false,
+            spoken_punctuation: false,
+            translate_to_english: false,
+            max_recordings: 0,
+            last_transcription: None,
+            model_size: "base.en".to_string(),
+            language: "en".to_string(),
+        }
     }
-    *is_pressed = false;
 
-    let Some(audio_path) = recorder.stop() else {
-        return;
-    };
+    // -- Hold-to-talk mode (toggle_mode = false) --
 
-    info!("Transcribing...");
+    #[test]
+    fn hold_mode_key_down_starts_recording() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::KeyDown);
+        assert!(state.is_pressed);
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::StartRecording(_))));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Recording))));
+    }
 
-    let transcriber = Arc::clone(transcriber);
-    std::thread::spawn(move || {
-        let result = transcriber.transcribe(&audio_path, translate_to_english);
+    #[test]
+    fn hold_mode_key_down_while_pressed_noop() {
+        let mut state = default_state();
+        state.is_pressed = true;
+        let effects = state.handle_message(&AppMessage::KeyDown);
+        assert_eq!(effects, vec![AppEffect::None]);
+    }
 
-        if max_recordings == 0 {
-            let _ = std::fs::remove_file(&audio_path);
-        } else {
-            RecordingStore::prune(max_recordings);
-        }
+    #[test]
+    fn hold_mode_key_up_starts_transcribing() {
+        let mut state = default_state();
+        state.is_pressed = true;
+        let effects = state.handle_message(&AppMessage::KeyUp);
+        assert!(!state.is_pressed);
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::StopAndTranscribe)));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Transcribing))));
+    }
 
-        match result {
-            Ok(raw) => {
-                let text = if spoken_punctuation {
-                    postprocess::process(&raw)
-                } else {
-                    raw
-                };
-                let _ = tx.send(AppMessage::TranscriptionDone(text));
-            }
-            Err(e) => {
-                let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
-            }
-        }
-    });
+    #[test]
+    fn hold_mode_key_up_not_pressed_noop() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::KeyUp);
+        assert_eq!(effects, vec![AppEffect::None]);
+    }
+
+    // -- Toggle mode --
+
+    #[test]
+    fn toggle_mode_first_key_down_starts_recording() {
+        let mut state = default_state();
+        state.toggle_mode = true;
+        let effects = state.handle_message(&AppMessage::KeyDown);
+        assert!(state.is_pressed);
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::StartRecording(_))));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Recording))));
+    }
+
+    #[test]
+    fn toggle_mode_second_key_down_stops_and_transcribes() {
+        let mut state = default_state();
+        state.toggle_mode = true;
+        state.is_pressed = true;
+        let effects = state.handle_message(&AppMessage::KeyDown);
+        assert!(!state.is_pressed);
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::StopAndTranscribe)));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Transcribing))));
+    }
+
+    #[test]
+    fn toggle_mode_key_up_noop() {
+        let mut state = default_state();
+        state.toggle_mode = true;
+        state.is_pressed = true;
+        let effects = state.handle_message(&AppMessage::KeyUp);
+        assert_eq!(effects, vec![AppEffect::None]);
+    }
+
+    // -- Transcription results --
+
+    #[test]
+    fn transcription_done_inserts_text() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::TranscriptionDone("hello world".to_string()));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello world")));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Idle))));
+        assert_eq!(state.last_transcription, Some("hello world".to_string()));
+    }
+
+    #[test]
+    fn transcription_done_empty_no_insert() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::TranscriptionDone("".to_string()));
+        assert!(!effects.iter().any(|e| matches!(e, AppEffect::InsertText(_))));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Idle))));
+        assert!(state.last_transcription.is_none());
+    }
+
+    #[test]
+    fn transcription_done_with_spoken_punctuation() {
+        let mut state = default_state();
+        state.spoken_punctuation = true;
+        let effects = state.handle_message(&AppMessage::TranscriptionDone("hello period".to_string()));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::InsertText(t) if t.contains('.'))));
+    }
+
+    #[test]
+    fn transcription_error_sets_error_state() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::TranscriptionError("fail".to_string()));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::LogError(t) if t == "fail")));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Error))));
+    }
+
+    // -- Copy last --
+
+    #[test]
+    fn copy_last_with_transcription() {
+        let mut state = default_state();
+        state.last_transcription = Some("copied text".to_string());
+        let effects = state.handle_message(&AppMessage::TrayCopyLast);
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::CopyToClipboard(t) if t == "copied text")));
+    }
+
+    #[test]
+    fn copy_last_without_transcription() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::TrayCopyLast);
+        assert_eq!(effects, vec![AppEffect::None]);
+    }
+
+    // -- Tray actions --
+
+    #[test]
+    fn quit_returns_quit_effect() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::TrayQuit);
+        assert_eq!(effects, vec![AppEffect::Quit]);
+    }
+
+    #[test]
+    fn set_model_updates_state_and_saves() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::TraySetModel("small.en".to_string()));
+        assert_eq!(state.model_size, "small.en");
+        assert!(effects.contains(&AppEffect::SaveConfig));
+        assert!(effects.contains(&AppEffect::SetTrayModel("small.en".to_string())));
+    }
+
+    #[test]
+    fn set_language_updates_state_and_saves() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::TraySetLanguage("fr".to_string()));
+        assert_eq!(state.language, "fr");
+        assert!(effects.contains(&AppEffect::SaveConfig));
+        assert!(effects.contains(&AppEffect::SetTrayLanguage("fr".to_string())));
+    }
+
+    #[test]
+    fn toggle_spoken_punctuation() {
+        let mut state = default_state();
+        assert!(!state.spoken_punctuation);
+        let effects = state.handle_message(&AppMessage::TrayToggleSpokenPunctuation);
+        assert!(state.spoken_punctuation);
+        assert!(effects.contains(&AppEffect::SaveConfig));
+        let effects = state.handle_message(&AppMessage::TrayToggleSpokenPunctuation);
+        assert!(!state.spoken_punctuation);
+        assert!(effects.contains(&AppEffect::SaveConfig));
+    }
+
+    #[test]
+    fn toggle_toggle_mode() {
+        let mut state = default_state();
+        assert!(!state.toggle_mode);
+        let effects = state.handle_message(&AppMessage::TrayToggleToggleMode);
+        assert!(state.toggle_mode);
+        assert!(effects.contains(&AppEffect::SaveConfig));
+    }
+
+    #[test]
+    fn toggle_translate() {
+        let mut state = default_state();
+        assert!(!state.translate_to_english);
+        let effects = state.handle_message(&AppMessage::TrayToggleTranslate);
+        assert!(state.translate_to_english);
+        assert!(effects.contains(&AppEffect::SaveConfig));
+    }
+
+    // -- AppState construction --
+
+    #[test]
+    fn app_state_from_config() {
+        let config = Config {
+            hotkey: "f9".to_string(),
+            model_size: "small.en".to_string(),
+            language: "fr".to_string(),
+            spoken_punctuation: true,
+            max_recordings: 10,
+            toggle_mode: true,
+            translate_to_english: true,
+        };
+        let state = AppState::new(&config);
+        assert_eq!(state.model_size, "small.en");
+        assert_eq!(state.language, "fr");
+        assert!(state.spoken_punctuation);
+        assert!(state.toggle_mode);
+        assert!(state.translate_to_english);
+        assert_eq!(state.max_recordings, 10);
+        assert!(!state.is_pressed);
+        assert!(state.last_transcription.is_none());
+    }
+
+    #[test]
+    fn to_config_preserves_state() {
+        let base = Config::default();
+        let mut state = AppState::new(&base);
+        state.model_size = "large".to_string();
+        state.language = "de".to_string();
+        state.spoken_punctuation = true;
+        state.toggle_mode = true;
+        state.translate_to_english = true;
+        let cfg = state.to_config(&base);
+        assert_eq!(cfg.model_size, "large");
+        assert_eq!(cfg.language, "de");
+        assert!(cfg.spoken_punctuation);
+        assert!(cfg.toggle_mode);
+        assert!(cfg.translate_to_english);
+        assert_eq!(cfg.hotkey, base.hotkey);
+    }
+
+    #[test]
+    fn recording_output_path_temp_when_no_max() {
+        let state = default_state();
+        let path = state.recording_output_path();
+        assert!(path.to_string_lossy().contains("open-bark-recording.wav"));
+    }
+
+    // -- AppEffect/TrayStateTag enum tests --
+
+    #[test]
+    fn app_effect_debug_and_eq() {
+        let e1 = AppEffect::None;
+        let e2 = AppEffect::None;
+        assert_eq!(e1, e2);
+        assert_eq!(format!("{:?}", e1), "None");
+        assert_ne!(AppEffect::Quit, AppEffect::None);
+    }
+
+    #[test]
+    fn tray_state_tag_variants() {
+        assert_ne!(TrayStateTag::Idle, TrayStateTag::Recording);
+        assert_ne!(TrayStateTag::Recording, TrayStateTag::Transcribing);
+        assert_ne!(TrayStateTag::Transcribing, TrayStateTag::Error);
+        assert_eq!(TrayStateTag::Idle.clone(), TrayStateTag::Idle);
+    }
+
+    #[test]
+    fn open_config_and_reload_are_noop() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::TrayOpenConfig);
+        assert_eq!(effects, vec![AppEffect::None]);
+        let effects = state.handle_message(&AppMessage::TrayReloadConfig);
+        assert_eq!(effects, vec![AppEffect::None]);
+    }
+
+    #[test]
+    fn recording_output_path_with_max_recordings() {
+        let mut state = default_state();
+        state.max_recordings = 5;
+        let path = state.recording_output_path();
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("recording-"));
+        assert!(name.ends_with(".wav"));
+    }
 }

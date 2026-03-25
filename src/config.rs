@@ -139,28 +139,40 @@ impl Config {
     }
 
     pub fn load() -> Self {
-        let path = Self::file_path();
-        match std::fs::read_to_string(&path) {
-            Ok(contents) => match serde_json::from_str(&contents) {
-                Ok(config) => config,
-                Err(e) => {
-                    eprintln!("Warning: unable to parse {}: {e}", path.display());
-                    Self::default()
-                }
-            },
+        Self::load_from(&Self::file_path())
+    }
+
+    pub fn load_from(path: &std::path::Path) -> Self {
+        match std::fs::read_to_string(path) {
+            Ok(contents) => Self::parse(&contents, path),
             Err(_) => {
                 let config = Self::default();
-                let _ = config.save();
+                let _ = config.save_to(path);
                 config
             }
         }
     }
 
+    pub fn parse(contents: &str, source: &std::path::Path) -> Self {
+        match serde_json::from_str(contents) {
+            Ok(config) => config,
+            Err(e) => {
+                eprintln!("Warning: unable to parse {}: {e}", source.display());
+                Self::default()
+            }
+        }
+    }
+
     pub fn save(&self) -> Result<()> {
-        let dir = Self::dir();
-        std::fs::create_dir_all(&dir)?;
+        self.save_to(&Self::file_path())
+    }
+
+    pub fn save_to(&self, path: &std::path::Path) -> Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(Self::file_path(), json)?;
+        std::fs::write(path, json)?;
         Ok(())
     }
 
@@ -185,6 +197,7 @@ mod tests {
         assert!(!cfg.spoken_punctuation);
         assert_eq!(cfg.max_recordings, 0);
         assert!(!cfg.toggle_mode);
+        assert!(!cfg.translate_to_english);
     }
 
     #[test]
@@ -234,5 +247,116 @@ mod tests {
         assert_eq!(parsed.max_recordings, 10);
         assert!(parsed.toggle_mode);
         assert!(parsed.translate_to_english);
+    }
+
+    #[test]
+    fn test_config_dir_and_file_path() {
+        let dir = Config::dir();
+        assert!(dir.to_string_lossy().contains("open-bark"));
+        let fp = Config::file_path();
+        assert!(fp.to_string_lossy().contains("config.json"));
+        assert!(fp.starts_with(&dir));
+    }
+
+    #[test]
+    fn test_save_to_and_load_from() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("test_config.json");
+
+        let cfg = Config {
+            hotkey: "ctrl+shift+a".to_string(),
+            model_size: "medium.en".to_string(),
+            language: "de".to_string(),
+            spoken_punctuation: true,
+            max_recordings: 5,
+            toggle_mode: true,
+            translate_to_english: false,
+        };
+        cfg.save_to(&path).unwrap();
+
+        let loaded = Config::load_from(&path);
+        assert_eq!(loaded.hotkey, "ctrl+shift+a");
+        assert_eq!(loaded.model_size, "medium.en");
+        assert_eq!(loaded.language, "de");
+        assert!(loaded.spoken_punctuation);
+        assert_eq!(loaded.max_recordings, 5);
+        assert!(loaded.toggle_mode);
+        assert!(!loaded.translate_to_english);
+    }
+
+    #[test]
+    fn test_load_from_nonexistent_creates_default() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("nonexistent.json");
+        let loaded = Config::load_from(&path);
+        assert_eq!(loaded.model_size, "base.en");
+        // Should have created the default config file
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn test_parse_invalid_json_returns_default() {
+        let path = std::path::Path::new("/tmp/test_invalid.json");
+        let cfg = Config::parse("not valid json", path);
+        assert_eq!(cfg.model_size, "base.en");
+    }
+
+    #[test]
+    fn test_parse_valid_json() {
+        let json = r#"{"hotkey":"f5","model_size":"tiny","language":"ja","spoken_punctuation":false,"max_recordings":0,"toggle_mode":false,"translate_to_english":false}"#;
+        let path = std::path::Path::new("/tmp/test.json");
+        let cfg = Config::parse(json, path);
+        assert_eq!(cfg.hotkey, "f5");
+        assert_eq!(cfg.model_size, "tiny");
+        assert_eq!(cfg.language, "ja");
+    }
+
+    #[test]
+    fn test_serde_defaults() {
+        // JSON without optional fields should use defaults
+        let json = r#"{"hotkey":"f9","model_size":"base.en","language":"en"}"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert!(!cfg.spoken_punctuation);
+        assert_eq!(cfg.max_recordings, 0);
+        assert!(!cfg.toggle_mode);
+        assert!(!cfg.translate_to_english);
+    }
+
+    #[test]
+    fn test_supported_models_contains_expected() {
+        assert!(SUPPORTED_MODELS.contains(&"tiny.en"));
+        assert!(SUPPORTED_MODELS.contains(&"base.en"));
+        assert!(SUPPORTED_MODELS.contains(&"small.en"));
+        assert!(SUPPORTED_MODELS.contains(&"medium.en"));
+        assert!(SUPPORTED_MODELS.contains(&"large-v3-turbo"));
+        assert!(SUPPORTED_MODELS.contains(&"large"));
+        assert!(!SUPPORTED_MODELS.contains(&"nonexistent"));
+    }
+
+    #[test]
+    fn test_supported_languages_coverage() {
+        // Test a variety of languages
+        for &(code, name) in SUPPORTED_LANGUAGES {
+            assert!(is_valid_language(code));
+            assert_eq!(language_name(code), Some(name));
+        }
+    }
+
+    #[test]
+    fn test_save_to_creates_parent_dirs() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("a").join("b").join("config.json");
+        let cfg = Config::default();
+        cfg.save_to(&path).unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn test_effective_max_recordings_boundary() {
+        assert_eq!(Config::effective_max_recordings(0), 0);
+        assert_eq!(Config::effective_max_recordings(1), 1);
+        assert_eq!(Config::effective_max_recordings(100), 100);
+        assert_eq!(Config::effective_max_recordings(101), 100);
+        assert_eq!(Config::effective_max_recordings(u32::MAX), 100);
     }
 }

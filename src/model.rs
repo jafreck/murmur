@@ -97,6 +97,24 @@ mod tests {
     }
 
     #[test]
+    fn test_is_valid_ggml_magic() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(&0x67676d6cu32.to_le_bytes()).unwrap();
+        tmp.write_all(&[0u8; 100]).unwrap();
+        tmp.flush().unwrap();
+        assert!(is_valid_ggml_file(tmp.path()));
+    }
+
+    #[test]
+    fn test_is_valid_ggjt_magic() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(&0x67676a74u32.to_le_bytes()).unwrap();
+        tmp.write_all(&[0u8; 100]).unwrap();
+        tmp.flush().unwrap();
+        assert!(is_valid_ggml_file(tmp.path()));
+    }
+
+    #[test]
     fn test_is_valid_ggml_file_invalid() {
         let mut tmp = NamedTempFile::new().unwrap();
         tmp.write_all(b"<!DOCTYPE html>").unwrap();
@@ -107,5 +125,19 @@ mod tests {
     #[test]
     fn test_is_valid_ggml_file_nonexistent() {
         assert!(!is_valid_ggml_file(std::path::Path::new("/nonexistent/file")));
+    }
+
+    #[test]
+    fn test_is_valid_ggml_file_too_short() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(&[0u8; 2]).unwrap();
+        tmp.flush().unwrap();
+        assert!(!is_valid_ggml_file(tmp.path()));
+    }
+
+    #[test]
+    fn test_is_valid_ggml_file_empty() {
+        let tmp = NamedTempFile::new().unwrap();
+        assert!(!is_valid_ggml_file(tmp.path()));
     }
 }

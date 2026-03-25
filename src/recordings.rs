@@ -13,8 +13,11 @@ impl RecordingStore {
     }
 
     pub fn ensure_dir() {
-        let dir = Self::recordings_dir();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
+        Self::ensure_dir_at(&Self::recordings_dir());
+    }
+
+    pub fn ensure_dir_at(dir: &std::path::Path) {
+        if let Err(e) = std::fs::create_dir_all(dir) {
             eprintln!("Warning: could not create recordings directory: {e}");
         }
     }
@@ -24,17 +27,24 @@ impl RecordingStore {
     }
 
     pub fn new_recording_path() -> PathBuf {
-        Self::ensure_dir();
+        Self::new_recording_path_in(&Self::recordings_dir())
+    }
+
+    pub fn new_recording_path_in(dir: &std::path::Path) -> PathBuf {
+        Self::ensure_dir_at(dir);
         let now = chrono_timestamp();
         let unique = &uuid_short();
         let filename = format!("{FILE_PREFIX}{now}-{unique}.{FILE_EXTENSION}");
-        Self::recordings_dir().join(filename)
+        dir.join(filename)
     }
 
     pub fn list_recordings() -> Vec<(PathBuf, String)> {
-        Self::ensure_dir();
-        let dir = Self::recordings_dir();
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        Self::list_recordings_in(&Self::recordings_dir())
+    }
+
+    pub fn list_recordings_in(dir: &std::path::Path) -> Vec<(PathBuf, String)> {
+        Self::ensure_dir_at(dir);
+        let Ok(entries) = std::fs::read_dir(dir) else {
             return vec![];
         };
 
@@ -56,7 +66,11 @@ impl RecordingStore {
     }
 
     pub fn prune(max_count: u32) {
-        let recordings = Self::list_recordings();
+        Self::prune_in(&Self::recordings_dir(), max_count);
+    }
+
+    pub fn prune_in(dir: &std::path::Path, max_count: u32) {
+        let recordings = Self::list_recordings_in(dir);
         if recordings.len() <= max_count as usize {
             return;
         }
@@ -73,7 +87,11 @@ impl RecordingStore {
 
     #[allow(dead_code)]
     pub fn delete_all() {
-        for (path, _) in Self::list_recordings() {
+        Self::delete_all_in(&Self::recordings_dir());
+    }
+
+    pub fn delete_all_in(dir: &std::path::Path) {
+        for (path, _) in Self::list_recordings_in(dir) {
             let _ = std::fs::remove_file(&path);
         }
     }
@@ -113,7 +131,6 @@ mod tests {
     fn test_chrono_timestamp() {
         let ts = chrono_timestamp();
         assert!(!ts.is_empty());
-        // Should be a number
         assert!(ts.parse::<u64>().is_ok());
     }
 
@@ -121,5 +138,104 @@ mod tests {
     fn test_uuid_short() {
         let id = uuid_short();
         assert_eq!(id.len(), 8);
+    }
+
+    #[test]
+    fn test_ensure_dir_creates_directory() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().join("test_recordings");
+        assert!(!dir.exists());
+        RecordingStore::ensure_dir_at(&dir);
+        assert!(dir.exists());
+    }
+
+    #[test]
+    fn test_new_recording_path_format() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = RecordingStore::new_recording_path_in(tmp.path());
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("recording-"));
+        assert!(name.ends_with(".wav"));
+    }
+
+    #[test]
+    fn test_list_recordings_empty() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let recordings = RecordingStore::list_recordings_in(tmp.path());
+        assert!(recordings.is_empty());
+    }
+
+    #[test]
+    fn test_list_recordings_filters_non_recording_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Create a non-recording file
+        std::fs::write(tmp.path().join("other.txt"), "not a recording").unwrap();
+        // Create a recording file
+        std::fs::write(tmp.path().join("recording-123-abc.wav"), "").unwrap();
+        let recordings = RecordingStore::list_recordings_in(tmp.path());
+        assert_eq!(recordings.len(), 1);
+        assert!(recordings[0].1.starts_with("recording-"));
+    }
+
+    #[test]
+    fn test_list_recordings_sorted_descending() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("recording-001-aaa.wav"), "").unwrap();
+        std::fs::write(tmp.path().join("recording-003-ccc.wav"), "").unwrap();
+        std::fs::write(tmp.path().join("recording-002-bbb.wav"), "").unwrap();
+        let recordings = RecordingStore::list_recordings_in(tmp.path());
+        assert_eq!(recordings.len(), 3);
+        assert!(recordings[0].1 > recordings[1].1);
+        assert!(recordings[1].1 > recordings[2].1);
+    }
+
+    #[test]
+    fn test_prune_removes_oldest() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("recording-001-aaa.wav"), "").unwrap();
+        std::fs::write(tmp.path().join("recording-002-bbb.wav"), "").unwrap();
+        std::fs::write(tmp.path().join("recording-003-ccc.wav"), "").unwrap();
+
+        RecordingStore::prune_in(tmp.path(), 2);
+
+        let remaining = RecordingStore::list_recordings_in(tmp.path());
+        assert_eq!(remaining.len(), 2);
+        // Newest should remain
+        assert!(remaining.iter().any(|(_, n)| n.contains("003")));
+        assert!(remaining.iter().any(|(_, n)| n.contains("002")));
+    }
+
+    #[test]
+    fn test_prune_noop_when_under_limit() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("recording-001-aaa.wav"), "").unwrap();
+        RecordingStore::prune_in(tmp.path(), 5);
+        let remaining = RecordingStore::list_recordings_in(tmp.path());
+        assert_eq!(remaining.len(), 1);
+    }
+
+    #[test]
+    fn test_delete_all() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("recording-001-aaa.wav"), "").unwrap();
+        std::fs::write(tmp.path().join("recording-002-bbb.wav"), "").unwrap();
+        RecordingStore::delete_all_in(tmp.path());
+        let remaining = RecordingStore::list_recordings_in(tmp.path());
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn test_recordings_dir_path() {
+        let dir = RecordingStore::recordings_dir();
+        assert!(dir.to_string_lossy().contains("recordings"));
+    }
+
+    #[test]
+    fn test_new_recording_paths_are_unique() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let p1 = RecordingStore::new_recording_path_in(tmp.path());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let p2 = RecordingStore::new_recording_path_in(tmp.path());
+        assert_ne!(p1, p2);
     }
 }

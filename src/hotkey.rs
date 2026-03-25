@@ -49,3 +49,50 @@ impl HotkeyManager {
         .context("Hotkey listener exited unexpectedly")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_config_string_single_key() {
+        let hk = ParsedHotkey {
+            key: Key::F9,
+            modifiers: vec![],
+        };
+        assert_eq!(hk.to_config_string(), "f9");
+    }
+
+    #[test]
+    fn to_config_string_with_modifiers() {
+        let hk = ParsedHotkey {
+            key: Key::Space,
+            modifiers: vec![Key::ControlLeft, Key::ShiftLeft],
+        };
+        let s = hk.to_config_string();
+        assert!(s.contains("space"));
+        assert!(s.contains("+"));
+        assert!(s.contains("controlleft"));
+        assert!(s.contains("shiftleft"));
+    }
+
+    #[test]
+    fn to_config_string_single_letter() {
+        let hk = ParsedHotkey {
+            key: Key::KeyA,
+            modifiers: vec![],
+        };
+        assert_eq!(hk.to_config_string(), "keya");
+    }
+
+    #[test]
+    fn to_config_string_meta_modifier() {
+        let hk = ParsedHotkey {
+            key: Key::KeyV,
+            modifiers: vec![Key::MetaLeft],
+        };
+        let s = hk.to_config_string();
+        assert!(s.contains("metaleft"));
+        assert!(s.contains("keyv"));
+    }
+}

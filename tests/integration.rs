@@ -127,7 +127,7 @@ fn push_to_talk_error_recovers() {
     h.send(AppMessage::KeyDown);
     h.send(AppMessage::KeyUp);
 
-    // Transcription fails
+    // Transcription fails (not recording, so error state applies)
     let fx = h.send(AppMessage::TranscriptionError("model failed".into()));
     assert!(has_tray_state(&fx, TrayState::Error));
     assert!(!h.state.is_pressed);
@@ -465,17 +465,38 @@ fn switch_mode_while_idle() {
 }
 
 #[test]
-fn error_during_recording_resets_pressed_state() {
+fn error_during_recording_does_not_reset_pressed() {
     let mut h = Harness::new();
 
     h.send(AppMessage::KeyDown);
     assert!(h.state.is_pressed);
 
-    // Simulate error (e.g., microphone unavailable)
-    h.send(AppMessage::TranscriptionError("mic failed".into()));
-    assert!(!h.state.is_pressed, "error should reset is_pressed");
+    // Error from a concurrent transcription should not interfere with active recording
+    let fx = h.send(AppMessage::TranscriptionError("mic failed".into()));
+    assert!(
+        h.state.is_pressed,
+        "error during active recording should not reset is_pressed"
+    );
+    // Error tray state is suppressed while recording
+    assert!(!has_tray_state(&fx, TrayState::Error));
 
-    // Next recording should work
+    // Release still works
+    let fx = h.send(AppMessage::KeyUp);
+    assert!(has_stop_and_transcribe(&fx));
+}
+
+#[test]
+fn error_when_idle_sets_error_state() {
+    let mut h = Harness::new();
+
+    h.send(AppMessage::KeyDown);
+    h.send(AppMessage::KeyUp);
+
+    // Error arrives when not recording
+    let fx = h.send(AppMessage::TranscriptionError("model failed".into()));
+    assert!(has_tray_state(&fx, TrayState::Error));
+
+    // Next recording works
     let fx = h.send(AppMessage::KeyDown);
     assert!(has_start_recording(&fx));
 }
@@ -614,14 +635,14 @@ fn regression_streaming_flag_cleared_after_transcription() {
     );
 }
 
-/// Regression: error during recording must not leave state stuck.
-/// A subsequent recording cycle must work normally.
+/// Regression: error from a previous recording must not interfere with current recording.
 #[test]
 fn regression_error_recovery_full_cycle() {
     let mut h = Harness::new();
 
-    // First attempt: fails
+    // First attempt: record, release, error arrives later
     h.send(AppMessage::KeyDown);
+    h.send(AppMessage::KeyUp);
     h.send(AppMessage::TranscriptionError("mic busy".into()));
     assert!(!h.state.is_pressed);
 
@@ -635,6 +656,71 @@ fn regression_error_recovery_full_cycle() {
 
     let fx = h.send(AppMessage::TranscriptionDone("recovered".into()));
     assert!(has_insert_text(&fx, "recovered"));
+}
+
+/// Regression: stale TranscriptionDone/Error from a previous recording must not
+/// reset is_pressed or tray state when a new recording is active.
+#[test]
+fn regression_stale_transcription_result_during_recording() {
+    let mut h = Harness::new();
+
+    // Recording 1: start and stop
+    h.send(AppMessage::KeyDown);
+    h.send(AppMessage::KeyUp);
+    // Transcription thread is running...
+
+    // Recording 2: start immediately
+    h.send(AppMessage::KeyDown);
+    assert!(h.state.is_pressed);
+
+    // Stale TranscriptionDone from recording 1 arrives during recording 2
+    let fx = h.send(AppMessage::TranscriptionDone("recording one".into()));
+    assert!(
+        h.state.is_pressed,
+        "stale TranscriptionDone must not reset is_pressed"
+    );
+    assert!(
+        has_insert_text(&fx, "recording one"),
+        "text from recording 1 should still be inserted"
+    );
+    assert!(
+        !has_tray_state(&fx, TrayState::Idle),
+        "tray should not go to Idle while recording"
+    );
+
+    // Recording 2 completes normally
+    let fx = h.send(AppMessage::KeyUp);
+    assert!(has_stop_and_transcribe(&fx));
+    let fx = h.send(AppMessage::TranscriptionDone("recording two".into()));
+    assert!(has_insert_text(&fx, "recording two"));
+    assert!(has_tray_state(&fx, TrayState::Idle));
+}
+
+/// Regression: stale TranscriptionError during active recording must not disrupt it.
+#[test]
+fn regression_stale_error_during_recording() {
+    let mut h = Harness::new();
+
+    // Recording 1: start, stop
+    h.send(AppMessage::KeyDown);
+    h.send(AppMessage::KeyUp);
+
+    // Recording 2: start
+    h.send(AppMessage::KeyDown);
+    assert!(h.state.is_pressed);
+
+    // Stale error from recording 1
+    h.send(AppMessage::TranscriptionError("thread panic".into()));
+    assert!(
+        h.state.is_pressed,
+        "stale error must not reset is_pressed during active recording"
+    );
+
+    // Recording 2 completes normally
+    let fx = h.send(AppMessage::KeyUp);
+    assert!(has_stop_and_transcribe(&fx));
+    let fx = h.send(AppMessage::TranscriptionDone("still works".into()));
+    assert!(has_insert_text(&fx, "still works"));
 }
 
 /// Ensure spoken punctuation is applied by the effect handler (StopAndTranscribe),

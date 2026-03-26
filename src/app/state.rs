@@ -189,7 +189,10 @@ impl AppState {
 
     fn on_transcription_done(&mut self, text: &str) -> Vec<AppEffect> {
         let was_streaming = self.streaming_active;
-        self.streaming_active = false;
+        // Only clear streaming flag if not currently recording (result may be from a previous cycle)
+        if !self.is_pressed {
+            self.streaming_active = false;
+        }
 
         let mut effects = vec![];
         if !text.is_empty() {
@@ -202,17 +205,23 @@ impl AppState {
             }
             self.last_transcription = Some(text.to_string());
         }
-        effects.push(AppEffect::SetTrayState(TrayState::Idle));
+        // Only reset tray if not currently recording — a result arriving
+        // during a new recording is from a previous cycle.
+        if !self.is_pressed {
+            effects.push(AppEffect::SetTrayState(TrayState::Idle));
+        }
         effects
     }
 
     fn on_transcription_error(&mut self, error: &str) -> Vec<AppEffect> {
-        self.is_pressed = false;
-        self.streaming_active = false;
-        vec![
-            AppEffect::LogError(error.to_string()),
-            AppEffect::SetTrayState(TrayState::Error),
-        ]
+        // Only reset state if not currently recording — the error may be
+        // from a previous cycle's transcription thread.
+        let mut effects = vec![AppEffect::LogError(error.to_string())];
+        if !self.is_pressed {
+            self.streaming_active = false;
+            effects.push(AppEffect::SetTrayState(TrayState::Error));
+        }
+        effects
     }
 
     fn on_copy_last(&self) -> Vec<AppEffect> {

@@ -66,12 +66,18 @@ pub fn apply_effect(
         AppEffect::InsertText(text) => {
             info!("Transcription: {text}");
             // Guard the hotkey listener during paste — enigo's simulated
-            // Cmd+V generates phantom modifier events on macOS.
-            ctx.paste_guard.store(true, Ordering::Relaxed);
+            // Cmd+V generates phantom modifier events on macOS that arrive
+            // asynchronously after insert() returns.
+            let guard = ctx.paste_guard.clone();
+            guard.store(true, Ordering::Relaxed);
             if let Err(e) = TextInserter::insert(&text) {
                 error!("Insert failed: {e}");
             }
-            ctx.paste_guard.store(false, Ordering::Relaxed);
+            // Clear the guard after a delay to absorb trailing phantom events.
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                guard.store(false, Ordering::Relaxed);
+            });
         }
         AppEffect::CopyToClipboard(text) => {
             if let Ok(mut cb) = arboard::Clipboard::new() {

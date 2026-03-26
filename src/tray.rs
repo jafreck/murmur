@@ -11,6 +11,8 @@ use crate::config::{self, Config, InputMode};
 /// App states the tray can display.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrayState {
+    /// Model is loading in the background; not ready for dictation yet.
+    Loading,
     Idle,
     Recording,
     Transcribing,
@@ -44,6 +46,7 @@ pub const TOP_LANGUAGES: &[&str] = &[
 /// Compute the tooltip and status label for a given TrayState.
 pub fn state_display(state: &TrayState) -> (&'static str, &'static str) {
     match state {
+        TrayState::Loading => ("open-bark — Loading model...", "open-bark: Loading model..."),
         TrayState::Idle => ("open-bark — Idle", "open-bark: Idle"),
         TrayState::Recording => ("open-bark — Recording...", "open-bark: Recording..."),
         TrayState::Transcribing => ("open-bark — Transcribing...", "open-bark: Transcribing..."),
@@ -201,6 +204,7 @@ pub struct TrayController {
     idle_icon: Icon,
     recording_icon: Icon,
     transcribing_icon: Icon,
+    loading_icon: Icon,
 }
 
 impl TrayController {
@@ -307,6 +311,7 @@ impl TrayController {
         let idle_icon = make_bark_icon(100, 150, 255, 200)?;
         let recording_icon = make_bark_icon(255, 60, 60, 230)?;
         let transcribing_icon = make_bark_icon(255, 200, 0, 220)?;
+        let loading_icon = make_bark_icon(150, 150, 150, 140)?;
 
         let tray = TrayIconBuilder::new()
             .with_icon(idle_icon.clone())
@@ -320,13 +325,14 @@ impl TrayController {
             model_entries, language_entries, mode_entries,
             spoken_punct_item, streaming_item, translate_item,
             status_item, hotkey_item,
-            idle_icon, recording_icon, transcribing_icon,
+            idle_icon, recording_icon, transcribing_icon, loading_icon,
         })
     }
 
     pub fn set_state(&mut self, state: TrayState) {
         let (tooltip, label) = state_display(&state);
         let icon = match &state {
+            TrayState::Loading => &self.loading_icon,
             TrayState::Idle => &self.idle_icon,
             TrayState::Recording | TrayState::Error => &self.recording_icon,
             TrayState::Transcribing | TrayState::Downloading => &self.transcribing_icon,

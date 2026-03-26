@@ -18,7 +18,7 @@ use super::{AppEffect, AppMessage, AppState};
 
 pub struct EffectContext<'a> {
     pub recorder: &'a mut AudioRecorder,
-    pub transcriber: &'a mut Arc<Transcriber>,
+    pub transcriber: &'a mut Option<Arc<Transcriber>>,
     pub tray: &'a mut TrayController,
     pub config: &'a mut Config,
     pub state: &'a mut AppState,
@@ -103,6 +103,8 @@ pub fn apply_effect(
             info!("Mode changed to: {mode}");
         }
         AppEffect::ReloadTranscriber(generation) => {
+            *ctx.transcriber = None;
+            ctx.tray.set_state(TrayState::Loading);
             reload_transcriber(ctx, generation);
         }
         AppEffect::EnterHotkeyCaptureMode => {
@@ -121,7 +123,11 @@ pub fn apply_effect(
             } else {
                 error!("Invalid captured key: {key_name}");
             }
-            ctx.tray.set_state(TrayState::Idle);
+            ctx.tray.set_state(if ctx.transcriber.is_some() {
+                TrayState::Idle
+            } else {
+                TrayState::Loading
+            });
         }
         AppEffect::Quit => {
             info!("Quit requested via tray");
@@ -140,7 +146,15 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
         let _ = stop.send(());
     }
 
-    let transcriber = Arc::clone(ctx.transcriber);
+    let Some(transcriber) = ctx.transcriber.as_ref().map(Arc::clone) else {
+        info!("Model not loaded yet — ignoring transcription request");
+        let _ = ctx.recorder.stop();
+        let _ = ctx.recorder.stop_samples();
+        let _ = ctx.tx.send(AppMessage::TranscriptionError(
+            "Model is still loading, please try again".to_string(),
+        ));
+        return;
+    };
     let spoken_punctuation = ctx.state.spoken_punctuation;
     let translate_to_english = ctx.state.translate_to_english;
     let max_recordings = ctx.state.max_recordings;
@@ -200,9 +214,12 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
 }
 
 fn start_streaming(ctx: &mut EffectContext<'_>) {
+    let Some(transcriber) = ctx.transcriber.as_ref().map(Arc::clone) else {
+        info!("Model not loaded yet — cannot start streaming");
+        return;
+    };
     info!("Starting streaming transcription...");
     let sample_buffer = ctx.recorder.sample_buffer();
-    let transcriber = Arc::clone(ctx.transcriber);
     let tx_app = ctx.tx.clone();
     let translate = ctx.state.translate_to_english;
     let spoken_punct = ctx.state.spoken_punctuation;

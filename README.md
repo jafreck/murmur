@@ -4,7 +4,7 @@
 
 Cross-platform, local voice dictation. Hold a key, speak, release — your words appear at the cursor.
 
-[![CI](https://github.com/jafreck/open-bark/actions/workflows/ci.yml/badge.svg)](https://github.com/jafreck/open-bark/actions/workflows/ci.yml)
+[![CI](https://github.com/jafreck/open-bark/actions/workflows/ci.yml/badge.svg)](https://github.com/jafreck/murmur/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#platform-notes)

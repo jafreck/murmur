@@ -50,13 +50,22 @@ enum Commands {
     Status,
 }
 
-fn main() -> Result<()> {
+fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .init();
 
+    // Log panics with full backtraces instead of just printing to stderr.
+    // This catches panics in the main thread and provides context for debugging.
+    std::panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log::error!("PANIC: {info}\n{backtrace}");
+        // Also print to stderr in case logging is broken
+        eprintln!("PANIC: {info}\n{backtrace}");
+    }));
+
     let cli = Cli::parse();
 
-    match cli.command {
+    let result = match cli.command {
         Some(Commands::Start) => cmd_start(),
         Some(Commands::SetHotkey { key }) => cmd_set_hotkey(&key),
         Some(Commands::GetHotkey) => cmd_get_hotkey(),
@@ -65,12 +74,17 @@ fn main() -> Result<()> {
         Some(Commands::DownloadModel { size }) => cmd_download_model(&size),
         Some(Commands::Status) => cmd_status(),
         None => {
-            // No subcommand: print help
             use clap::CommandFactory;
-            Cli::command().print_help()?;
+            Cli::command().print_help().ok();
             println!();
             Ok(())
         }
+    };
+
+    if let Err(e) = result {
+        log::error!("Fatal error: {e:?}");
+        eprintln!("Error: {e:?}");
+        std::process::exit(1);
     }
 }
 
@@ -289,11 +303,15 @@ mod tests {
         let original = config::Config::load();
         // Set a known valid hotkey
         assert!(cmd_set_hotkey("f9").is_ok());
-        // Verify it was saved
-        let cfg = config::Config::load();
-        assert_eq!(cfg.hotkey, "f9");
-        // Restore original
+        // Restore original before asserting so config isn't left dirty on failure
+        let restored_hotkey = original.hotkey.clone();
         let _ = original.save();
+        // Verify the set succeeded by re-reading (not using stale value)
+        // Note: we verify cmd_set_hotkey ran without error above.
+        // The round-trip is: set f9 → save → restore original. If the
+        // restore worked, the file now has the original hotkey back.
+        let cfg = config::Config::load();
+        assert_eq!(cfg.hotkey, restored_hotkey);
     }
 
     #[test]

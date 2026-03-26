@@ -136,41 +136,12 @@ fn streaming_loop(
             full_text = crate::postprocess::process(&full_text);
         }
 
-        // Find the common prefix between what's on screen and the new transcription.
-        let common_len = common_prefix_len(&emitted_text, &full_text);
-
-        // Characters to delete = old text after common prefix
-        let replace_chars = emitted_text.len() - common_len;
-
-        // Limit revisions to the last MAX_REVISE_CHARS of emitted text.
-        // Whisper's growing window causes it to revise words far back in
-        // the transcript. Allowing unbounded rewrites makes the output
-        // unreadable. Lock text that's old enough to be considered stable.
-        const MAX_REVISE_CHARS: usize = 40;
-        if replace_chars > MAX_REVISE_CHARS {
-            // Revision is too deep — treat emitted text as locked.
-            // Only append genuinely new text (if the new transcription is longer).
-            if full_text.len() > emitted_text.len() {
-                // Find where the new text extends beyond what we had.
-                // Use the emitted length as the anchor — anything past it is new.
-                let new_suffix = &full_text[emitted_text.len()..];
-                if !new_suffix.is_empty() {
-                    let _ = tx.send(StreamingEvent::PartialText {
-                        text: new_suffix.to_string(),
-                        replace_chars: 0,
-                    });
-                    emitted_text.push_str(new_suffix);
-                }
-            }
-            continue;
-        }
-
-        // New characters to type = new text after common prefix
-        let new_suffix = &full_text[common_len..];
-
-        if replace_chars > 0 || !new_suffix.is_empty() {
+        // If the transcription changed at all, replace everything.
+        // Backspace the entire emitted text and retype Whisper's latest.
+        if full_text != emitted_text {
+            let replace_chars = emitted_text.chars().count();
             let _ = tx.send(StreamingEvent::PartialText {
-                text: new_suffix.to_string(),
+                text: full_text.clone(),
                 replace_chars,
             });
             emitted_text = full_text;
@@ -180,6 +151,7 @@ fn streaming_loop(
 
 /// Find the byte length of the common prefix between two strings,
 /// aligned to char boundaries.
+#[allow(dead_code)]
 fn common_prefix_len(a: &str, b: &str) -> usize {
     a.chars()
         .zip(b.chars())

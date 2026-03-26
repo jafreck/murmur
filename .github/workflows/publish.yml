@@ -58,7 +58,7 @@ jobs:
             features: metal
             artifact: murmur-darwin-arm64
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             features: ""
             artifact: murmur-darwin-x86_64
           - target: x86_64-unknown-linux-gnu

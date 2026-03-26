@@ -8,7 +8,7 @@
 # No build tools required — just curl.
 #
 # Usage:
-#   curl -sSf https://github.com/jafreck/murmur/releases/latest/download/install.sh | bash
+#   curl -sSfL https://github.com/jafreck/murmur/releases/latest/download/install.sh | bash
 #   # or from a local clone:
 #   ./scripts/install.sh
 #   # specific version:
@@ -66,16 +66,21 @@ spinner_stop() {
 run_step() {
     local label="$1"; shift
     spinner_start "$label"
-    local output exit_code=0
-    output=$("$@" 2>&1) || exit_code=$?
+    local _rs_tmpfile _rs_exit_code=0
+    _rs_tmpfile=$(mktemp)
+    "$@" > "$_rs_tmpfile" 2>&1 || _rs_exit_code=$?
     spinner_stop
-    if [ $exit_code -eq 0 ]; then
+    if [ $_rs_exit_code -eq 0 ]; then
         printf "  ${GREEN}✔${RESET} %s\n" "$label"
     else
         printf "  ${RED}✖${RESET} %s\n" "$label"
-        [ -n "$output" ] && printf "\n${DIM}%s${RESET}\n" "$output"
+        local _rs_output
+        _rs_output=$(cat "$_rs_tmpfile")
+        [ -n "$_rs_output" ] && printf "\n${DIM}%s${RESET}\n" "$_rs_output"
+        rm -f "$_rs_tmpfile"
         exit 1
     fi
+    rm -f "$_rs_tmpfile"
 }
 
 step_header() {

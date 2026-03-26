@@ -29,7 +29,7 @@ Pre-built binaries — no build tools required. macOS Apple Silicon builds inclu
 **macOS / Linux:**
 
 ```bash
-curl -sSf https://github.com/jafreck/murmur/releases/latest/download/install.sh | bash
+curl -sSfL https://github.com/jafreck/murmur/releases/latest/download/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -44,7 +44,7 @@ To install a specific version:
 
 ```bash
 # macOS / Linux
-MURMUR_VERSION=v0.1.0 bash <(curl -sSf https://github.com/jafreck/murmur/releases/latest/download/install.sh)
+MURMUR_VERSION=v0.1.0 bash <(curl -sSfL https://github.com/jafreck/murmur/releases/latest/download/install.sh)
 
 # Windows
 .\scripts\install.ps1 -Version v0.1.0

@@ -17,9 +17,6 @@ pub type SharedHotkeyConfig = Arc<Mutex<(Key, HashSet<Key>)>>;
 /// Shared flag to enter hotkey capture mode.
 pub type CaptureFlag = Arc<AtomicBool>;
 
-/// Shared flag to suppress hotkey events during paste and reset modifier state.
-pub type PasteGuard = Arc<AtomicBool>;
-
 /// Create a shared hotkey config from a parsed hotkey.
 pub fn shared_hotkey(parsed: &ParsedHotkey) -> SharedHotkeyConfig {
     Arc::new(Mutex::new((
@@ -71,24 +68,17 @@ impl HotkeyManager {
     pub fn start(
         hotkey_config: SharedHotkeyConfig,
         capture_flag: CaptureFlag,
-        paste_guard: PasteGuard,
         on_key_down: impl Fn() + Send + 'static,
         on_key_up: impl Fn() + Send + 'static,
         on_capture: impl Fn(Key) + Send + 'static,
     ) -> Result<()> {
         let held_modifiers: Mutex<HashSet<Key>> = Mutex::new(HashSet::new());
+        // Track whether we fired on_key_down — only fire on_key_up if so.
+        // This prevents phantom release events (e.g. from enigo's paste)
+        // from generating spurious KeyUp messages.
+        let hotkey_active = AtomicBool::new(false);
 
         listen(move |event: Event| {
-            // During paste, ignore all events and reset modifier state.
-            // Enigo's simulated Cmd+V generates phantom modifier events on
-            // macOS that corrupt rdev's flagsChanged state tracking.
-            if paste_guard.load(Ordering::Relaxed) {
-                if let Ok(mut held) = held_modifiers.lock() {
-                    held.clear();
-                }
-                return;
-            }
-
             // Capture mode: intercept the next key press as the new hotkey
             if capture_flag.load(Ordering::Relaxed) {
                 if let EventType::KeyPress(key) = event.event_type {
@@ -118,37 +108,49 @@ impl HotkeyManager {
             };
 
             match event.event_type {
-                EventType::KeyPress(key) if is_modifier(&key) => {
-                    if let Ok(mut held) = held_modifiers.lock() {
-                        held.insert(key);
+                // For modifier-key hotkeys, rdev translates macOS flagsChanged
+                // into KeyPress/KeyRelease, but enigo's injected CGEvents can
+                // desync rdev's internal state, inverting press/release polarity.
+                // Use hotkey_active as the source of truth and toggle on any
+                // flagsChanged event for the target modifier key.
+                EventType::KeyPress(key) | EventType::KeyRelease(key)
+                    if is_modifier(&key) =>
+                {
+                    // Update held_modifiers for combo support
+                    if matches!(event.event_type, EventType::KeyPress(_)) {
+                        if let Ok(mut held) = held_modifiers.lock() {
+                            held.insert(key);
+                        }
+                    } else if let Ok(mut held) = held_modifiers.lock() {
+                        held.remove(&key);
                     }
+
                     if key == target_key {
-                        let mods = modifiers_ok();
-                        log::info!("Hotkey press detected (modifier key={key:?}, mods_ok={mods})");
-                        if mods {
+                        if hotkey_active.load(Ordering::Relaxed) {
+                            log::info!("Hotkey release (modifier key={key:?})");
+                            hotkey_active.store(false, Ordering::Relaxed);
+                            on_key_up();
+                        } else if modifiers_ok() {
+                            log::info!("Hotkey press (modifier key={key:?})");
+                            hotkey_active.store(true, Ordering::Relaxed);
                             on_key_down();
                         }
                     }
                 }
-                EventType::KeyRelease(key) if is_modifier(&key) => {
-                    if let Ok(mut held) = held_modifiers.lock() {
-                        held.remove(&key);
-                    }
-                    if key == target_key {
-                        log::info!("Hotkey release detected (modifier key={key:?})");
-                        on_key_up();
-                    }
-                }
+                // Non-modifier keys: press/release polarity is reliable
                 EventType::KeyPress(key) if key == target_key => {
-                    let mods = modifiers_ok();
-                    log::info!("Hotkey press detected (key={key:?}, mods_ok={mods})");
-                    if mods {
+                    if !hotkey_active.load(Ordering::Relaxed) && modifiers_ok() {
+                        log::info!("Hotkey press (key={key:?})");
+                        hotkey_active.store(true, Ordering::Relaxed);
                         on_key_down();
                     }
                 }
                 EventType::KeyRelease(key) if key == target_key => {
-                    log::info!("Hotkey release detected (key={key:?})");
-                    on_key_up();
+                    if hotkey_active.load(Ordering::Relaxed) {
+                        log::info!("Hotkey release (key={key:?})");
+                        hotkey_active.store(false, Ordering::Relaxed);
+                        on_key_up();
+                    }
                 }
                 _ => {}
             }

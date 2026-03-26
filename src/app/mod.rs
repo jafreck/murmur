@@ -126,17 +126,14 @@ pub fn run() -> Result<()> {
 
     let hotkey_config = hotkey::shared_hotkey(&parsed);
     let capture_flag = Arc::new(AtomicBool::new(false));
-    let paste_guard = Arc::new(AtomicBool::new(false));
 
     let hotkey_config_listener = hotkey_config.clone();
     let capture_flag_listener = capture_flag.clone();
-    let paste_guard_listener = paste_guard.clone();
     let tx_capture = tx.clone();
     std::thread::spawn(move || {
         if let Err(e) = HotkeyManager::start(
             hotkey_config_listener,
             capture_flag_listener,
-            paste_guard_listener,
             move || { let _ = tx_down.send(AppMessage::KeyDown); },
             move || { let _ = tx_up.send(AppMessage::KeyUp); },
             move |key| { let _ = tx_capture.send(AppMessage::HotkeyCapture(key)); },
@@ -181,7 +178,6 @@ pub fn run() -> Result<()> {
                     streaming_stop: &mut streaming_stop,
                     hotkey_config: &hotkey_config,
                     capture_flag: &capture_flag,
-                    paste_guard: &paste_guard,
                 })?;
                 effects.extend(extra);
                 if quit {

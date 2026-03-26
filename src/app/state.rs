@@ -163,7 +163,17 @@ impl AppState {
             effects.push(AppEffect::SetTrayState(TrayState::Recording));
             effects
         } else {
-            vec![AppEffect::None]
+            // PushToTalk: key repeat or missed KeyRelease — recover by
+            // stopping the stale recording and starting fresh.
+            log::warn!("KeyDown while already pressed — recovering stale state");
+            self.is_pressed = false;
+            let mut effects = vec![];
+            if self.streaming {
+                effects.push(AppEffect::StopStreaming);
+            }
+            effects.push(AppEffect::StopAndTranscribe);
+            effects.push(AppEffect::SetTrayState(TrayState::Transcribing));
+            effects
         }
     }
 
@@ -304,11 +314,14 @@ mod tests {
     }
 
     #[test]
-    fn hold_mode_key_down_while_pressed_noop() {
+    fn hold_mode_key_down_while_pressed_recovers() {
         let mut state = default_state();
         state.is_pressed = true;
         let effects = state.handle_message(&AppMessage::KeyDown);
-        assert_eq!(effects, vec![AppEffect::None]);
+        // Should recover by stopping the stale recording
+        assert!(!state.is_pressed);
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::StopAndTranscribe)));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Transcribing))));
     }
 
     #[test]

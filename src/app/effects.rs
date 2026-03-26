@@ -77,6 +77,10 @@ pub fn apply_effect(
                         }
                     }
                 });
+            } else {
+                // No active recording — reset state so the app doesn't get stuck
+                info!("StopAndTranscribe called but no active recording");
+                let _ = ctx.tx.send(AppMessage::TranscriptionDone(String::new()));
             }
         }
         AppEffect::StartStreaming => {

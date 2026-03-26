@@ -2,7 +2,7 @@
 name = "murmur"
 version = "0.1.0"
 edition = "2021"
-description = "Cross-platform, local voice dictation. Hold a key, speak, release — your words appear at the cursor. Powered by whisper.cpp, runs 100% on-device."
+description = "Cross-platform, local voice dictation. Worry free speech to text. Powered by whisper.cpp, runs 100% on-device."
 license = "MIT"
 repository = "https://github.com/jacobfreck/murmur"
 readme = "README.md"

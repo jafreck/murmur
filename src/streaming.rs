@@ -9,6 +9,7 @@
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+use crate::audio::TARGET_RATE;
 use crate::transcriber::Transcriber;
 
 // ── Configuration ──────────────────────────────────────────────────────
@@ -21,8 +22,6 @@ const OVERLAP_DURATION_SECS: f32 = 2.0;
 const POLL_INTERVAL_MS: u64 = 500;
 /// RMS threshold below which a chunk is considered silence and skipped.
 const SILENCE_RMS_THRESHOLD: f32 = 0.005;
-/// Sample rate of the audio buffer (must match AudioRecorder output).
-const SAMPLE_RATE: usize = 16_000;
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -52,7 +51,6 @@ pub fn start_streaming(
         streaming_loop(
             sample_buffer,
             transcriber,
-            &language,
             translate,
             spoken_punctuation,
             tx,
@@ -68,14 +66,13 @@ pub fn start_streaming(
 fn streaming_loop(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
     transcriber: Arc<Transcriber>,
-    _language: &str,
     translate: bool,
     spoken_punctuation: bool,
     tx: mpsc::Sender<StreamingEvent>,
     stop_rx: mpsc::Receiver<()>,
 ) {
-    let chunk_samples = (CHUNK_DURATION_SECS * SAMPLE_RATE as f32) as usize;
-    let overlap_samples = (OVERLAP_DURATION_SECS * SAMPLE_RATE as f32) as usize;
+    let chunk_samples = (CHUNK_DURATION_SECS * TARGET_RATE as f32) as usize;
+    let overlap_samples = (OVERLAP_DURATION_SECS * TARGET_RATE as f32) as usize;
     let step_samples = chunk_samples - overlap_samples;
 
     // Position in the sample buffer where the next chunk starts.
@@ -356,7 +353,7 @@ mod tests {
         assert!(OVERLAP_DURATION_SECS < CHUNK_DURATION_SECS);
         assert!(POLL_INTERVAL_MS > 0);
         assert!(SILENCE_RMS_THRESHOLD > 0.0);
-        assert_eq!(SAMPLE_RATE, 16_000);
+        assert_eq!(TARGET_RATE, 16_000);
     }
 
     #[test]

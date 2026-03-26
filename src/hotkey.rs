@@ -11,57 +11,17 @@ pub struct ParsedHotkey {
 
 impl ParsedHotkey {
     pub fn to_config_string(&self) -> String {
-        let key_name = key_to_name(&self.key);
+        let key_name = crate::keycodes::key_to_name(&self.key);
         if self.modifiers.is_empty() {
             key_name
         } else {
             let mod_names: Vec<String> = self.modifiers
                 .iter()
-                .map(key_to_name)
+                .map(|k| crate::keycodes::key_to_name(k))
                 .collect();
             format!("{}+{}", mod_names.join("+"), key_name)
         }
     }
-}
-
-/// Map an rdev Key back to the canonical name accepted by keycodes::parse.
-fn key_to_name(key: &Key) -> String {
-    match key {
-        // Letters
-        Key::KeyA => "a", Key::KeyB => "b", Key::KeyC => "c", Key::KeyD => "d",
-        Key::KeyE => "e", Key::KeyF => "f", Key::KeyG => "g", Key::KeyH => "h",
-        Key::KeyI => "i", Key::KeyJ => "j", Key::KeyK => "k", Key::KeyL => "l",
-        Key::KeyM => "m", Key::KeyN => "n", Key::KeyO => "o", Key::KeyP => "p",
-        Key::KeyQ => "q", Key::KeyR => "r", Key::KeyS => "s", Key::KeyT => "t",
-        Key::KeyU => "u", Key::KeyV => "v", Key::KeyW => "w", Key::KeyX => "x",
-        Key::KeyY => "y", Key::KeyZ => "z",
-        // Numbers
-        Key::Num0 => "0", Key::Num1 => "1", Key::Num2 => "2", Key::Num3 => "3",
-        Key::Num4 => "4", Key::Num5 => "5", Key::Num6 => "6", Key::Num7 => "7",
-        Key::Num8 => "8", Key::Num9 => "9",
-        // Function keys
-        Key::F1 => "f1", Key::F2 => "f2", Key::F3 => "f3", Key::F4 => "f4",
-        Key::F5 => "f5", Key::F6 => "f6", Key::F7 => "f7", Key::F8 => "f8",
-        Key::F9 => "f9", Key::F10 => "f10", Key::F11 => "f11", Key::F12 => "f12",
-        // Modifiers
-        Key::ControlLeft => "ctrl", Key::ControlRight => "rightctrl",
-        Key::ShiftLeft => "shift", Key::ShiftRight => "rightshift",
-        Key::Alt => "alt", Key::AltGr => "rightalt",
-        Key::MetaLeft => "cmd", Key::MetaRight => "rightcmd",
-        // Special keys
-        Key::Space => "space", Key::Return => "return", Key::Tab => "tab",
-        Key::Escape => "escape", Key::Backspace => "backspace",
-        Key::CapsLock => "capslock",
-        // Punctuation
-        Key::Minus => "minus", Key::Equal => "equal",
-        Key::LeftBracket => "leftbracket", Key::RightBracket => "rightbracket",
-        Key::BackSlash => "backslash", Key::SemiColon => "semicolon",
-        Key::Quote => "quote", Key::Comma => "comma", Key::Dot => "dot",
-        Key::Slash => "slash", Key::BackQuote => "grave",
-        // Fallback
-        other => return format!("{:?}", other).to_lowercase(),
-    }
-    .to_string()
 }
 
 /// Return true if `key` is any modifier key (Shift, Ctrl, Alt, Meta).

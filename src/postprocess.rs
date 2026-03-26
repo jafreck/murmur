@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use regex::Regex;
 
 /// Replacement rules for spoken punctuation.
@@ -25,14 +27,26 @@ const REPLACEMENTS: &[(&str, &str)] = &[
     (r"\bnew paragraph\b", "\n\n"),
 ];
 
+fn compiled_replacements() -> &'static [(Regex, &'static str)] {
+    static COMPILED: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    COMPILED.get_or_init(|| {
+        REPLACEMENTS
+            .iter()
+            .filter_map(|(pattern, replacement)| {
+                Regex::new(&format!("(?i){pattern}"))
+                    .ok()
+                    .map(|re| (re, *replacement))
+            })
+            .collect()
+    })
+}
+
 /// Process transcribed text, replacing spoken punctuation words with symbols.
 pub fn process(text: &str) -> String {
     let mut result = text.to_string();
 
-    for (pattern, replacement) in REPLACEMENTS {
-        if let Ok(re) = Regex::new(&format!("(?i){pattern}")) {
-            result = re.replace_all(&result, *replacement).to_string();
-        }
+    for (re, replacement) in compiled_replacements() {
+        result = re.replace_all(&result, *replacement).to_string();
     }
 
     result = fix_spacing_around_punctuation(&result);
@@ -42,13 +56,15 @@ pub fn process(text: &str) -> String {
 
 /// Remove spaces before punctuation marks.
 fn fix_spacing_around_punctuation(text: &str) -> String {
-    let re = Regex::new(r"\s+([.,?!:;])").unwrap();
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"\s+([.,?!:;])").unwrap());
     re.replace_all(text, "$1").to_string()
 }
 
 /// Ensure a space exists after punctuation when followed by a word character.
 fn ensure_space_after_punctuation(text: &str) -> String {
-    let re = Regex::new(r"([.,?!:;])(\w)").unwrap();
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"([.,?!:;])(\w)").unwrap());
     re.replace_all(text, "$1 $2").to_string()
 }
 

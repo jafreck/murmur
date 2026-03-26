@@ -256,17 +256,14 @@ impl AppState {
 
         let mut effects = vec![];
         if !text.is_empty() {
-            let processed = if self.spoken_punctuation {
-                crate::postprocess::process(text)
-            } else {
-                text.to_string()
-            };
+            // Text arrives already postprocessed (spoken punctuation applied
+            // by the background transcription thread or streaming loop).
             // When streaming was active, partial text was already inserted
             // incrementally — skip re-inserting the full transcription.
             if !was_streaming {
-                effects.push(AppEffect::InsertText(processed.clone()));
+                effects.push(AppEffect::InsertText(text.to_string()));
             }
-            self.last_transcription = Some(processed);
+            self.last_transcription = Some(text.to_string());
         }
         effects.push(AppEffect::SetTrayState(TrayStateTag::Idle));
         effects
@@ -785,11 +782,13 @@ mod tests {
     }
 
     #[test]
-    fn transcription_done_with_spoken_punctuation() {
+    fn transcription_done_passes_through_already_processed_text() {
+        // Text arriving via TranscriptionDone is already postprocessed by the
+        // background thread, so AppState must NOT re-process it.
         let mut state = default_state();
         state.spoken_punctuation = true;
-        let effects = state.handle_message(&AppMessage::TranscriptionDone("hello period".to_string()));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::InsertText(t) if t.contains('.'))));
+        let effects = state.handle_message(&AppMessage::TranscriptionDone("hello.".to_string()));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello.")));
     }
 
     #[test]

@@ -34,11 +34,6 @@ pub enum TrayAction {
     Quit,
 }
 
-/// Display models shown in the model submenu.
-pub const DISPLAY_MODELS: &[&str] = &[
-    "tiny.en", "base.en", "small.en", "medium.en", "large-v3-turbo", "large",
-];
-
 /// Top languages shown in the menu.
 pub const TOP_LANGUAGES: &[&str] = &[
     "auto", "en", "es", "fr", "de", "it", "pt", "nl", "ru", "zh", "ja", "ko", "ar", "hi", "pl",
@@ -176,7 +171,7 @@ impl TrayController {
         let mut model_entries = Vec::new();
         let mut model_ids = Vec::new();
 
-        for &size in DISPLAY_MODELS {
+        for &size in crate::config::SUPPORTED_MODELS {
             let checked = size == config.model_size;
             let label = radio_label(size, checked);
             let item = CheckMenuItem::new(label, true, checked, None);
@@ -209,13 +204,11 @@ impl TrayController {
         let mut mode_entries = Vec::new();
         let mut mode_ids = Vec::new();
 
-        let modes: &[(InputMode, &str)] = &[
-            (InputMode::PushToTalk, "Push to Talk"),
-            (InputMode::OpenMic, "Open Mic"),
-        ];
-        for (mode, name) in modes {
+        let modes = [InputMode::PushToTalk, InputMode::OpenMic];
+        for mode in &modes {
+            let name = mode.to_string();
             let selected = *mode == config.mode;
-            let label = radio_label(name, selected);
+            let label = radio_label(&name, selected);
             let item = CheckMenuItem::new(label, true, selected, None);
             let id = item.id().clone();
             mode_submenu.append(&item)?;
@@ -322,18 +315,11 @@ impl TrayController {
     }
 
     pub fn set_mode(&mut self, mode: &InputMode) {
-        let mode_names: &[(InputMode, &str)] = &[
-            (InputMode::PushToTalk, "Push to Talk"),
-            (InputMode::OpenMic, "Open Mic"),
-        ];
         for entry in &self.mode_entries {
             let selected = entry.mode == *mode;
-            let name = mode_names.iter()
-                .find(|(m, _)| *m == entry.mode)
-                .map(|(_, n)| *n)
-                .unwrap_or("Unknown");
+            let name = entry.mode.to_string();
             entry.item.set_checked(selected);
-            entry.item.set_text(radio_label(name, selected));
+            entry.item.set_text(radio_label(&name, selected));
         }
     }
 
@@ -701,10 +687,5 @@ mod tests {
         }
     }
 
-    #[test]
-    fn display_models_valid() {
-        for &m in DISPLAY_MODELS {
-            assert!(crate::config::SUPPORTED_MODELS.contains(&m));
-        }
-    }
+
 }

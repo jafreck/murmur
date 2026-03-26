@@ -1,6 +1,91 @@
 use crate::hotkey::ParsedHotkey;
 use rdev::Key;
 
+/// Single source of truth for key ↔ name mappings.
+/// Each entry is `(Key, &["canonical_name", "alias1", ...])`.
+/// The first string is the canonical name used for serialization.
+pub const KEY_MAP: &[(Key, &[&str])] = &[
+    // Letters
+    (Key::KeyA, &["a"]),
+    (Key::KeyB, &["b"]),
+    (Key::KeyC, &["c"]),
+    (Key::KeyD, &["d"]),
+    (Key::KeyE, &["e"]),
+    (Key::KeyF, &["f"]),
+    (Key::KeyG, &["g"]),
+    (Key::KeyH, &["h"]),
+    (Key::KeyI, &["i"]),
+    (Key::KeyJ, &["j"]),
+    (Key::KeyK, &["k"]),
+    (Key::KeyL, &["l"]),
+    (Key::KeyM, &["m"]),
+    (Key::KeyN, &["n"]),
+    (Key::KeyO, &["o"]),
+    (Key::KeyP, &["p"]),
+    (Key::KeyQ, &["q"]),
+    (Key::KeyR, &["r"]),
+    (Key::KeyS, &["s"]),
+    (Key::KeyT, &["t"]),
+    (Key::KeyU, &["u"]),
+    (Key::KeyV, &["v"]),
+    (Key::KeyW, &["w"]),
+    (Key::KeyX, &["x"]),
+    (Key::KeyY, &["y"]),
+    (Key::KeyZ, &["z"]),
+    // Numbers
+    (Key::Num0, &["0"]),
+    (Key::Num1, &["1"]),
+    (Key::Num2, &["2"]),
+    (Key::Num3, &["3"]),
+    (Key::Num4, &["4"]),
+    (Key::Num5, &["5"]),
+    (Key::Num6, &["6"]),
+    (Key::Num7, &["7"]),
+    (Key::Num8, &["8"]),
+    (Key::Num9, &["9"]),
+    // Function keys
+    (Key::F1, &["f1"]),
+    (Key::F2, &["f2"]),
+    (Key::F3, &["f3"]),
+    (Key::F4, &["f4"]),
+    (Key::F5, &["f5"]),
+    (Key::F6, &["f6"]),
+    (Key::F7, &["f7"]),
+    (Key::F8, &["f8"]),
+    (Key::F9, &["f9"]),
+    (Key::F10, &["f10"]),
+    (Key::F11, &["f11"]),
+    (Key::F12, &["f12"]),
+    // Modifiers
+    (Key::ControlLeft, &["ctrl", "control", "leftctrl"]),
+    (Key::ControlRight, &["rightctrl", "rightcontrol"]),
+    (Key::ShiftLeft, &["shift", "leftshift"]),
+    (Key::ShiftRight, &["rightshift"]),
+    (Key::Alt, &["alt", "option", "opt", "leftoption", "leftalt"]),
+    (Key::AltGr, &["rightalt", "rightoption", "altgr"]),
+    (Key::MetaLeft, &["cmd", "command", "meta", "super", "win"]),
+    (Key::MetaRight, &["rightcmd", "rightmeta"]),
+    // Special keys
+    (Key::Space, &["space"]),
+    (Key::Return, &["return", "enter"]),
+    (Key::Tab, &["tab"]),
+    (Key::Escape, &["escape", "esc"]),
+    (Key::Backspace, &["backspace", "delete"]),
+    (Key::CapsLock, &["capslock"]),
+    // Punctuation
+    (Key::Minus, &["minus", "-"]),
+    (Key::Equal, &["equal", "="]),
+    (Key::LeftBracket, &["leftbracket", "["]),
+    (Key::RightBracket, &["rightbracket", "]"]),
+    (Key::BackSlash, &["backslash", "\\"]),
+    (Key::SemiColon, &["semicolon", ";"]),
+    (Key::Quote, &["quote", "'"]),
+    (Key::Comma, &["comma", ","]),
+    (Key::Dot, &["dot", ".", "period"]),
+    (Key::Slash, &["slash", "/"]),
+    (Key::BackQuote, &["grave", "`", "backtick"]),
+];
+
 /// Parse a key string like "ctrl+shift+space" or "f9" or "globe" into an rdev Key.
 pub fn parse(input: &str) -> Option<ParsedHotkey> {
     let lowered = input.to_lowercase();
@@ -24,105 +109,38 @@ pub fn parse(input: &str) -> Option<ParsedHotkey> {
 }
 
 fn name_to_key(name: &str) -> Option<Key> {
-    match name.to_lowercase().as_str() {
-        // Letters
-        "a" => Some(Key::KeyA),
-        "b" => Some(Key::KeyB),
-        "c" => Some(Key::KeyC),
-        "d" => Some(Key::KeyD),
-        "e" => Some(Key::KeyE),
-        "f" => Some(Key::KeyF),
-        "g" => Some(Key::KeyG),
-        "h" => Some(Key::KeyH),
-        "i" => Some(Key::KeyI),
-        "j" => Some(Key::KeyJ),
-        "k" => Some(Key::KeyK),
-        "l" => Some(Key::KeyL),
-        "m" => Some(Key::KeyM),
-        "n" => Some(Key::KeyN),
-        "o" => Some(Key::KeyO),
-        "p" => Some(Key::KeyP),
-        "q" => Some(Key::KeyQ),
-        "r" => Some(Key::KeyR),
-        "s" => Some(Key::KeyS),
-        "t" => Some(Key::KeyT),
-        "u" => Some(Key::KeyU),
-        "v" => Some(Key::KeyV),
-        "w" => Some(Key::KeyW),
-        "x" => Some(Key::KeyX),
-        "y" => Some(Key::KeyY),
-        "z" => Some(Key::KeyZ),
+    let lower = name.to_lowercase();
+    let lower = lower.as_str();
 
-        // Numbers
-        "0" => Some(Key::Num0),
-        "1" => Some(Key::Num1),
-        "2" => Some(Key::Num2),
-        "3" => Some(Key::Num3),
-        "4" => Some(Key::Num4),
-        "5" => Some(Key::Num5),
-        "6" => Some(Key::Num6),
-        "7" => Some(Key::Num7),
-        "8" => Some(Key::Num8),
-        "9" => Some(Key::Num9),
-
-        // Function keys
-        "f1" => Some(Key::F1),
-        "f2" => Some(Key::F2),
-        "f3" => Some(Key::F3),
-        "f4" => Some(Key::F4),
-        "f5" => Some(Key::F5),
-        "f6" => Some(Key::F6),
-        "f7" => Some(Key::F7),
-        "f8" => Some(Key::F8),
-        "f9" => Some(Key::F9),
-        "f10" => Some(Key::F10),
-        "f11" => Some(Key::F11),
-        "f12" => Some(Key::F12),
-
-        // Modifiers
-        "ctrl" | "control" | "leftctrl" => Some(Key::ControlLeft),
-        "rightctrl" | "rightcontrol" => Some(Key::ControlRight),
-        "shift" | "leftshift" => Some(Key::ShiftLeft),
-        "rightshift" => Some(Key::ShiftRight),
-        "alt" | "option" | "opt" | "leftoption" | "leftalt" => Some(Key::Alt),
-        "rightalt" | "rightoption" | "altgr" => Some(Key::AltGr),
-        "cmd" | "command" | "meta" | "super" | "win" => Some(Key::MetaLeft),
-        "rightcmd" | "rightmeta" => Some(Key::MetaRight),
-
-        // Special keys
-        "space" => Some(Key::Space),
-        "return" | "enter" => Some(Key::Return),
-        "tab" => Some(Key::Tab),
-        "escape" | "esc" => Some(Key::Escape),
-        "backspace" | "delete" => Some(Key::Backspace),
-        "capslock" => Some(Key::CapsLock),
-
-        // macOS-specific
+    // Handle platform-specific globe/fn key before the table lookup
+    if lower == "globe" || lower == "fn" {
         #[cfg(target_os = "macos")]
-        "globe" | "fn" => Some(Key::Function),
+        return Some(Key::Function);
 
-        // Fallback for globe/fn on non-macOS
         #[cfg(not(target_os = "macos"))]
-        "globe" | "fn" => {
+        {
             eprintln!("Warning: Globe/fn key not available on this platform. Using F9 instead.");
-            Some(Key::F9)
+            return Some(Key::F9);
         }
-
-        // Punctuation
-        "-" | "minus" => Some(Key::Minus),
-        "=" | "equal" => Some(Key::Equal),
-        "[" | "leftbracket" => Some(Key::LeftBracket),
-        "]" | "rightbracket" => Some(Key::RightBracket),
-        "\\" | "backslash" => Some(Key::BackSlash),
-        ";" | "semicolon" => Some(Key::SemiColon),
-        "'" | "quote" => Some(Key::Quote),
-        "," | "comma" => Some(Key::Comma),
-        "." | "dot" | "period" => Some(Key::Dot),
-        "/" | "slash" => Some(Key::Slash),
-        "`" | "grave" | "backtick" => Some(Key::BackQuote),
-
-        _ => None,
     }
+
+    for (key, aliases) in KEY_MAP {
+        if aliases.contains(&lower) {
+            return Some(*key);
+        }
+    }
+    None
+}
+
+/// Map an rdev Key back to its canonical name (the first alias in KEY_MAP).
+/// Falls back to `format!("{:?}", key).to_lowercase()` for unknown keys.
+pub fn key_to_name(key: &Key) -> String {
+    for (k, aliases) in KEY_MAP {
+        if k == key {
+            return aliases[0].to_string();
+        }
+    }
+    format!("{:?}", key).to_lowercase()
 }
 
 #[cfg(test)]

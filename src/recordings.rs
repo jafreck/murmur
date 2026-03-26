@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::config::Config;
 
 const FILE_PREFIX: &str = "recording-";
@@ -89,14 +91,13 @@ fn chrono_timestamp() -> String {
 }
 
 fn uuid_short() -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::SystemTime;
-
-    let mut hasher = DefaultHasher::new();
-    SystemTime::now().hash(&mut hasher);
-    std::process::id().hash(&mut hasher);
-    format!("{:08x}", hasher.finish() as u32)
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{:08x}", (ts as u64).wrapping_add(count) as u32)
 }
 
 #[cfg(test)]

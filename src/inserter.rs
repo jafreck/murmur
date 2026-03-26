@@ -45,8 +45,10 @@ impl TextInserter {
         // Simulate paste
         Self::simulate_paste()?;
 
-        // Restore previous clipboard after paste completes
-        thread::sleep(Duration::from_millis(150));
+        // Wait for the target application to consume the paste before restoring.
+        // Slow apps (Electron, remote desktop) may need longer than this, but
+        // there is no reliable cross-platform way to detect paste completion.
+        thread::sleep(Duration::from_millis(400));
         match saved {
             SavedClipboard::Text(prev) => { let _ = clipboard.set_text(prev); }
             SavedClipboard::Image(img) => { let _ = clipboard.set_image(img); }

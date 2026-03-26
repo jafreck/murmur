@@ -347,11 +347,11 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert!(CHUNK_DURATION_SECS > 0.0);
-        assert!(OVERLAP_DURATION_SECS > 0.0);
-        assert!(OVERLAP_DURATION_SECS < CHUNK_DURATION_SECS);
-        assert!(POLL_INTERVAL_MS > 0);
-        assert!(SILENCE_RMS_THRESHOLD > 0.0);
+        const { assert!(CHUNK_DURATION_SECS > 0.0) };
+        const { assert!(OVERLAP_DURATION_SECS > 0.0) };
+        const { assert!(OVERLAP_DURATION_SECS < CHUNK_DURATION_SECS) };
+        const { assert!(POLL_INTERVAL_MS > 0) };
+        const { assert!(SILENCE_RMS_THRESHOLD > 0.0) };
         assert_eq!(TARGET_RATE, 16_000);
     }
 

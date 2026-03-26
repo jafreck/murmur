@@ -142,9 +142,9 @@ impl Default for Config {
 
 fn default_hotkey() -> &'static str {
     #[cfg(target_os = "macos")]
-    { "globe" }
+    { "rightoption" }
     #[cfg(not(target_os = "macos"))]
-    { "ctrl+shift+space" }
+    { "rightalt" }
 }
 
 impl Config {

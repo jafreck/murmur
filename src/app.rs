@@ -424,7 +424,7 @@ pub fn run() -> Result<()> {
     println!("Model: {}", config.model_size);
     println!("Ready.");
 
-    loop {
+    'main: loop {
         while let Ok(msg) = rx.try_recv() {
             // TranscriberReady carries an Arc that must be moved out,
             // so handle it directly instead of going through the state machine.
@@ -439,7 +439,7 @@ pub fn run() -> Result<()> {
             }
             let effects = state.handle_message(&msg);
             for effect in effects {
-                apply_effect(effect, &mut EffectContext {
+                let quit = apply_effect(effect, &mut EffectContext {
                     recorder: &mut recorder,
                     transcriber: &mut transcriber,
                     tray: &mut tray,
@@ -448,6 +448,9 @@ pub fn run() -> Result<()> {
                     tx: &tx,
                     streaming_stop: &mut streaming_stop,
                 })?;
+                if quit {
+                    break 'main;
+                }
             }
         }
 
@@ -461,6 +464,8 @@ pub fn run() -> Result<()> {
 
         pump_event_loop();
     }
+
+    Ok(())
 }
 
 struct EffectContext<'a> {
@@ -473,7 +478,8 @@ struct EffectContext<'a> {
     streaming_stop: &'a mut Option<mpsc::Sender<()>>,
 }
 
-fn apply_effect(effect: AppEffect, ctx: &mut EffectContext<'_>) -> Result<()> {
+/// Returns `Ok(true)` when the caller should exit the main loop.
+fn apply_effect(effect: AppEffect, ctx: &mut EffectContext<'_>) -> Result<bool> {
     match effect {
         AppEffect::None => {}
         AppEffect::StartRecording(path) => {
@@ -599,7 +605,10 @@ fn apply_effect(effect: AppEffect, ctx: &mut EffectContext<'_>) -> Result<()> {
             if ctx.state.model_size != old_model || ctx.state.language != old_lang {
                 ctx.state.reload_generation += 1;
                 let gen = ctx.state.reload_generation;
-                apply_effect(AppEffect::ReloadTranscriber(gen), ctx)?;
+                let quit = apply_effect(AppEffect::ReloadTranscriber(gen), ctx)?;
+                if quit {
+                    return Ok(true);
+                }
             }
             info!("Config reloaded");
         }
@@ -664,13 +673,13 @@ fn apply_effect(effect: AppEffect, ctx: &mut EffectContext<'_>) -> Result<()> {
         }
         AppEffect::Quit => {
             info!("Quit requested via tray");
-            std::process::exit(0);
+            return Ok(true);
         }
         AppEffect::LogError(e) => {
             error!("Transcription: {e}");
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 #[cfg(test)]

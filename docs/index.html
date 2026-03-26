@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>open-bark — Local Voice Dictation</title>
+  <meta name="description" content="Cross-platform, local voice dictation. Hold a key, speak, release — your words appear at the cursor. 100% on-device, powered by whisper.cpp.">
+  <meta property="og:title" content="open-bark — Local Voice Dictation">
+  <meta property="og:description" content="Hold a key, speak, release — your words appear at the cursor. Runs 100% on-device.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://jacobfreck.github.io/open-bark/">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐕</text></svg>">
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --border: #1e1e2e;
+      --text: #e4e4ef;
+      --text-dim: #8888a0;
+      --accent: #7c6aef;
+      --accent-glow: #7c6aef44;
+      --green: #4ade80;
+      --orange: #f59e0b;
+      --blue: #38bdf8;
+      --pink: #f472b6;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* -- NAV -- */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0;
+      z-index: 100;
+      padding: 1rem 2rem;
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(10, 10, 15, 0.8);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+    }
+    nav .logo {
+      font-weight: 700; font-size: 1.15rem;
+      color: var(--text);
+      text-decoration: none;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    nav .logo span { color: var(--accent); }
+    nav .links { display: flex; gap: 1.5rem; align-items: center; }
+    nav .links a {
+      color: var(--text-dim); text-decoration: none; font-size: 0.9rem;
+      transition: color 0.2s;
+    }
+    nav .links a:hover { color: var(--text); }
+    nav .gh-btn {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); padding: 0.45rem 1rem; border-radius: 8px;
+      font-size: 0.85rem; text-decoration: none; transition: border-color 0.2s;
+    }
+    nav .gh-btn:hover { border-color: var(--accent); }
+    nav .gh-btn svg { width: 16px; height: 16px; fill: currentColor; }
+
+    /* -- HERO -- */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center;
+      padding: 8rem 2rem 4rem;
+      position: relative;
+    }
+    .hero::before {
+      content: "";
+      position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+      width: 800px; height: 800px;
+      background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero .badge {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 0.4rem 1rem; border-radius: 999px;
+      font-size: 0.8rem; color: var(--text-dim);
+      margin-bottom: 2rem;
+    }
+    .hero .badge .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+    }
+    .hero h1 {
+      font-size: clamp(2.5rem, 6vw, 4.5rem);
+      font-weight: 800;
+      line-height: 1.1;
+      max-width: 800px;
+      letter-spacing: -0.03em;
+    }
+    .hero h1 .highlight {
+      background: linear-gradient(135deg, var(--accent), var(--pink));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero .subtitle {
+      margin-top: 1.5rem;
+      font-size: 1.2rem;
+      color: var(--text-dim);
+      max-width: 540px;
+    }
+    .hero .actions {
+      margin-top: 2.5rem;
+      display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff; border: none;
+      padding: 0.8rem 2rem; border-radius: 10px;
+      font-size: 1rem; font-weight: 600; cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.15s, box-shadow 0.2s;
+    }
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 24px var(--accent-glow);
+    }
+    .btn-secondary {
+      background: var(--surface);
+      color: var(--text); border: 1px solid var(--border);
+      padding: 0.8rem 2rem; border-radius: 10px;
+      font-size: 1rem; font-weight: 500; cursor: pointer;
+      text-decoration: none;
+      transition: border-color 0.2s;
+    }
+    .btn-secondary:hover { border-color: var(--accent); }
+
+    /* -- INSTALL SNIPPET -- */
+    .install-snippet {
+      margin-top: 3rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.5rem;
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+      font-size: 0.9rem;
+      color: var(--green);
+      display: flex; align-items: center; gap: 1rem;
+      max-width: 620px;
+      position: relative;
+    }
+    .install-snippet .prompt { color: var(--text-dim); user-select: none; }
+    .install-snippet code { flex: 1; word-break: break-all; }
+    .install-snippet .copy-btn {
+      background: none; border: none; color: var(--text-dim); cursor: pointer;
+      padding: 0.3rem; border-radius: 4px; transition: color 0.2s;
+    }
+    .install-snippet .copy-btn:hover { color: var(--text); }
+
+    /* -- DEMO -- */
+    .demo {
+      max-width: 680px;
+      margin: 3rem auto 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .demo-bar {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .demo-bar .dot-r { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; }
+    .demo-bar .dot-y { width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; }
+    .demo-bar .dot-g { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; }
+    .demo-body {
+      padding: 2rem;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 0.85rem;
+      line-height: 1.8;
+    }
+    .demo-body .step {
+      display: flex; align-items: flex-start; gap: 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+    .demo-body .step-num {
+      color: var(--accent); font-weight: 700; flex-shrink: 0;
+    }
+    .demo-body .step-text { color: var(--text-dim); }
+    .demo-body .step-text em { color: var(--text); font-style: normal; }
+    .demo-body .key {
+      display: inline-block;
+      background: var(--border);
+      color: var(--text);
+      padding: 0.1rem 0.5rem;
+      border-radius: 5px;
+      font-size: 0.8rem;
+      border: 1px solid #2a2a3a;
+    }
+    .demo-body .output {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      background: rgba(124, 106, 239, 0.08);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      color: var(--text);
+    }
+
+    /* -- SECTIONS -- */
+    section { padding: 6rem 2rem; max-width: 1100px; margin: 0 auto; }
+    section h2 {
+      font-size: 2rem; font-weight: 700; margin-bottom: 0.75rem;
+      letter-spacing: -0.02em;
+    }
+    section .section-sub {
+      color: var(--text-dim); font-size: 1.05rem; margin-bottom: 3rem;
+      max-width: 560px;
+    }
+
+    /* -- FEATURES GRID -- */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+    }
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.75rem;
+      transition: border-color 0.25s, transform 0.15s;
+    }
+    .feature-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+    .feature-card .icon {
+      font-size: 1.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .feature-card h3 { font-size: 1.1rem; margin-bottom: 0.4rem; }
+    .feature-card p { color: var(--text-dim); font-size: 0.9rem; }
+
+    /* -- MODELS TABLE -- */
+    .models-table {
+      width: 100%; border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .models-table th, .models-table td {
+      padding: 0.85rem 1.25rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.9rem;
+    }
+    .models-table th {
+      color: var(--text-dim); font-weight: 600;
+      font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .models-table tr:last-child td { border-bottom: none; }
+    .models-table tr:hover td { background: rgba(124, 106, 239, 0.04); }
+    .models-table .recommended {
+      background: rgba(124, 106, 239, 0.08);
+    }
+    .models-table .badge-rec {
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.65rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      margin-left: 0.5rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    /* -- PLATFORMS -- */
+    .platforms {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1.5rem;
+    }
+    .platform-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.75rem;
+      text-align: center;
+    }
+    .platform-card .icon { font-size: 2rem; margin-bottom: 0.75rem; }
+    .platform-card h3 { margin-bottom: 0.4rem; }
+    .platform-card p { color: var(--text-dim); font-size: 0.85rem; }
+
+    /* -- INSTALL SECTION -- */
+    .install-tabs {
+      display: flex; gap: 0; margin-bottom: 0;
+    }
+    .install-tab {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 0.6rem 1.25rem;
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      transition: all 0.2s;
+      border-bottom: none;
+    }
+    .install-tab:first-child { border-radius: 10px 0 0 0; }
+    .install-tab:last-child { border-radius: 0 10px 0 0; }
+    .install-tab.active {
+      background: #1a1a2a;
+      color: var(--text);
+      border-bottom-color: transparent;
+    }
+    .install-panel {
+      display: none;
+      background: #1a1a2a;
+      border: 1px solid var(--border);
+      border-radius: 0 10px 10px 10px;
+      padding: 1.5rem;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 0.85rem;
+      color: var(--green);
+      line-height: 1.8;
+    }
+    .install-panel.active { display: block; }
+    .install-panel .comment { color: var(--text-dim); }
+
+    /* -- FOOTER -- */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 3rem 2rem;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.85rem;
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+    footer .footer-links { display: flex; gap: 1.5rem; justify-content: center; margin-bottom: 1rem; }
+
+    /* -- RESPONSIVE -- */
+    @media (max-width: 640px) {
+      nav .links a:not(.gh-btn) { display: none; }
+      .hero { padding: 7rem 1.25rem 3rem; }
+      .install-snippet { flex-direction: column; align-items: flex-start; font-size: 0.8rem; }
+      .demo-body { padding: 1.25rem; }
+      section { padding: 4rem 1.25rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a class="logo" href="#">🐕 open-<span>bark</span></a>
+  <div class="links">
+    <a href="#features">Features</a>
+    <a href="#models">Models</a>
+    <a href="#install">Install</a>
+    <a class="gh-btn" href="https://github.com/jacobfreck/open-bark" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="badge"><span class="dot"></span> 100% local — no data leaves your machine</div>
+  <h1>Voice dictation that <span class="highlight">just works</span></h1>
+  <p class="subtitle">Hold a key, speak, release — your words appear at the cursor. Cross-platform, powered by whisper.cpp, runs entirely on-device.</p>
+  <div class="actions">
+    <a class="btn-primary" href="#install">Get Started</a>
+    <a class="btn-secondary" href="https://github.com/jacobfreck/open-bark" target="_blank" rel="noopener">View Source</a>
+  </div>
+
+  <div class="install-snippet">
+    <span class="prompt">$</span>
+    <code id="install-cmd">curl -sSf https://raw.githubusercontent.com/jacobfreck/open-bark/main/scripts/install.sh | bash</code>
+    <button class="copy-btn" onclick="copyInstall()" aria-label="Copy install command">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+    </button>
+  </div>
+
+  <!-- DEMO TERMINAL -->
+  <div class="demo">
+    <div class="demo-bar">
+      <span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span>
+    </div>
+    <div class="demo-body">
+      <div class="step">
+        <span class="step-num">1.</span>
+        <span class="step-text">Hold <span class="key">Ctrl</span>+<span class="key">Shift</span>+<span class="key">Space</span></span>
+      </div>
+      <div class="step">
+        <span class="step-num">2.</span>
+        <span class="step-text">🎙️ <em>"Schedule a meeting with the design team for Thursday at 2pm"</em></span>
+      </div>
+      <div class="step">
+        <span class="step-num">3.</span>
+        <span class="step-text">Release the hotkey</span>
+      </div>
+      <div class="output">Schedule a meeting with the design team for Thursday at 2pm</div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <h2>Why open-bark?</h2>
+  <p class="section-sub">Fast, private, and works everywhere you type.</p>
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="icon">🔒</div>
+      <h3>Completely Private</h3>
+      <p>Audio is recorded to a temp file, transcribed locally by whisper.cpp, then deleted. Zero network requests. Your voice never leaves your machine.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">⚡</div>
+      <h3>Fast Transcription</h3>
+      <p>Optimized whisper.cpp engine with Metal, CUDA, and Vulkan GPU acceleration. Transcription completes in under a second for most phrases.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🖥️</div>
+      <h3>Cross-Platform</h3>
+      <p>Native support for macOS, Windows, and Linux (X11 &amp; Wayland). Runs as a system tray daemon that starts at login.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🎯</div>
+      <h3>Works Everywhere</h3>
+      <p>Text appears wherever your cursor is — browsers, editors, terminals, chat apps. Uses clipboard paste for universal compatibility.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🎛️</div>
+      <h3>Configurable</h3>
+      <p>Choose your hotkey, model size, language, and dictation mode. Simple JSON config with sensible defaults.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🌍</div>
+      <h3>Multilingual</h3>
+      <p>English-optimized models for speed, or large-v3-turbo for 90+ languages. Switch models with a single command.</p>
+    </div>
+  </div>
+</section>
+
+<!-- MODELS -->
+<section id="models">
+  <h2>Choose Your Model</h2>
+  <p class="section-sub">From quick notes to maximum accuracy — pick the model that fits your needs.</p>
+  <table class="models-table">
+    <thead>
+      <tr><th>Model</th><th>Size</th><th>Speed</th><th>Accuracy</th><th>Best For</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>tiny.en</code></td><td>75 MB</td><td>Fastest</td><td>Lower</td><td>Quick notes</td>
+      </tr>
+      <tr class="recommended">
+        <td><code>base.en</code><span class="badge-rec">Default</span></td><td>142 MB</td><td>Fast</td><td>Good</td><td>Most users</td>
+      </tr>
+      <tr>
+        <td><code>small.en</code></td><td>466 MB</td><td>Moderate</td><td>Better</td><td>Technical terms</td>
+      </tr>
+      <tr>
+        <td><code>medium.en</code></td><td>1.5 GB</td><td>Slower</td><td>Great</td><td>Maximum accuracy</td>
+      </tr>
+      <tr>
+        <td><code>large-v3-turbo</code></td><td>1.6 GB</td><td>Moderate</td><td>Great</td><td>Multilingual</td>
+      </tr>
+      <tr>
+        <td><code>large</code></td><td>3 GB</td><td>Slowest</td><td>Best</td><td>Highest accuracy</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- PLATFORMS -->
+<section id="platforms">
+  <h2>Runs on Your Platform</h2>
+  <p class="section-sub">Native support with GPU acceleration where available.</p>
+  <div class="platforms">
+    <div class="platform-card">
+      <div class="icon">🍎</div>
+      <h3>macOS</h3>
+      <p>Metal GPU acceleration on Apple Silicon. Globe key as default hotkey.</p>
+    </div>
+    <div class="platform-card">
+      <div class="icon">🪟</div>
+      <h3>Windows</h3>
+      <p>CUDA &amp; Vulkan GPU support. Installs as a background service.</p>
+    </div>
+    <div class="platform-card">
+      <div class="icon">🐧</div>
+      <h3>Linux</h3>
+      <p>X11 and Wayland. CUDA &amp; Vulkan GPU acceleration.</p>
+    </div>
+  </div>
+</section>
+
+<!-- INSTALL -->
+<section id="install">
+  <h2>Install in Seconds</h2>
+  <p class="section-sub">Pre-built binaries, no build tools required.</p>
+
+  <div class="install-tabs">
+    <button class="install-tab active" onclick="showTab('macos')">macOS / Linux</button>
+    <button class="install-tab" onclick="showTab('windows')">Windows</button>
+    <button class="install-tab" onclick="showTab('source')">From Source</button>
+    <button class="install-tab" onclick="showTab('crates')">crates.io</button>
+  </div>
+  <div class="install-panel active" id="panel-macos">
+<span class="comment"># One-line install — downloads the right binary for your platform</span>
+curl -sSf https://raw.githubusercontent.com/jacobfreck/open-bark/main/scripts/install.sh | bash
+
+<span class="comment"># Then start dictating</span>
+open-bark start
+  </div>
+  <div class="install-panel" id="panel-windows">
+<span class="comment"># PowerShell — run as administrator</span>
+irm https://raw.githubusercontent.com/jacobfreck/open-bark/main/scripts/install.ps1 | iex
+
+<span class="comment"># Then start dictating</span>
+open-bark start
+  </div>
+  <div class="install-panel" id="panel-source">
+<span class="comment"># Clone and build</span>
+git clone https://github.com/jacobfreck/open-bark.git
+cd open-bark
+cargo build --release
+
+<span class="comment"># With GPU acceleration</span>
+cargo build --release --features metal  <span class="comment"># macOS Apple Silicon</span>
+cargo build --release --features cuda   <span class="comment"># NVIDIA</span>
+cargo build --release --features vulkan <span class="comment"># Cross-vendor</span>
+  </div>
+  <div class="install-panel" id="panel-crates">
+<span class="comment"># Install from crates.io</span>
+cargo install open-bark
+
+<span class="comment"># Then start dictating</span>
+open-bark start
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-links">
+    <a href="https://github.com/jacobfreck/open-bark">GitHub</a>
+    <a href="https://github.com/jacobfreck/open-bark/issues">Issues</a>
+    <a href="https://github.com/jacobfreck/open-bark/blob/main/LICENSE">MIT License</a>
+  </div>
+  <p>Built by <a href="https://github.com/jacobfreck">Jacob Freck</a> · Powered by <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a></p>
+</footer>
+
+<script>
+function copyInstall() {
+  const cmd = document.getElementById('install-cmd').textContent;
+  navigator.clipboard.writeText(cmd);
+  const btn = document.querySelector('.copy-btn');
+  btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  setTimeout(() => {
+    btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+  }, 2000);
+}
+
+function showTab(id) {
+  document.querySelectorAll('.install-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.install-panel').forEach(p => p.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('panel-' + id).classList.add('active');
+}
+</script>
+
+</body>
+</html>

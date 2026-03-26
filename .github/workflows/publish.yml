@@ -121,6 +121,8 @@ jobs:
           files: |
             scripts/install.sh
             scripts/install.ps1
+            scripts/uninstall.sh
+            scripts/uninstall.ps1
 
   publish-crate:
     name: Publish to crates.io

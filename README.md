@@ -9,7 +9,7 @@
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#platform-notes)
 
-Hold a key, speak, release — your words appear at the cursor.
+Worry free speech to text.
 No cloud, no API keys, no data collection. Powered by [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
 
 </div>

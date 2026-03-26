@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "murmur",
-    about = "Cross-platform, local voice dictation. Hold a key, speak, release — your words appear at the cursor.",
+    about = "Cross-platform, local voice dictation. Worry free speech to text.",
     version
 )]
 struct Cli {

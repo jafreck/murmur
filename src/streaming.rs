@@ -40,7 +40,6 @@ pub enum StreamingEvent {
 pub fn start_streaming(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
     transcriber: Arc<Transcriber>,
-    language: String,
     translate: bool,
     spoken_punctuation: bool,
     tx: mpsc::Sender<StreamingEvent>,

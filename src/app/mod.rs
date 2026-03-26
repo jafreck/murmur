@@ -1,0 +1,196 @@
+mod effects;
+mod state;
+
+// Re-export the public API
+pub use effects::EffectContext;
+pub use state::{AppEffect, AppMessage, AppState};
+
+use anyhow::Result;
+use log::{error, info};
+use std::collections::VecDeque;
+use std::sync::mpsc;
+use std::sync::Arc;
+
+use crate::audio::AudioRecorder;
+use crate::config::Config;
+use crate::hotkey::HotkeyManager;
+use crate::tray::{TrayAction, TrayController};
+use crate::transcriber::Transcriber;
+use crate::VERSION;
+
+use tray_icon::menu::MenuEvent;
+use tray_icon::TrayIconEvent;
+
+/// On macOS, initialize NSApplication with Accessory policy (no dock icon)
+/// so the system tray icon renders and Cocoa events are dispatched.
+#[cfg(target_os = "macos")]
+fn init_macos_app() {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+
+    let mtm = MainThreadMarker::new()
+        .expect("init_macos_app must be called on the main thread");
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+}
+
+/// Pump the macOS AppKit event loop, dispatching all pending Cocoa events
+/// (tray icon clicks, menu interactions, rendering, etc.).
+#[cfg(target_os = "macos")]
+fn pump_event_loop() {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSEventMask};
+    use objc2_foundation::{NSDate, NSDefaultRunLoopMode};
+
+    let mtm = MainThreadMarker::new().expect("must be on main thread");
+    let app = NSApplication::sharedApplication(mtm);
+
+    loop {
+        let event = unsafe {
+            app.nextEventMatchingMask_untilDate_inMode_dequeue(
+                NSEventMask::Any,
+                Some(&NSDate::distantPast()),
+                NSDefaultRunLoopMode,
+                true,
+            )
+        };
+        match event {
+            Some(event) => app.sendEvent(&event),
+            None => break,
+        }
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(16));
+}
+
+/// On non-macOS platforms, just sleep briefly.
+#[cfg(not(target_os = "macos"))]
+fn pump_event_loop() {
+    std::thread::sleep(std::time::Duration::from_millis(16));
+}
+
+impl From<TrayAction> for AppMessage {
+    fn from(action: TrayAction) -> Self {
+        match action {
+            TrayAction::Quit => AppMessage::TrayQuit,
+            TrayAction::CopyLastDictation => AppMessage::TrayCopyLast,
+            TrayAction::SetModel(s) => AppMessage::TraySetModel(s),
+            TrayAction::SetLanguage(c) => AppMessage::TraySetLanguage(c),
+            TrayAction::ToggleSpokenPunctuation => AppMessage::TrayToggleSpokenPunctuation,
+            TrayAction::SetMode(mode) => AppMessage::TraySetMode(mode),
+            TrayAction::ToggleStreaming => AppMessage::TrayToggleStreaming,
+            TrayAction::ToggleTranslate => AppMessage::TrayToggleTranslate,
+            TrayAction::OpenConfig => AppMessage::TrayOpenConfig,
+            TrayAction::ReloadConfig => AppMessage::TrayReloadConfig,
+        }
+    }
+}
+
+pub fn run() -> Result<()> {
+    let mut config = Config::load();
+
+    // Ensure model is available
+    if !crate::transcriber::model_exists(&config.model_size) {
+        info!("Downloading {} model...", config.model_size);
+        let model_size = config.model_size.clone();
+        crate::model::download(&model_size, |percent| {
+            eprint!("\rDownloading {model_size} model... {percent:.0}%");
+        })?;
+        eprintln!();
+    }
+
+    let model_path = crate::transcriber::find_model(&config.model_size)
+        .ok_or_else(|| anyhow::anyhow!("Model '{}' not found after download", config.model_size))?;
+
+    let mut transcriber = Arc::new(Transcriber::new(&model_path, &config.language)?);
+
+    info!("Hotkey: {}", config.hotkey);
+    info!("Model: {}", config.model_size);
+
+    let parsed = crate::keycodes::parse(&config.hotkey)
+        .ok_or_else(|| anyhow::anyhow!("Invalid hotkey: {}", config.hotkey))?;
+
+    crate::permissions::check_accessibility();
+    crate::permissions::check_microphone();
+
+    #[cfg(target_os = "macos")]
+    init_macos_app();
+
+    let mut tray = TrayController::new(&config)?;
+
+    let (tx, rx) = mpsc::channel::<AppMessage>();
+    let tx_down = tx.clone();
+    let tx_up = tx.clone();
+
+    let hotkey_key = parsed.key;
+    let hotkey_mods = parsed.modifiers;
+    std::thread::spawn(move || {
+        if let Err(e) = HotkeyManager::start(
+            hotkey_key,
+            hotkey_mods,
+            move || { let _ = tx_down.send(AppMessage::KeyDown); },
+            move || { let _ = tx_up.send(AppMessage::KeyUp); },
+        ) {
+            error!("Hotkey listener failed: {e}");
+        }
+    });
+
+    let mut recorder = AudioRecorder::new();
+    let mut state = AppState::new(&config);
+    let mut streaming_stop: Option<mpsc::Sender<()>> = None;
+
+    println!("open-bark v{VERSION}");
+    println!("Hotkey: {}", config.hotkey);
+    println!("Model: {}", config.model_size);
+    println!("Ready.");
+
+    loop {
+        let mut should_quit = false;
+
+        while let Ok(msg) = rx.try_recv() {
+            // TranscriberReady carries an Arc that must be moved out,
+            // so handle it directly instead of going through the state machine.
+            if let AppMessage::TranscriberReady(new_t, generation) = msg {
+                if generation == state.reload_generation {
+                    transcriber = new_t;
+                    info!("Transcriber reloaded with new model");
+                } else {
+                    info!("Discarding stale transcriber reload (gen {generation}, current {})", state.reload_generation);
+                }
+                continue;
+            }
+            let mut effects = VecDeque::from(state.handle_message(&msg));
+            while let Some(effect) = effects.pop_front() {
+                let (quit, extra) = effects::apply_effect(effect, &mut EffectContext {
+                    recorder: &mut recorder,
+                    transcriber: &mut transcriber,
+                    tray: &mut tray,
+                    config: &mut config,
+                    state: &mut state,
+                    tx: &tx,
+                    streaming_stop: &mut streaming_stop,
+                })?;
+                effects.extend(extra);
+                if quit {
+                    should_quit = true;
+                }
+            }
+        }
+
+        if should_quit {
+            break;
+        }
+
+        while let Ok(event) = MenuEvent::receiver().try_recv() {
+            if let Some(action) = tray.match_menu_event(&event) {
+                let _ = tx.send(action.into());
+            }
+        }
+
+        while let Ok(_event) = TrayIconEvent::receiver().try_recv() {}
+
+        pump_event_loop();
+    }
+
+    Ok(())
+}

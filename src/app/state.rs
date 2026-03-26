@@ -1,71 +1,11 @@
-use anyhow::Result;
-use log::{error, info};
-use std::sync::mpsc;
-use std::sync::Arc;
-
-use crate::audio::AudioRecorder;
-use crate::config::Config;
-use crate::config::InputMode;
-use crate::hotkey::HotkeyManager;
-use crate::inserter::TextInserter;
-use crate::model;
-use crate::postprocess;
+use crate::config::{Config, InputMode};
 use crate::recordings::RecordingStore;
-use crate::streaming;
+use crate::tray::TrayState;
+
+#[cfg(test)]
+use crate::tray::TrayAction;
 use crate::transcriber::Transcriber;
-use crate::tray::{TrayAction, TrayController, TrayState};
-use crate::VERSION;
-
-use tray_icon::menu::MenuEvent;
-use tray_icon::TrayIconEvent;
-
-/// On macOS, initialize NSApplication with Accessory policy (no dock icon)
-/// so the system tray icon renders and Cocoa events are dispatched.
-#[cfg(target_os = "macos")]
-fn init_macos_app() {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
-
-    let mtm = MainThreadMarker::new()
-        .expect("init_macos_app must be called on the main thread");
-    let app = NSApplication::sharedApplication(mtm);
-    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-}
-
-/// Pump the macOS AppKit event loop, dispatching all pending Cocoa events
-/// (tray icon clicks, menu interactions, rendering, etc.).
-#[cfg(target_os = "macos")]
-fn pump_event_loop() {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSApplication, NSEventMask};
-    use objc2_foundation::{NSDate, NSDefaultRunLoopMode};
-
-    let mtm = MainThreadMarker::new().expect("must be on main thread");
-    let app = NSApplication::sharedApplication(mtm);
-
-    loop {
-        let event = unsafe {
-            app.nextEventMatchingMask_untilDate_inMode_dequeue(
-                NSEventMask::Any,
-                Some(&NSDate::distantPast()),
-                NSDefaultRunLoopMode,
-                true,
-            )
-        };
-        match event {
-            Some(event) => app.sendEvent(&event),
-            None => break,
-        }
-    }
-
-    std::thread::sleep(std::time::Duration::from_millis(16));
-}
-
-/// On non-macOS platforms, just sleep briefly.
-#[cfg(not(target_os = "macos"))]
-fn pump_event_loop() {
-    std::thread::sleep(std::time::Duration::from_millis(16));
-}
+use std::sync::Arc;
 
 pub enum AppMessage {
     KeyDown,
@@ -105,7 +45,7 @@ pub enum AppEffect {
     OpenConfig,
     /// Reload config from disk and apply changes.
     ReloadConfig,
-    SetTrayState(TrayStateTag),
+    SetTrayState(TrayState),
     SetTrayModel(String),
     SetTrayLanguage(String),
     SetTrayMode(InputMode),
@@ -113,14 +53,6 @@ pub enum AppEffect {
     ReloadTranscriber(u64),
     Quit,
     LogError(String),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TrayStateTag {
-    Idle,
-    Recording,
-    Transcribing,
-    Error,
 }
 
 /// Pure state machine for the app's recording logic.
@@ -207,7 +139,7 @@ impl AppState {
                     effects.push(AppEffect::StopStreaming);
                 }
                 effects.push(AppEffect::StopAndTranscribe);
-                effects.push(AppEffect::SetTrayState(TrayStateTag::Transcribing));
+                effects.push(AppEffect::SetTrayState(TrayState::Transcribing));
                 effects
             } else {
                 self.is_pressed = true;
@@ -217,7 +149,7 @@ impl AppState {
                 if self.streaming {
                     effects.push(AppEffect::StartStreaming);
                 }
-                effects.push(AppEffect::SetTrayState(TrayStateTag::Recording));
+                effects.push(AppEffect::SetTrayState(TrayState::Recording));
                 effects
             }
         } else if !self.is_pressed {
@@ -228,7 +160,7 @@ impl AppState {
             if self.streaming {
                 effects.push(AppEffect::StartStreaming);
             }
-            effects.push(AppEffect::SetTrayState(TrayStateTag::Recording));
+            effects.push(AppEffect::SetTrayState(TrayState::Recording));
             effects
         } else {
             vec![AppEffect::None]
@@ -243,7 +175,7 @@ impl AppState {
                 effects.push(AppEffect::StopStreaming);
             }
             effects.push(AppEffect::StopAndTranscribe);
-            effects.push(AppEffect::SetTrayState(TrayStateTag::Transcribing));
+            effects.push(AppEffect::SetTrayState(TrayState::Transcribing));
             effects
         } else {
             vec![AppEffect::None]
@@ -265,7 +197,7 @@ impl AppState {
             }
             self.last_transcription = Some(text.to_string());
         }
-        effects.push(AppEffect::SetTrayState(TrayStateTag::Idle));
+        effects.push(AppEffect::SetTrayState(TrayState::Idle));
         effects
     }
 
@@ -274,7 +206,7 @@ impl AppState {
         self.streaming_active = false;
         vec![
             AppEffect::LogError(error.to_string()),
-            AppEffect::SetTrayState(TrayStateTag::Error),
+            AppEffect::SetTrayState(TrayState::Error),
         ]
     }
 
@@ -340,348 +272,6 @@ impl AppState {
     }
 }
 
-/// Convert a TrayAction to the corresponding AppMessage.
-pub fn tray_action_to_message(action: TrayAction) -> AppMessage {
-    match action {
-        TrayAction::Quit => AppMessage::TrayQuit,
-        TrayAction::CopyLastDictation => AppMessage::TrayCopyLast,
-        TrayAction::SetModel(s) => AppMessage::TraySetModel(s),
-        TrayAction::SetLanguage(c) => AppMessage::TraySetLanguage(c),
-        TrayAction::ToggleSpokenPunctuation => AppMessage::TrayToggleSpokenPunctuation,
-        TrayAction::SetMode(mode) => AppMessage::TraySetMode(mode),
-        TrayAction::ToggleStreaming => AppMessage::TrayToggleStreaming,
-        TrayAction::ToggleTranslate => AppMessage::TrayToggleTranslate,
-        TrayAction::OpenConfig => AppMessage::TrayOpenConfig,
-        TrayAction::ReloadConfig => AppMessage::TrayReloadConfig,
-    }
-}
-
-/// Convert a TrayStateTag to the corresponding TrayState.
-pub fn tag_to_tray_state(tag: &TrayStateTag) -> TrayState {
-    match tag {
-        TrayStateTag::Idle => TrayState::Idle,
-        TrayStateTag::Recording => TrayState::Recording,
-        TrayStateTag::Transcribing => TrayState::Transcribing,
-        TrayStateTag::Error => TrayState::Error,
-    }
-}
-
-pub fn run() -> Result<()> {
-    let mut config = Config::load();
-
-    // Ensure model is available
-    if !crate::transcriber::model_exists(&config.model_size) {
-        info!("Downloading {} model...", config.model_size);
-        let model_size = config.model_size.clone();
-        model::download(&model_size, |percent| {
-            eprint!("\rDownloading {model_size} model... {percent:.0}%");
-        })?;
-        eprintln!();
-    }
-
-    let model_path = crate::transcriber::find_model(&config.model_size)
-        .ok_or_else(|| anyhow::anyhow!("Model '{}' not found after download", config.model_size))?;
-
-    let mut transcriber = Arc::new(Transcriber::new(&model_path, &config.language)?);
-
-    info!("Hotkey: {}", config.hotkey);
-    info!("Model: {}", config.model_size);
-
-    let parsed = crate::keycodes::parse(&config.hotkey)
-        .ok_or_else(|| anyhow::anyhow!("Invalid hotkey: {}", config.hotkey))?;
-
-    crate::permissions::check_accessibility();
-    crate::permissions::check_microphone();
-
-    #[cfg(target_os = "macos")]
-    init_macos_app();
-
-    let mut tray = TrayController::new(&config)?;
-
-    let (tx, rx) = mpsc::channel::<AppMessage>();
-    let tx_down = tx.clone();
-    let tx_up = tx.clone();
-
-    let hotkey_key = parsed.key;
-    let hotkey_mods = parsed.modifiers;
-    std::thread::spawn(move || {
-        if let Err(e) = HotkeyManager::start(
-            hotkey_key,
-            hotkey_mods,
-            move || { let _ = tx_down.send(AppMessage::KeyDown); },
-            move || { let _ = tx_up.send(AppMessage::KeyUp); },
-        ) {
-            error!("Hotkey listener failed: {e}");
-        }
-    });
-
-    let mut recorder = AudioRecorder::new();
-    let mut state = AppState::new(&config);
-    let mut streaming_stop: Option<mpsc::Sender<()>> = None;
-
-    println!("open-bark v{VERSION}");
-    println!("Hotkey: {}", config.hotkey);
-    println!("Model: {}", config.model_size);
-    println!("Ready.");
-
-    'main: loop {
-        while let Ok(msg) = rx.try_recv() {
-            // TranscriberReady carries an Arc that must be moved out,
-            // so handle it directly instead of going through the state machine.
-            if let AppMessage::TranscriberReady(new_t, generation) = msg {
-                if generation == state.reload_generation {
-                    transcriber = new_t;
-                    info!("Transcriber reloaded with new model");
-                } else {
-                    info!("Discarding stale transcriber reload (gen {generation}, current {})", state.reload_generation);
-                }
-                continue;
-            }
-            let effects = state.handle_message(&msg);
-            for effect in effects {
-                let quit = apply_effect(effect, &mut EffectContext {
-                    recorder: &mut recorder,
-                    transcriber: &mut transcriber,
-                    tray: &mut tray,
-                    config: &mut config,
-                    state: &mut state,
-                    tx: &tx,
-                    streaming_stop: &mut streaming_stop,
-                })?;
-                if quit {
-                    break 'main;
-                }
-            }
-        }
-
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
-            if let Some(action) = tray.match_menu_event(&event) {
-                let _ = tx.send(tray_action_to_message(action));
-            }
-        }
-
-        while let Ok(_event) = TrayIconEvent::receiver().try_recv() {}
-
-        pump_event_loop();
-    }
-
-    Ok(())
-}
-
-struct EffectContext<'a> {
-    recorder: &'a mut AudioRecorder,
-    transcriber: &'a mut Arc<Transcriber>,
-    tray: &'a mut TrayController,
-    config: &'a mut Config,
-    state: &'a mut AppState,
-    tx: &'a mpsc::Sender<AppMessage>,
-    streaming_stop: &'a mut Option<mpsc::Sender<()>>,
-}
-
-/// Returns `Ok(true)` when the caller should exit the main loop.
-fn apply_effect(effect: AppEffect, ctx: &mut EffectContext<'_>) -> Result<bool> {
-    match effect {
-        AppEffect::None => {}
-        AppEffect::StartRecording(path) => {
-            info!("Recording...");
-            if let Err(e) = ctx.recorder.start(&path) {
-                error!("Failed to start recording: {e}");
-                let _ = ctx.tx.send(AppMessage::TranscriptionError(
-                    format!("Failed to start recording: {e}"),
-                ));
-            }
-        }
-        AppEffect::StopAndTranscribe => {
-            // Stop streaming first (if running)
-            if let Some(stop) = ctx.streaming_stop.take() {
-                let _ = stop.send(());
-            }
-
-            if let Some(audio_path) = ctx.recorder.stop() {
-                info!("Transcribing...");
-                let transcriber = Arc::clone(ctx.transcriber);
-                let spoken_punctuation = ctx.state.spoken_punctuation;
-                let translate_to_english = ctx.state.translate_to_english;
-                let max_recordings = ctx.state.max_recordings;
-                let tx = ctx.tx.clone();
-                std::thread::spawn(move || {
-                    let result = transcriber.transcribe(&audio_path, translate_to_english);
-                    if max_recordings == 0 {
-                        let _ = std::fs::remove_file(&audio_path);
-                    } else {
-                        RecordingStore::prune(max_recordings);
-                    }
-                    match result {
-                        Ok(raw) => {
-                            let text = if spoken_punctuation {
-                                postprocess::process(&raw)
-                            } else {
-                                raw
-                            };
-                            let _ = tx.send(AppMessage::TranscriptionDone(text));
-                        }
-                        Err(e) => {
-                            let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
-                        }
-                    }
-                });
-            }
-        }
-        AppEffect::StartStreaming => {
-            info!("Starting streaming transcription...");
-            let sample_buffer = ctx.recorder.sample_buffer();
-            let transcriber = Arc::clone(ctx.transcriber);
-            let tx_app = ctx.tx.clone();
-            let language = ctx.state.language.clone();
-            let translate = ctx.state.translate_to_english;
-            let spoken_punct = ctx.state.spoken_punctuation;
-
-            let (streaming_tx, streaming_rx) = mpsc::channel::<streaming::StreamingEvent>();
-
-            // Forward streaming events to app messages
-            std::thread::spawn(move || {
-                while let Ok(event) = streaming_rx.recv() {
-                    match event {
-                        streaming::StreamingEvent::PartialText(text) => {
-                            let _ = tx_app.send(AppMessage::StreamingPartialText(text));
-                        }
-                    }
-                }
-            });
-
-            let stop = streaming::start_streaming(
-                sample_buffer,
-                transcriber,
-                language,
-                translate,
-                spoken_punct,
-                streaming_tx,
-            );
-            *ctx.streaming_stop = Some(stop);
-        }
-        AppEffect::StopStreaming => {
-            if let Some(stop) = ctx.streaming_stop.take() {
-                info!("Stopping streaming transcription");
-                let _ = stop.send(());
-            }
-        }
-        AppEffect::InsertText(text) => {
-            info!("Transcription: {text}");
-            if let Err(e) = TextInserter::insert(&text) {
-                error!("Insert failed: {e}");
-            }
-        }
-        AppEffect::CopyToClipboard(text) => {
-            if let Ok(mut cb) = arboard::Clipboard::new() {
-                let _ = cb.set_text(text);
-                info!("Copied last dictation to clipboard");
-            }
-        }
-        AppEffect::SaveConfig => {
-            let new_config = ctx.state.to_config(ctx.config);
-            *ctx.config = new_config;
-            if let Err(e) = ctx.config.save() {
-                error!("Failed to save config: {e}");
-            }
-        }
-        AppEffect::OpenConfig => {
-            let config_path = Config::file_path();
-            info!("Opening config: {}", config_path.display());
-            #[cfg(target_os = "macos")]
-            { let _ = std::process::Command::new("open").arg(&config_path).spawn(); }
-            #[cfg(target_os = "linux")]
-            { let _ = std::process::Command::new("xdg-open").arg(&config_path).spawn(); }
-            #[cfg(target_os = "windows")]
-            { let _ = std::process::Command::new("cmd").args(["/C", "start", ""]).arg(&config_path).spawn(); }
-        }
-        AppEffect::ReloadConfig => {
-            info!("Reloading config from disk...");
-            let new_config = Config::load();
-            let old_model = ctx.state.model_size.clone();
-            let old_lang = ctx.state.language.clone();
-            *ctx.state = AppState::new(&new_config);
-            *ctx.config = new_config;
-            // If model or language changed, reload the transcriber
-            if ctx.state.model_size != old_model || ctx.state.language != old_lang {
-                ctx.state.reload_generation += 1;
-                let gen = ctx.state.reload_generation;
-                let quit = apply_effect(AppEffect::ReloadTranscriber(gen), ctx)?;
-                if quit {
-                    return Ok(true);
-                }
-            }
-            info!("Config reloaded");
-        }
-        AppEffect::SetTrayState(tag) => {
-            ctx.tray.set_state(tag_to_tray_state(&tag));
-        }
-        AppEffect::SetTrayModel(size) => {
-            ctx.tray.set_model(&size);
-            info!("Model changed to: {size}");
-        }
-        AppEffect::SetTrayLanguage(code) => {
-            let name = crate::config::language_name(&code).unwrap_or(&code);
-            info!("Language changed to: {name} ({code})");
-            ctx.tray.set_language(&code);
-        }
-        AppEffect::SetTrayMode(mode) => {
-            ctx.tray.set_mode(&mode);
-            info!("Mode changed to: {mode}");
-        }
-        AppEffect::ReloadTranscriber(generation) => {
-            let model_size = ctx.state.model_size.clone();
-            let language = ctx.state.language.clone();
-            let tx = ctx.tx.clone();
-            info!("Loading model '{model_size}'...");
-            std::thread::spawn(move || {
-                if !crate::transcriber::model_exists(&model_size) {
-                    info!("Downloading {model_size} model...");
-                    if let Err(e) = model::download(&model_size, |percent| {
-                        if (percent as u32).is_multiple_of(25) {
-                            info!("Downloading {model_size}... {percent:.0}%");
-                        }
-                    }) {
-                        error!("Failed to download model '{model_size}': {e}");
-                        let _ = tx.send(AppMessage::TranscriptionError(
-                            format!("Failed to download model '{model_size}': {e}"),
-                        ));
-                        return;
-                    }
-                }
-
-                match crate::transcriber::find_model(&model_size) {
-                    Some(model_path) => match Transcriber::new(&model_path, &language) {
-                        Ok(t) => {
-                            info!("Model '{model_size}' loaded successfully");
-                            let _ = tx.send(AppMessage::TranscriberReady(Arc::new(t), generation));
-                        }
-                        Err(e) => {
-                            error!("Failed to load model '{model_size}': {e}");
-                            let _ = tx.send(AppMessage::TranscriptionError(
-                                format!("Failed to load model '{model_size}': {e}"),
-                            ));
-                        }
-                    },
-                    None => {
-                        error!("Model '{model_size}' not found after download");
-                        let _ = tx.send(AppMessage::TranscriptionError(
-                            format!("Model '{model_size}' not found after download"),
-                        ));
-                    }
-                }
-            });
-        }
-        AppEffect::Quit => {
-            info!("Quit requested via tray");
-            return Ok(true);
-        }
-        AppEffect::LogError(e) => {
-            error!("Transcription: {e}");
-        }
-    }
-    Ok(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -710,7 +300,7 @@ mod tests {
         let effects = state.handle_message(&AppMessage::KeyDown);
         assert!(state.is_pressed);
         assert!(effects.iter().any(|e| matches!(e, AppEffect::StartRecording(_))));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Recording))));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Recording))));
     }
 
     #[test]
@@ -728,7 +318,7 @@ mod tests {
         let effects = state.handle_message(&AppMessage::KeyUp);
         assert!(!state.is_pressed);
         assert!(effects.iter().any(|e| matches!(e, AppEffect::StopAndTranscribe)));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Transcribing))));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Transcribing))));
     }
 
     #[test]
@@ -747,7 +337,7 @@ mod tests {
         let effects = state.handle_message(&AppMessage::KeyDown);
         assert!(state.is_pressed);
         assert!(effects.iter().any(|e| matches!(e, AppEffect::StartRecording(_))));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Recording))));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Recording))));
     }
 
     #[test]
@@ -758,7 +348,7 @@ mod tests {
         let effects = state.handle_message(&AppMessage::KeyDown);
         assert!(!state.is_pressed);
         assert!(effects.iter().any(|e| matches!(e, AppEffect::StopAndTranscribe)));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Transcribing))));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Transcribing))));
     }
 
     #[test]
@@ -777,7 +367,7 @@ mod tests {
         let mut state = default_state();
         let effects = state.handle_message(&AppMessage::TranscriptionDone("hello world".to_string()));
         assert!(effects.iter().any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello world")));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Idle))));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Idle))));
         assert_eq!(state.last_transcription, Some("hello world".to_string()));
     }
 
@@ -786,7 +376,7 @@ mod tests {
         let mut state = default_state();
         let effects = state.handle_message(&AppMessage::TranscriptionDone("".to_string()));
         assert!(!effects.iter().any(|e| matches!(e, AppEffect::InsertText(_))));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Idle))));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Idle))));
         assert!(state.last_transcription.is_none());
     }
 
@@ -805,7 +395,7 @@ mod tests {
         let mut state = default_state();
         let effects = state.handle_message(&AppMessage::TranscriptionError("fail".to_string()));
         assert!(effects.iter().any(|e| matches!(e, AppEffect::LogError(t) if t == "fail")));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayStateTag::Error))));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Error))));
     }
 
     // -- Copy last --
@@ -951,7 +541,7 @@ mod tests {
         assert!(path.to_string_lossy().contains("open-bark-recording.wav"));
     }
 
-    // -- AppEffect/TrayStateTag enum tests --
+    // -- AppEffect enum tests --
 
     #[test]
     fn app_effect_debug_and_eq() {
@@ -960,14 +550,6 @@ mod tests {
         assert_eq!(e1, e2);
         assert_eq!(format!("{:?}", e1), "None");
         assert_ne!(AppEffect::Quit, AppEffect::None);
-    }
-
-    #[test]
-    fn tray_state_tag_variants() {
-        assert_ne!(TrayStateTag::Idle, TrayStateTag::Recording);
-        assert_ne!(TrayStateTag::Recording, TrayStateTag::Transcribing);
-        assert_ne!(TrayStateTag::Transcribing, TrayStateTag::Error);
-        assert_eq!(TrayStateTag::Idle.clone(), TrayStateTag::Idle);
     }
 
     #[test]
@@ -1028,87 +610,77 @@ mod tests {
         assert!(name.ends_with(".wav"));
     }
 
-    // -- tray_action_to_message --
+    // -- From<TrayAction> for AppMessage --
 
     #[test]
-    fn tray_action_to_message_quit() {
-        match tray_action_to_message(TrayAction::Quit) {
+    fn from_tray_action_quit() {
+        match AppMessage::from(TrayAction::Quit) {
             AppMessage::TrayQuit => {}
             _ => panic!("expected TrayQuit"),
         }
     }
 
     #[test]
-    fn tray_action_to_message_copy_last() {
-        match tray_action_to_message(TrayAction::CopyLastDictation) {
+    fn from_tray_action_copy_last() {
+        match AppMessage::from(TrayAction::CopyLastDictation) {
             AppMessage::TrayCopyLast => {}
             _ => panic!("expected TrayCopyLast"),
         }
     }
 
     #[test]
-    fn tray_action_to_message_set_model() {
-        match tray_action_to_message(TrayAction::SetModel("base.en".into())) {
+    fn from_tray_action_set_model() {
+        match AppMessage::from(TrayAction::SetModel("base.en".into())) {
             AppMessage::TraySetModel(s) => assert_eq!(s, "base.en"),
             _ => panic!("expected TraySetModel"),
         }
     }
 
     #[test]
-    fn tray_action_to_message_set_language() {
-        match tray_action_to_message(TrayAction::SetLanguage("fr".into())) {
+    fn from_tray_action_set_language() {
+        match AppMessage::from(TrayAction::SetLanguage("fr".into())) {
             AppMessage::TraySetLanguage(c) => assert_eq!(c, "fr"),
             _ => panic!("expected TraySetLanguage"),
         }
     }
 
     #[test]
-    fn tray_action_to_message_toggle_spoken_punct() {
-        match tray_action_to_message(TrayAction::ToggleSpokenPunctuation) {
+    fn from_tray_action_toggle_spoken_punct() {
+        match AppMessage::from(TrayAction::ToggleSpokenPunctuation) {
             AppMessage::TrayToggleSpokenPunctuation => {}
             _ => panic!("expected TrayToggleSpokenPunctuation"),
         }
     }
 
     #[test]
-    fn tray_action_to_message_set_mode() {
-        match tray_action_to_message(TrayAction::SetMode(InputMode::OpenMic)) {
+    fn from_tray_action_set_mode() {
+        match AppMessage::from(TrayAction::SetMode(InputMode::OpenMic)) {
             AppMessage::TraySetMode(mode) => assert_eq!(mode, InputMode::OpenMic),
             _ => panic!("expected TraySetMode"),
         }
     }
 
     #[test]
-    fn tray_action_to_message_toggle_translate() {
-        match tray_action_to_message(TrayAction::ToggleTranslate) {
+    fn from_tray_action_toggle_translate() {
+        match AppMessage::from(TrayAction::ToggleTranslate) {
             AppMessage::TrayToggleTranslate => {}
             _ => panic!("expected TrayToggleTranslate"),
         }
     }
 
     #[test]
-    fn tray_action_to_message_open_config() {
-        match tray_action_to_message(TrayAction::OpenConfig) {
+    fn from_tray_action_open_config() {
+        match AppMessage::from(TrayAction::OpenConfig) {
             AppMessage::TrayOpenConfig => {}
             _ => panic!("expected TrayOpenConfig"),
         }
     }
 
     #[test]
-    fn tray_action_to_message_reload_config() {
-        match tray_action_to_message(TrayAction::ReloadConfig) {
+    fn from_tray_action_reload_config() {
+        match AppMessage::from(TrayAction::ReloadConfig) {
             AppMessage::TrayReloadConfig => {}
             _ => panic!("expected TrayReloadConfig"),
         }
-    }
-
-    // -- tag_to_tray_state --
-
-    #[test]
-    fn tag_to_tray_state_all() {
-        assert_eq!(tag_to_tray_state(&TrayStateTag::Idle), TrayState::Idle);
-        assert_eq!(tag_to_tray_state(&TrayStateTag::Recording), TrayState::Recording);
-        assert_eq!(tag_to_tray_state(&TrayStateTag::Transcribing), TrayState::Transcribing);
-        assert_eq!(tag_to_tray_state(&TrayStateTag::Error), TrayState::Error);
     }
 }

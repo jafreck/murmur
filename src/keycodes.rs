@@ -11,7 +11,13 @@ pub fn parse(input: &str) -> Option<ParsedHotkey> {
 
     let modifiers: Vec<Key> = parts[..parts.len() - 1]
         .iter()
-        .filter_map(|m| name_to_key(m))
+        .filter_map(|m| {
+            let result = name_to_key(m);
+            if result.is_none() {
+                eprintln!("Warning: unrecognized modifier '{m}' in hotkey '{input}' (ignored)");
+            }
+            result
+        })
         .collect();
 
     Some(ParsedHotkey { key, modifiers })

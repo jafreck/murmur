@@ -138,13 +138,15 @@ impl<T> RadioEntry<T> {
     }
 }
 
+type RadioBuildResult<T> = Result<(Vec<RadioEntry<T>>, Vec<(MenuId, T)>)>;
+
 /// Build a submenu of radio-style CheckMenuItems, returning the entries and
 /// their (MenuId, value) pairs for the action map.
 fn build_radio_submenu<T: Clone>(
     submenu: &Submenu,
     items: &[(&str, T)],
     is_selected: impl Fn(&T) -> bool,
-) -> Result<(Vec<RadioEntry<T>>, Vec<(MenuId, T)>)> {
+) -> RadioBuildResult<T> {
     let mut entries = Vec::new();
     let mut ids = Vec::new();
     for (label, value) in items {

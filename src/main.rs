@@ -1,21 +1,12 @@
-mod app;
-mod audio;
-mod config;
-mod hotkey;
-mod inserter;
-mod keycodes;
-mod model;
-mod permissions;
-mod postprocess;
-mod recordings;
-mod streaming;
-mod transcriber;
-mod tray;
+use open_bark::app;
+use open_bark::config;
+use open_bark::keycodes;
+use open_bark::model;
+use open_bark::transcriber;
+use open_bark::VERSION;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Parser)]
 #[command(

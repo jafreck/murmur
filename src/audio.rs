@@ -44,6 +44,12 @@ pub const WHISPER_WAV_SPEC: WavSpec = WavSpec {
 /// Target sample rate for Whisper input.
 pub const TARGET_RATE: u32 = 16_000;
 
+impl Default for AudioRecorder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AudioRecorder {
     pub fn new() -> Self {
         Self {

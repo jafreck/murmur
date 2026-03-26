@@ -144,8 +144,13 @@ pub fn run() -> Result<()> {
         std::thread::spawn(move || {
             if !crate::transcription::transcriber::model_exists(&model_size) {
                 info!("Downloading {model_size} model...");
+                let last_pct = std::cell::Cell::new(u32::MAX);
                 if let Err(e) = crate::transcription::model::download(&model_size, |percent| {
-                    eprint!("\rDownloading {model_size} model... {percent:.0}%");
+                    let pct = percent as u32;
+                    if pct != last_pct.get() {
+                        last_pct.set(pct);
+                        eprint!("\rDownloading {model_size} model... {pct}%");
+                    }
                 }) {
                     error!("Failed to download model '{model_size}': {e}");
                     let _ = tx_load.send(AppMessage::TranscriptionError(format!(

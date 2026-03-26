@@ -250,7 +250,7 @@ print_summary() {
     echo ""
     printf "  ${CYAN}┌──────────────────────────────────────┐${RESET}\n"
     printf "  ${CYAN}│${RESET}                                      ${CYAN}│${RESET}\n"
-    printf "  ${CYAN}│${RESET}  ${GREEN}${BOLD}✔ murmur installed successfully!${RESET}  ${CYAN}│${RESET}\n"
+    printf "  ${CYAN}│${RESET}  ${GREEN}${BOLD}✔ murmur installed successfully!${RESET}    ${CYAN}│${RESET}\n"
     printf "  ${CYAN}│${RESET}                                      ${CYAN}│${RESET}\n"
     printf "  ${CYAN}└──────────────────────────────────────┘${RESET}\n"
     echo ""
@@ -283,7 +283,7 @@ print_summary() {
 
     echo ""
     printf "  ${DIM}Configure:${RESET} murmur set-hotkey <key>\n"
-    printf "  ${DIM}Uninstall:${RESET} sudo rm %s/%s\n" "$INSTALL_DIR" "$APP_NAME"
+    printf "  ${DIM}Uninstall:${RESET} curl -sSfL https://github.com/jafreck/murmur/releases/latest/download/uninstall.sh | bash\n"
     echo ""
 }
 

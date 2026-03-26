@@ -61,6 +61,19 @@ impl HotkeyManager {
                     if let Ok(mut held) = held_modifiers.lock() {
                         held.insert(key);
                     }
+                    // If the modifier itself is the hotkey, fire on_key_down
+                    if key == target_key {
+                        let mods_ok = if required.is_empty() {
+                            true
+                        } else if let Ok(held) = held_modifiers.lock() {
+                            required.is_subset(&held)
+                        } else {
+                            false
+                        };
+                        if mods_ok {
+                            on_key_down();
+                        }
+                    }
                 }
                 EventType::KeyRelease(key) if is_modifier(&key) => {
                     if let Ok(mut held) = held_modifiers.lock() {

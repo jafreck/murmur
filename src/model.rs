@@ -53,8 +53,12 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
 
     let total = response.content_length().unwrap_or(0);
     let mut reader = response;
-    let mut file = File::create(&dest_path)
-        .context("Failed to create model file")?;
+
+    // Write to a temporary file first, then rename atomically to avoid
+    // leaving a partial file at the final path if the process is killed.
+    let part_path = models_dir.join(format!("{filename}.part"));
+    let mut file = File::create(&part_path)
+        .context("Failed to create temporary model file")?;
 
     let mut downloaded: u64 = 0;
     let mut buf = [0u8; 8192];
@@ -71,14 +75,19 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
         }
     }
 
-    // Validate the downloaded file
-    if !is_valid_ggml_file(&dest_path) {
-        let _ = std::fs::remove_file(&dest_path);
+    drop(file);
+
+    // Validate before promoting to the final path
+    if !is_valid_ggml_file(&part_path) {
+        let _ = std::fs::remove_file(&part_path);
         anyhow::bail!(
             "Downloaded file is not a valid GGML model. \
              Check your network connection or try from a different network."
         );
     }
+
+    std::fs::rename(&part_path, &dest_path)
+        .context("Failed to move downloaded model to final path")?;
 
     log::info!("Model downloaded to {}", dest_path.display());
     Ok(dest_path)

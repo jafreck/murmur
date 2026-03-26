@@ -144,6 +144,22 @@ murmur is completely local. Audio is recorded to a temp file, transcribed by whi
 - **Linux (X11):** Works out of the box
 - **Linux (Wayland):** User must be in the `input` group for hotkey detection
 
+## Uninstall
+
+**macOS / Linux:**
+
+```bash
+curl -sSfL https://github.com/jafreck/murmur/releases/latest/download/uninstall.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://github.com/jafreck/murmur/releases/latest/download/uninstall.ps1 | iex
+```
+
+Removes the binary, service/startup config, and logs. Prompts before deleting user config and downloaded models.
+
 ## License
 
 MIT

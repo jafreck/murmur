@@ -11,8 +11,8 @@
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use crate::audio::TARGET_RATE;
-use crate::transcriber::Transcriber;
+use crate::audio::capture::TARGET_RATE;
+use super::transcriber::Transcriber;
 
 // ── Configuration ──────────────────────────────────────────────────────
 
@@ -133,7 +133,7 @@ fn streaming_loop(
         }
 
         if spoken_punctuation {
-            full_text = crate::postprocess::process(&full_text);
+            full_text = super::postprocess::process(&full_text);
         }
 
         // If the transcription changed at all, replace everything.

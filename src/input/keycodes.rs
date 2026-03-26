@@ -1,4 +1,4 @@
-use crate::hotkey::ParsedHotkey;
+use super::hotkey::ParsedHotkey;
 use rdev::Key;
 
 /// Single source of truth for key ↔ name mappings.

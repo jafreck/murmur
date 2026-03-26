@@ -14,9 +14,11 @@ use std::sync::Arc;
 
 use crate::audio::AudioRecorder;
 use crate::config::Config;
-use crate::hotkey::{self, HotkeyManager};
-use crate::tray::{TrayAction, TrayController};
-use crate::transcriber::Transcriber;
+use crate::input::hotkey::{self, HotkeyManager};
+use crate::input::keycodes;
+use crate::platform::permissions;
+use crate::transcription::transcriber::Transcriber;
+use crate::ui::tray::{TrayAction, TrayController};
 use crate::VERSION;
 
 use tray_icon::menu::MenuEvent;
@@ -94,17 +96,17 @@ pub fn run() -> Result<()> {
     info!("Hotkey: {}", config.hotkey);
     info!("Model: {}", config.model_size);
 
-    let parsed = crate::keycodes::parse(&config.hotkey)
+    let parsed = keycodes::parse(&config.hotkey)
         .ok_or_else(|| anyhow::anyhow!("Invalid hotkey: {}", config.hotkey))?;
 
-    crate::permissions::check_accessibility();
-    crate::permissions::check_microphone();
+    permissions::check_accessibility();
+    permissions::check_microphone();
 
     #[cfg(target_os = "macos")]
     init_macos_app();
 
     let mut tray = TrayController::new(&config)?;
-    tray.set_state(crate::tray::TrayState::Loading);
+    tray.set_state(crate::ui::tray::TrayState::Loading);
 
     let (tx, rx) = mpsc::channel::<AppMessage>();
     let tx_down = tx.clone();
@@ -135,9 +137,9 @@ pub fn run() -> Result<()> {
         let language = config.language.clone();
         let tx_load = tx.clone();
         std::thread::spawn(move || {
-            if !crate::transcriber::model_exists(&model_size) {
+            if !crate::transcription::transcriber::model_exists(&model_size) {
                 info!("Downloading {model_size} model...");
-                if let Err(e) = crate::model::download(&model_size, |percent| {
+                if let Err(e) = crate::transcription::model::download(&model_size, |percent| {
                     eprint!("\rDownloading {model_size} model... {percent:.0}%");
                 }) {
                     error!("Failed to download model '{model_size}': {e}");
@@ -149,7 +151,7 @@ pub fn run() -> Result<()> {
                 eprintln!();
             }
 
-            let Some(model_path) = crate::transcriber::find_model(&model_size) else {
+            let Some(model_path) = crate::transcription::transcriber::find_model(&model_size) else {
                 error!("Model '{model_size}' not found after download");
                 let _ = tx_load.send(AppMessage::TranscriptionError(
                     format!("Model '{model_size}' not found after download"),
@@ -190,7 +192,7 @@ pub fn run() -> Result<()> {
             if let AppMessage::TranscriberReady(new_t, generation) = msg {
                 if generation == state.reload_generation {
                     transcriber = Some(new_t);
-                    tray.set_state(crate::tray::TrayState::Idle);
+                    tray.set_state(crate::ui::tray::TrayState::Idle);
                     info!("Transcriber ready");
                     if generation == 0 {
                         println!("Ready.");

@@ -27,13 +27,13 @@ pub fn shared_hotkey(parsed: &ParsedHotkey) -> SharedHotkeyConfig {
 
 impl ParsedHotkey {
     pub fn to_config_string(&self) -> String {
-        let key_name = crate::keycodes::key_to_name(&self.key);
+        let key_name = super::keycodes::key_to_name(&self.key);
         if self.modifiers.is_empty() {
             key_name
         } else {
             let mod_names: Vec<String> = self.modifiers
                 .iter()
-                .map(crate::keycodes::key_to_name)
+                .map(super::keycodes::key_to_name)
                 .collect();
             format!("{}+{}", mod_names.join("+"), key_name)
         }
@@ -214,7 +214,7 @@ mod tests {
         ];
         for hk in &cases {
             let s = hk.to_config_string();
-            let parsed = crate::keycodes::parse(&s);
+            let parsed = crate::input::keycodes::parse(&s);
             assert!(parsed.is_some(), "Failed to parse round-tripped config: {s}");
             let parsed = parsed.unwrap();
             assert_eq!(parsed.key, hk.key, "Key mismatch for config: {s}");

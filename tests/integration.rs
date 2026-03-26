@@ -6,7 +6,7 @@
 
 use murmur::app::{AppEffect, AppMessage, AppState};
 use murmur::config::{Config, InputMode};
-use murmur::tray::TrayState;
+use murmur::ui::tray::TrayState;
 
 // ── Test Harness ──────────────────────────────────────────────────────
 
@@ -537,7 +537,7 @@ fn to_config_round_trips_state() {
 
 #[test]
 fn from_tray_action_all_variants() {
-    use murmur::tray::TrayAction;
+    use murmur::ui::tray::TrayAction;
 
     type ActionCheck = (TrayAction, fn(&AppMessage) -> bool);
     let cases: Vec<ActionCheck> = vec![
@@ -735,7 +735,7 @@ fn regression_stale_error_during_recording() {
 /// not the state machine. This test verifies postprocess::process works correctly.
 #[test]
 fn regression_spoken_punctuation_processes_all_types() {
-    use murmur::postprocess;
+    use murmur::transcription::postprocess;
 
     let cases = [
         ("hello period", "."),

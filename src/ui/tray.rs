@@ -374,7 +374,7 @@ impl TrayController {
 }
 
 /// The bark icon PNG, embedded at compile time.
-const BARK_PNG: &[u8] = include_bytes!("../assets/icons/bark.png");
+const BARK_PNG: &[u8] = include_bytes!("../../assets/icons/bark.png");
 
 fn make_bark_icon(r: u8, g: u8, b: u8, a: u8) -> Result<Icon> {
     let (rgba, width, height) = tint_png_rgba(BARK_PNG, r, g, b, a)?;

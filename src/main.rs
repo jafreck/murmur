@@ -1,8 +1,7 @@
 use murmur::app;
 use murmur::config;
-use murmur::keycodes;
-use murmur::model;
-use murmur::transcriber;
+use murmur::input::keycodes;
+use murmur::transcription::{model, transcriber};
 use murmur::VERSION;
 
 use anyhow::Result;

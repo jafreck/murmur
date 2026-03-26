@@ -5,14 +5,12 @@ use std::sync::Arc;
 
 use crate::audio::AudioRecorder;
 use crate::config::Config;
-use crate::hotkey::{CaptureFlag, SharedHotkeyConfig};
-use crate::inserter::TextInserter;
-use crate::model;
-use crate::postprocess;
-use crate::recordings::RecordingStore;
-use crate::streaming;
-use crate::transcriber::Transcriber;
-use crate::tray::{TrayController, TrayState};
+use crate::input::hotkey::{CaptureFlag, SharedHotkeyConfig};
+use crate::input::inserter::TextInserter;
+use crate::transcription::{model, postprocess, streaming};
+use crate::transcription::transcriber::Transcriber;
+use crate::audio::recordings::RecordingStore;
+use crate::ui::tray::{TrayController, TrayState};
 
 use super::{AppEffect, AppMessage, AppState};
 
@@ -123,7 +121,7 @@ pub fn apply_effect(
             info!("Hotkey capture mode: press any key");
         }
         AppEffect::SetHotkey(key_name) => {
-            if let Some(parsed) = crate::keycodes::parse(&key_name) {
+            if let Some(parsed) = crate::input::keycodes::parse(&key_name) {
                 if let Ok(mut hk) = ctx.hotkey_config.lock() {
                     *hk = (parsed.key, parsed.modifiers.into_iter().collect());
                 }
@@ -280,7 +278,7 @@ fn reload_config(ctx: &mut EffectContext<'_>) -> Result<(bool, Vec<AppEffect>)> 
 
     // Update the hotkey listener if the hotkey changed
     if new_config.hotkey != ctx.config.hotkey {
-        if let Some(parsed) = crate::keycodes::parse(&new_config.hotkey) {
+        if let Some(parsed) = crate::input::keycodes::parse(&new_config.hotkey) {
             if let Ok(mut hk) = ctx.hotkey_config.lock() {
                 *hk = (parsed.key, parsed.modifiers.into_iter().collect());
             }
@@ -310,7 +308,7 @@ fn reload_transcriber(ctx: &mut EffectContext<'_>, generation: u64) {
     info!("Loading model '{model_size}'...");
 
     std::thread::spawn(move || {
-        if !crate::transcriber::model_exists(&model_size) {
+        if !crate::transcription::transcriber::model_exists(&model_size) {
             info!("Downloading {model_size} model...");
             if let Err(e) = model::download(&model_size, |percent| {
                 if (percent as u32).is_multiple_of(25) {
@@ -325,7 +323,7 @@ fn reload_transcriber(ctx: &mut EffectContext<'_>, generation: u64) {
             }
         }
 
-        let Some(model_path) = crate::transcriber::find_model(&model_size) else {
+        let Some(model_path) = crate::transcription::transcriber::find_model(&model_size) else {
             error!("Model '{model_size}' not found after download");
             let _ = tx.send(AppMessage::TranscriptionError(
                 format!("Model '{model_size}' not found after download"),

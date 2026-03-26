@@ -1,11 +1,11 @@
 use crate::config::{Config, InputMode};
-use crate::recordings::RecordingStore;
-use crate::tray::TrayState;
+use crate::audio::recordings::RecordingStore;
+use crate::ui::tray::TrayState;
 use rdev::Key;
 
 #[cfg(test)]
-use crate::tray::TrayAction;
-use crate::transcriber::Transcriber;
+use crate::ui::tray::TrayAction;
+use crate::transcription::transcriber::Transcriber;
 use std::sync::Arc;
 
 pub enum AppMessage {
@@ -286,7 +286,7 @@ impl AppState {
 
     fn on_hotkey_capture(&mut self, key: &Key) -> Vec<AppEffect> {
         self.capturing_hotkey = false;
-        let key_name = crate::keycodes::key_to_name(key);
+        let key_name = crate::input::keycodes::key_to_name(key);
         vec![AppEffect::SetHotkey(key_name), AppEffect::SaveConfig]
     }
 

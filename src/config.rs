@@ -151,7 +151,7 @@ impl Config {
     pub fn dir() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("open-bark")
+            .join("murmur")
     }
 
     pub fn file_path() -> PathBuf {
@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn test_config_dir_and_file_path() {
         let dir = Config::dir();
-        assert!(dir.to_string_lossy().contains("open-bark"));
+        assert!(dir.to_string_lossy().contains("murmur"));
         let fp = Config::file_path();
         assert!(fp.to_string_lossy().contains("config.json"));
         assert!(fp.starts_with(&dir));

@@ -1,16 +1,16 @@
-use open_bark::app;
-use open_bark::config;
-use open_bark::keycodes;
-use open_bark::model;
-use open_bark::transcriber;
-use open_bark::VERSION;
+use murmur::app;
+use murmur::config;
+use murmur::keycodes;
+use murmur::model;
+use murmur::transcriber;
+use murmur::VERSION;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
-    name = "open-bark",
+    name = "murmur",
     about = "Cross-platform, local voice dictation. Hold a key, speak, release — your words appear at the cursor.",
     version
 )]
@@ -75,13 +75,13 @@ fn main() -> Result<()> {
 }
 
 fn cmd_start() -> Result<()> {
-    println!("open-bark v{VERSION}");
+    println!("murmur v{VERSION}");
     app::run()
 }
 
 fn cmd_set_hotkey(key_string: &str) -> Result<()> {
     let parsed = keycodes::parse(key_string)
-        .ok_or_else(|| anyhow::anyhow!("Unknown key '{key_string}'. Run 'open-bark --help' for examples."))?;
+        .ok_or_else(|| anyhow::anyhow!("Unknown key '{key_string}'. Run 'murmur --help' for examples."))?;
 
     let mut cfg = config::Config::load();
     cfg.hotkey = parsed.to_config_string();
@@ -147,7 +147,7 @@ pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
     let model_ready_str = if model_ready { "yes" } else { "no" };
 
     format!(
-        "open-bark v{VERSION}\n\
+        "murmur v{VERSION}\n\
          Config:       {}\n\
          Hotkey:       {}\n\
          Model:        {}\n\
@@ -232,7 +232,7 @@ mod tests {
             translate_to_english: false,
         };
         let output = format_status(&cfg, false);
-        assert!(output.contains("open-bark v"));
+        assert!(output.contains("murmur v"));
         assert!(output.contains("f9"));
         assert!(output.contains("base.en"));
         assert!(output.contains("English"));

@@ -1,10 +1,10 @@
 [package]
-name = "open-bark"
+name = "murmur"
 version = "0.1.0"
 edition = "2021"
 description = "Cross-platform, local voice dictation. Hold a key, speak, release — your words appear at the cursor. Powered by whisper.cpp, runs 100% on-device."
 license = "MIT"
-repository = "https://github.com/jacobfreck/open-bark"
+repository = "https://github.com/jacobfreck/murmur"
 readme = "README.md"
 keywords = ["whisper", "dictation", "voice", "speech-to-text"]
 categories = ["multimedia::audio"]

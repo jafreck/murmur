@@ -1,6 +1,6 @@
 # Wiring Up the System Tray GUI — Implementation Guide
 
-This document describes how to implement the system tray GUI for open-bark
+This document describes how to implement the system tray GUI for murmur
 using the `tray-icon` crate (which re-exports `muda` for menus). The tray
 provides visual feedback for app state and a context menu for configuration,
 replacing the current headless CLI daemon mode.
@@ -113,7 +113,7 @@ pub struct TrayController {
 impl TrayController {
     /// Create the tray icon and menu. Must be called on the main thread.
     pub fn new() -> Result<Self> {
-        let status_item = MenuItem::new("open-bark: Idle", false, None);
+        let status_item = MenuItem::new("murmur: Idle", false, None);
         let separator = PredefinedMenuItem::separator();
         let copy_last = MenuItem::new("Copy Last Dictation", true, None);
         let quit = MenuItem::new("Quit", true, None);
@@ -133,7 +133,7 @@ impl TrayController {
 
         let tray = TrayIconBuilder::new()
             .with_icon(idle_icon.clone())
-            .with_tooltip("open-bark — Idle")
+            .with_tooltip("murmur — Idle")
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(true)
             .build()?;
@@ -152,17 +152,17 @@ impl TrayController {
     /// Update the tray icon and tooltip to reflect the current state.
     pub fn set_state(&mut self, state: TrayState) {
         let (icon, tooltip) = match &state {
-            TrayState::Idle => (&self.idle_icon, "open-bark — Idle"),
+            TrayState::Idle => (&self.idle_icon, "murmur — Idle"),
             TrayState::Recording => (
-                &self.recording_icon, "open-bark — Recording..."
+                &self.recording_icon, "murmur — Recording..."
             ),
             TrayState::Transcribing => (
-                &self.transcribing_icon, "open-bark — Transcribing..."
+                &self.transcribing_icon, "murmur — Transcribing..."
             ),
             TrayState::Downloading => (
-                &self.transcribing_icon, "open-bark — Downloading model..."
+                &self.transcribing_icon, "murmur — Downloading model..."
             ),
-            TrayState::Error => (&self.recording_icon, "open-bark — Error"),
+            TrayState::Error => (&self.recording_icon, "murmur — Error"),
         };
 
         let _ = self.tray.set_icon(Some(icon.clone()));
@@ -460,11 +460,11 @@ impl TrayController {
         last_transcription: &Option<String>,
     ) {
         let status_text = match state {
-            TrayState::Idle => "open-bark: Ready",
-            TrayState::Recording => "open-bark: Recording...",
-            TrayState::Transcribing => "open-bark: Transcribing...",
-            TrayState::Downloading => "open-bark: Downloading...",
-            TrayState::Error => "open-bark: Error",
+            TrayState::Idle => "murmur: Ready",
+            TrayState::Recording => "murmur: Recording...",
+            TrayState::Transcribing => "murmur: Transcribing...",
+            TrayState::Downloading => "murmur: Downloading...",
+            TrayState::Error => "murmur: Error",
         };
 
         let menu = Menu::new();

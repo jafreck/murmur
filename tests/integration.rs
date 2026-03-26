@@ -4,9 +4,9 @@
 //! exercising real state machine code paths without requiring hardware
 //! (microphone, display, model files).
 
-use open_bark::app::{AppEffect, AppMessage, AppState};
-use open_bark::config::{Config, InputMode};
-use open_bark::tray::TrayState;
+use murmur::app::{AppEffect, AppMessage, AppState};
+use murmur::config::{Config, InputMode};
+use murmur::tray::TrayState;
 
 // ── Test Harness ──────────────────────────────────────────────────────
 
@@ -529,7 +529,7 @@ fn to_config_round_trips_state() {
 
 #[test]
 fn from_tray_action_all_variants() {
-    use open_bark::tray::TrayAction;
+    use murmur::tray::TrayAction;
 
     type ActionCheck = (TrayAction, fn(&AppMessage) -> bool);
     let cases: Vec<ActionCheck> = vec![
@@ -727,7 +727,7 @@ fn regression_stale_error_during_recording() {
 /// not the state machine. This test verifies postprocess::process works correctly.
 #[test]
 fn regression_spoken_punctuation_processes_all_types() {
-    use open_bark::postprocess;
+    use murmur::postprocess;
 
     let cases = [
         ("hello period", "."),

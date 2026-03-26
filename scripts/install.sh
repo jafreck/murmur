@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# open-bark install script
+# murmur install script
 #
 # Downloads a pre-built binary from GitHub releases, installs it, and
-# registers open-bark as a user-level service (launchd/systemd).
+# registers murmur as a user-level service (launchd/systemd).
 #
 # No build tools required — just curl.
 #
 # Usage:
-#   curl -sSf https://raw.githubusercontent.com/jacobfreck/open-bark/main/scripts/install.sh | bash
+#   curl -sSf https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.sh | bash
 #   # or from a local clone:
 #   ./scripts/install.sh
 #   # specific version:
@@ -16,9 +16,9 @@
 
 set -euo pipefail
 
-REPO="jacobfreck/open-bark"
+REPO="jacobfreck/murmur"
 INSTALL_DIR="/usr/local/bin"
-APP_NAME="open-bark"
+APP_NAME="murmur"
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 
@@ -106,13 +106,13 @@ detect_platform() {
     esac
 
     if [ "$PLATFORM" = "macos" ] && [ "$ARCH_LABEL" = "arm64" ]; then
-        ARTIFACT="open-bark-darwin-arm64"
+        ARTIFACT="murmur-darwin-arm64"
         GPU_LABEL="Metal"
     elif [ "$PLATFORM" = "macos" ]; then
-        ARTIFACT="open-bark-darwin-x86_64"
+        ARTIFACT="murmur-darwin-x86_64"
         GPU_LABEL="CPU"
     else
-        ARTIFACT="open-bark-linux-x86_64"
+        ARTIFACT="murmur-linux-x86_64"
         GPU_LABEL="CPU"
     fi
 }
@@ -163,9 +163,9 @@ setup_service() {
 
 setup_service_macos() {
     local plist_dir="$HOME/Library/LaunchAgents"
-    local plist="$plist_dir/com.jacobfreck.open-bark.plist"
+    local plist="$plist_dir/com.jacobfreck.murmur.plist"
     local bin="$INSTALL_DIR/$APP_NAME"
-    local log_dir="$HOME/Library/Logs/open-bark"
+    local log_dir="$HOME/Library/Logs/murmur"
 
     mkdir -p "$plist_dir" "$log_dir"
 
@@ -176,7 +176,7 @@ setup_service_macos() {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.jacobfreck.open-bark</string>
+    <string>com.jacobfreck.murmur</string>
     <key>ProgramArguments</key>
     <array>
         <string>${bin}</string>
@@ -199,20 +199,20 @@ setup_service_macos() {
 </plist>
 EOF
 
-    launchctl bootout "gui/$(id -u)/com.jacobfreck.open-bark" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)/com.jacobfreck.murmur" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$plist"
 }
 
 setup_service_linux() {
     local svc_dir="$HOME/.config/systemd/user"
-    local svc="$svc_dir/open-bark.service"
+    local svc="$svc_dir/murmur.service"
     local bin="$INSTALL_DIR/$APP_NAME"
 
     mkdir -p "$svc_dir"
 
     cat > "$svc" <<EOF
 [Unit]
-Description=open-bark voice dictation
+Description=murmur voice dictation
 After=graphical-session.target
 
 [Service]
@@ -227,7 +227,7 @@ WantedBy=default.target
 EOF
 
     systemctl --user daemon-reload
-    systemctl --user enable --now open-bark.service
+    systemctl --user enable --now murmur.service
 }
 
 # ── Output ───────────────────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ EOF
 print_banner() {
     echo ""
     printf "  ${CYAN}┌──────────────────────────────────────┐${RESET}\n"
-    printf "  ${CYAN}│${RESET}  ${BOLD}🐕 open-bark installer${RESET}               ${CYAN}│${RESET}\n"
+    printf "  ${CYAN}│${RESET}  ${BOLD}🐕 murmur installer${RESET}               ${CYAN}│${RESET}\n"
     printf "  ${CYAN}│${RESET}  ${DIM}Local voice dictation for everyone${RESET}   ${CYAN}│${RESET}\n"
     printf "  ${CYAN}└──────────────────────────────────────┘${RESET}\n"
     echo ""
@@ -245,7 +245,7 @@ print_summary() {
     echo ""
     printf "  ${CYAN}┌──────────────────────────────────────┐${RESET}\n"
     printf "  ${CYAN}│${RESET}                                      ${CYAN}│${RESET}\n"
-    printf "  ${CYAN}│${RESET}  ${GREEN}${BOLD}✔ open-bark installed successfully!${RESET}  ${CYAN}│${RESET}\n"
+    printf "  ${CYAN}│${RESET}  ${GREEN}${BOLD}✔ murmur installed successfully!${RESET}  ${CYAN}│${RESET}\n"
     printf "  ${CYAN}│${RESET}                                      ${CYAN}│${RESET}\n"
     printf "  ${CYAN}└──────────────────────────────────────┘${RESET}\n"
     echo ""
@@ -263,21 +263,21 @@ print_summary() {
         printf "     ${DIM}•${RESET} Microphone:    ${DIM}System Settings → Privacy → Microphone${RESET}\n"
         echo ""
         printf "  ${DIM}Manage service:${RESET}\n"
-        printf "     ${DIM}Stop:${RESET}    launchctl bootout gui/$(id -u)/com.jacobfreck.open-bark\n"
-        printf "     ${DIM}Restart:${RESET} launchctl kickstart -k gui/$(id -u)/com.jacobfreck.open-bark\n"
-        printf "     ${DIM}Logs:${RESET}    ~/Library/Logs/open-bark/\n"
+        printf "     ${DIM}Stop:${RESET}    launchctl bootout gui/$(id -u)/com.jacobfreck.murmur\n"
+        printf "     ${DIM}Restart:${RESET} launchctl kickstart -k gui/$(id -u)/com.jacobfreck.murmur\n"
+        printf "     ${DIM}Logs:${RESET}    ~/Library/Logs/murmur/\n"
     else
         printf "  ${YELLOW}⚠${RESET}  ${BOLD}Wayland users:${RESET} add yourself to the 'input' group:\n"
         printf "     sudo usermod -aG input \$USER\n"
         echo ""
         printf "  ${DIM}Manage service:${RESET}\n"
-        printf "     ${DIM}Status:${RESET}  systemctl --user status open-bark\n"
-        printf "     ${DIM}Logs:${RESET}    journalctl --user -u open-bark -f\n"
-        printf "     ${DIM}Restart:${RESET} systemctl --user restart open-bark\n"
+        printf "     ${DIM}Status:${RESET}  systemctl --user status murmur\n"
+        printf "     ${DIM}Logs:${RESET}    journalctl --user -u murmur -f\n"
+        printf "     ${DIM}Restart:${RESET} systemctl --user restart murmur\n"
     fi
 
     echo ""
-    printf "  ${DIM}Configure:${RESET} open-bark set-hotkey <key>\n"
+    printf "  ${DIM}Configure:${RESET} murmur set-hotkey <key>\n"
     printf "  ${DIM}Uninstall:${RESET} sudo rm %s/%s\n" "$INSTALL_DIR" "$APP_NAME"
     echo ""
 }

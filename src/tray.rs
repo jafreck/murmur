@@ -46,12 +46,12 @@ pub const TOP_LANGUAGES: &[&str] = &[
 /// Compute the tooltip and status label for a given TrayState.
 pub fn state_display(state: &TrayState) -> (&'static str, &'static str) {
     match state {
-        TrayState::Loading => ("open-bark — Loading model...", "open-bark: Loading model..."),
-        TrayState::Idle => ("open-bark — Idle", "open-bark: Idle"),
-        TrayState::Recording => ("open-bark — Recording...", "open-bark: Recording..."),
-        TrayState::Transcribing => ("open-bark — Transcribing...", "open-bark: Transcribing..."),
-        TrayState::Downloading => ("open-bark — Downloading model...", "open-bark: Downloading..."),
-        TrayState::Error => ("open-bark — Error", "open-bark: Error"),
+        TrayState::Loading => ("murmur — Loading model...", "murmur: Loading model..."),
+        TrayState::Idle => ("murmur — Idle", "murmur: Idle"),
+        TrayState::Recording => ("murmur — Recording...", "murmur: Recording..."),
+        TrayState::Transcribing => ("murmur — Transcribing...", "murmur: Transcribing..."),
+        TrayState::Downloading => ("murmur — Downloading model...", "murmur: Downloading..."),
+        TrayState::Error => ("murmur — Error", "murmur: Error"),
     }
 }
 
@@ -209,7 +209,7 @@ pub struct TrayController {
 
 impl TrayController {
     pub fn new(config: &Config) -> Result<Self> {
-        let status_item = MenuItem::new("open-bark: Idle", false, None);
+        let status_item = MenuItem::new("murmur: Idle", false, None);
         let hotkey_item = MenuItem::new(format!("Hotkey: {}", config.hotkey), false, None);
 
         let set_hotkey = MenuItem::new("Set Hotkey…", true, None);
@@ -315,7 +315,7 @@ impl TrayController {
 
         let tray = TrayIconBuilder::new()
             .with_icon(idle_icon.clone())
-            .with_tooltip("open-bark — Idle")
+            .with_tooltip("murmur — Idle")
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(true)
             .build()?;
@@ -475,8 +475,8 @@ mod tests {
             let (tooltip, label) = state_display(&state);
             assert!(!tooltip.is_empty());
             assert!(!label.is_empty());
-            assert!(tooltip.contains("open-bark"));
-            assert!(label.contains("open-bark"));
+            assert!(tooltip.contains("murmur"));
+            assert!(label.contains("murmur"));
         }
     }
 

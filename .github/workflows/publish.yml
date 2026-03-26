@@ -20,19 +20,19 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             features: metal
-            artifact: open-bark-darwin-arm64
+            artifact: murmur-darwin-arm64
           - target: x86_64-apple-darwin
             os: macos-13
             features: ""
-            artifact: open-bark-darwin-x86_64
+            artifact: murmur-darwin-x86_64
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             features: ""
-            artifact: open-bark-linux-x86_64
+            artifact: murmur-linux-x86_64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             features: ""
-            artifact: open-bark-windows-x86_64
+            artifact: murmur-windows-x86_64
     steps:
       - uses: actions/checkout@v4
 
@@ -55,14 +55,14 @@ jobs:
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          cp target/${{ matrix.target }}/release/open-bark ${{ matrix.artifact }}
+          cp target/${{ matrix.target }}/release/murmur ${{ matrix.artifact }}
           chmod +x ${{ matrix.artifact }}
           tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          copy target\${{ matrix.target }}\release\open-bark.exe ${{ matrix.artifact }}.exe
+          copy target\${{ matrix.target }}\release\murmur.exe ${{ matrix.artifact }}.exe
           Compress-Archive -Path ${{ matrix.artifact }}.exe -DestinationPath ${{ matrix.artifact }}.zip
 
       - name: Upload to release

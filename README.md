@@ -1,4 +1,4 @@
-# open-bark
+# murmur
 
 Cross-platform, local voice dictation. Hold a key, speak, release — your words appear at the cursor.
 
@@ -19,22 +19,22 @@ Pre-built binaries — no build tools required. macOS Apple Silicon builds inclu
 **macOS / Linux:**
 
 ```bash
-curl -sSf https://raw.githubusercontent.com/jacobfreck/open-bark/main/scripts/install.sh | bash
+curl -sSf https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/jacobfreck/open-bark/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.ps1 | iex
 ```
 
-The installer downloads the correct binary for your platform, installs it, and registers open-bark as a service that starts at login.
+The installer downloads the correct binary for your platform, installs it, and registers murmur as a service that starts at login.
 
 To install a specific version:
 
 ```bash
 # macOS / Linux
-OPEN_BARK_VERSION=v0.1.0 bash <(curl -sSf https://raw.githubusercontent.com/jacobfreck/open-bark/main/scripts/install.sh)
+OPEN_BARK_VERSION=v0.1.0 bash <(curl -sSf https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.sh)
 
 # Windows
 .\scripts\install.ps1 -Version v0.1.0
@@ -43,12 +43,12 @@ OPEN_BARK_VERSION=v0.1.0 bash <(curl -sSf https://raw.githubusercontent.com/jaco
 ### From source
 
 ```bash
-git clone https://github.com/jacobfreck/open-bark.git
-cd open-bark
+git clone https://github.com/jacobfreck/murmur.git
+cd murmur
 cargo build --release
 ```
 
-The binary is at `target/release/open-bark`.
+The binary is at `target/release/murmur`.
 
 #### GPU acceleration (optional)
 
@@ -66,31 +66,31 @@ cargo build --release --features vulkan
 ### From crates.io
 
 ```bash
-cargo install open-bark
+cargo install murmur
 ```
 
 ## Usage
 
 ```bash
 # Start the dictation daemon (system tray)
-open-bark start
+murmur start
 
 # Download a specific model
-open-bark download-model base.en
+murmur download-model base.en
 
 # Set the hotkey
-open-bark set-hotkey ctrl+shift+space
+murmur set-hotkey ctrl+shift+space
 
 # Show status
-open-bark status
+murmur status
 ```
 
 ## Configuration
 
 Edit the config file:
-- **macOS:** `~/Library/Application Support/open-bark/config.json`
-- **Windows:** `%APPDATA%\open-bark\config.json`
-- **Linux:** `~/.config/open-bark/config.json`
+- **macOS:** `~/Library/Application Support/murmur/config.json`
+- **Windows:** `%APPDATA%\murmur\config.json`
+- **Linux:** `~/.config/murmur/config.json`
 
 ```json
 {
@@ -116,7 +116,7 @@ Edit the config file:
 
 ## Privacy
 
-open-bark is completely local. Audio is recorded to a temp file, transcribed by whisper.cpp on your CPU/GPU, and the temp file is deleted. No network requests are made except to download the Whisper model on first run.
+murmur is completely local. Audio is recorded to a temp file, transcribed by whisper.cpp on your CPU/GPU, and the temp file is deleted. No network requests are made except to download the Whisper model on first run.
 
 ## Platform Notes
 

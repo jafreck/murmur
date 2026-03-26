@@ -176,7 +176,7 @@ pub fn run() -> Result<()> {
     let mut state = AppState::new(&config);
     let mut streaming_stop: Option<mpsc::Sender<()>> = None;
 
-    println!("open-bark v{VERSION}");
+    println!("murmur v{VERSION}");
     println!("Hotkey: {}", config.hotkey);
     println!("Model: {}", config.model_size);
     println!("Loading model in background...");

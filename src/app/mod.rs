@@ -8,6 +8,7 @@ pub use state::{AppEffect, AppMessage, AppState};
 use anyhow::Result;
 use log::{error, info};
 use std::collections::VecDeque;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -82,6 +83,7 @@ impl From<TrayAction> for AppMessage {
             TrayAction::ToggleTranslate => AppMessage::TrayToggleTranslate,
             TrayAction::OpenConfig => AppMessage::TrayOpenConfig,
             TrayAction::ReloadConfig => AppMessage::TrayReloadConfig,
+            TrayAction::SetHotkey => AppMessage::TraySetHotkey,
         }
     }
 }
@@ -123,13 +125,18 @@ pub fn run() -> Result<()> {
     let tx_up = tx.clone();
 
     let hotkey_config = hotkey::shared_hotkey(&parsed);
+    let capture_flag = Arc::new(AtomicBool::new(false));
 
     let hotkey_config_listener = hotkey_config.clone();
+    let capture_flag_listener = capture_flag.clone();
+    let tx_capture = tx.clone();
     std::thread::spawn(move || {
         if let Err(e) = HotkeyManager::start(
             hotkey_config_listener,
+            capture_flag_listener,
             move || { let _ = tx_down.send(AppMessage::KeyDown); },
             move || { let _ = tx_up.send(AppMessage::KeyUp); },
+            move |key| { let _ = tx_capture.send(AppMessage::HotkeyCapture(key)); },
         ) {
             error!("Hotkey listener failed: {e}");
         }
@@ -170,6 +177,7 @@ pub fn run() -> Result<()> {
                     tx: &tx,
                     streaming_stop: &mut streaming_stop,
                     hotkey_config: &hotkey_config,
+                    capture_flag: &capture_flag,
                 })?;
                 effects.extend(extra);
                 if quit {

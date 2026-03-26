@@ -29,6 +29,7 @@ pub enum TrayAction {
     SetMode(InputMode),
     ToggleStreaming,
     ToggleTranslate,
+    SetHotkey,
     OpenConfig,
     ReloadConfig,
     Quit,
@@ -65,6 +66,7 @@ pub struct MenuActionIds {
     pub spoken_punct: MenuId,
     pub streaming: MenuId,
     pub translate: MenuId,
+    pub set_hotkey: MenuId,
 }
 
 /// Menu event matching engine. Maps MenuId → TrayAction.
@@ -76,6 +78,7 @@ pub struct MenuActionMap {
     spoken_punct_id: MenuId,
     streaming_id: MenuId,
     translate_id: MenuId,
+    set_hotkey_id: MenuId,
     model_ids: Vec<(MenuId, String)>,
     language_ids: Vec<(MenuId, String)>,
     mode_ids: Vec<(MenuId, InputMode)>,
@@ -96,6 +99,7 @@ impl MenuActionMap {
             spoken_punct_id: ids.spoken_punct,
             streaming_id: ids.streaming,
             translate_id: ids.translate,
+            set_hotkey_id: ids.set_hotkey,
             model_ids, language_ids, mode_ids,
         }
     }
@@ -108,6 +112,7 @@ impl MenuActionMap {
         if event_id == &self.spoken_punct_id { return Some(TrayAction::ToggleSpokenPunctuation); }
         if event_id == &self.streaming_id { return Some(TrayAction::ToggleStreaming); }
         if event_id == &self.translate_id { return Some(TrayAction::ToggleTranslate); }
+        if event_id == &self.set_hotkey_id { return Some(TrayAction::SetHotkey); }
 
         for (id, size) in &self.model_ids {
             if event_id == id { return Some(TrayAction::SetModel(size.clone())); }
@@ -203,6 +208,9 @@ impl TrayController {
         let status_item = MenuItem::new("open-bark: Idle", false, None);
         let hotkey_item = MenuItem::new(format!("Hotkey: {}", config.hotkey), false, None);
 
+        let set_hotkey = MenuItem::new("Set Hotkey…", true, None);
+        let set_hotkey_id = set_hotkey.id().clone();
+
         let copy_last = MenuItem::new("Copy Last Dictation", true, None);
         let copy_last_id = copy_last.id().clone();
 
@@ -270,6 +278,7 @@ impl TrayController {
         menu.append(&model_submenu)?;
         menu.append(&lang_submenu)?;
         menu.append(&hotkey_item)?;
+        menu.append(&set_hotkey)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&spoken_punct_item)?;
         menu.append(&mode_submenu)?;
@@ -290,6 +299,7 @@ impl TrayController {
                 spoken_punct: spoken_punct_id,
                 streaming: streaming_id,
                 translate: translate_id,
+                set_hotkey: set_hotkey_id,
             },
             model_ids, language_ids, mode_ids,
         );
@@ -346,6 +356,10 @@ impl TrayController {
     #[allow(dead_code)]
     pub fn set_hotkey(&mut self, hotkey: &str) {
         self.hotkey_item.set_text(format!("Hotkey: {hotkey}"));
+    }
+
+    pub fn set_status(&mut self, text: &str) {
+        self.status_item.set_text(text);
     }
 
     pub fn match_menu_event(&self, event: &MenuEvent) -> Option<TrayAction> {
@@ -483,6 +497,7 @@ mod tests {
             spoken_punct: MenuId::new("sp"),
             streaming: MenuId::new("st"),
             translate: MenuId::new("tr"),
+            set_hotkey: MenuId::new("sh"),
         }
     }
 
@@ -565,6 +580,16 @@ mod tests {
             vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ToggleTranslate));
+    }
+
+    #[test]
+    fn menu_action_map_matches_set_hotkey() {
+        let id = MenuId::new("sh2");
+        let map = MenuActionMap::new(
+            MenuActionIds { set_hotkey: id.clone(), ..default_ids() },
+            vec![], vec![], vec![],
+        );
+        assert_eq!(map.match_event(&id), Some(TrayAction::SetHotkey));
     }
 
     #[test]

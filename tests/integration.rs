@@ -540,6 +540,9 @@ fn from_tray_action_all_variants() {
         (TrayAction::ReloadConfig, |m| {
             matches!(m, AppMessage::TrayReloadConfig)
         }),
+        (TrayAction::SetHotkey, |m| {
+            matches!(m, AppMessage::TraySetHotkey)
+        }),
     ];
 
     for (action, check) in cases {
@@ -681,4 +684,32 @@ fn regression_rapid_model_changes_generation_counter() {
         last_gen = h.state.reload_generation;
     }
     assert_eq!(last_gen, 5);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Hotkey capture scenarios
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn hotkey_capture_full_cycle() {
+    let mut h = Harness::new();
+
+    // Enter capture mode
+    let fx = h.send(AppMessage::TraySetHotkey);
+    assert!(h.state.capturing_hotkey);
+    assert!(fx.iter().any(|e| matches!(e, AppEffect::EnterHotkeyCaptureMode)));
+
+    // Key events are ignored during capture
+    let fx = h.send(AppMessage::KeyDown);
+    assert_eq!(fx, vec![AppEffect::None]);
+
+    // Capture a key
+    let fx = h.send(AppMessage::HotkeyCapture(rdev::Key::F5));
+    assert!(!h.state.capturing_hotkey);
+    assert!(fx.iter().any(|e| matches!(e, AppEffect::SetHotkey(k) if k == "f5")));
+    assert!(fx.iter().any(|e| matches!(e, AppEffect::SaveConfig)));
+
+    // Normal operation resumes
+    let fx = h.send(AppMessage::KeyDown);
+    assert!(has_start_recording(&fx));
 }

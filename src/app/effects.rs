@@ -5,14 +5,14 @@ use std::sync::Arc;
 
 use crate::audio::AudioRecorder;
 use crate::config::Config;
-use crate::hotkey::SharedHotkeyConfig;
+use crate::hotkey::{CaptureFlag, SharedHotkeyConfig};
 use crate::inserter::TextInserter;
 use crate::model;
 use crate::postprocess;
 use crate::recordings::RecordingStore;
 use crate::streaming;
 use crate::transcriber::Transcriber;
-use crate::tray::TrayController;
+use crate::tray::{TrayController, TrayState};
 
 use super::{AppEffect, AppMessage, AppState};
 
@@ -25,6 +25,7 @@ pub struct EffectContext<'a> {
     pub tx: &'a mpsc::Sender<AppMessage>,
     pub streaming_stop: &'a mut Option<mpsc::Sender<()>>,
     pub hotkey_config: &'a SharedHotkeyConfig,
+    pub capture_flag: &'a CaptureFlag,
 }
 
 /// Apply a single effect, returning (should_quit, extra_effects).
@@ -98,6 +99,24 @@ pub fn apply_effect(
         }
         AppEffect::ReloadTranscriber(generation) => {
             reload_transcriber(ctx, generation);
+        }
+        AppEffect::EnterHotkeyCaptureMode => {
+            ctx.capture_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            ctx.tray.set_status("Press a key...");
+            info!("Hotkey capture mode: press any key");
+        }
+        AppEffect::SetHotkey(key_name) => {
+            if let Some(parsed) = crate::keycodes::parse(&key_name) {
+                if let Ok(mut hk) = ctx.hotkey_config.lock() {
+                    *hk = (parsed.key, parsed.modifiers.into_iter().collect());
+                }
+                ctx.config.hotkey = key_name.clone();
+                ctx.tray.set_hotkey(&key_name);
+                info!("Hotkey set to: {key_name}");
+            } else {
+                error!("Invalid captured key: {key_name}");
+            }
+            ctx.tray.set_state(TrayState::Idle);
         }
         AppEffect::Quit => {
             info!("Quit requested via tray");

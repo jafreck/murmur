@@ -1,6 +1,7 @@
 use crate::config::{Config, InputMode};
 use crate::recordings::RecordingStore;
 use crate::tray::TrayState;
+use rdev::Key;
 
 #[cfg(test)]
 use crate::tray::TrayAction;
@@ -20,6 +21,8 @@ pub enum AppMessage {
     TrayToggleTranslate,
     TrayOpenConfig,
     TrayReloadConfig,
+    TraySetHotkey,
+    HotkeyCapture(Key),
     TranscriptionDone(String),
     TranscriptionError(String),
     StreamingPartialText(String),
@@ -51,6 +54,10 @@ pub enum AppEffect {
     SetTrayMode(InputMode),
     /// Download the model if needed and rebuild the Transcriber in a background thread.
     ReloadTranscriber(u64),
+    /// Enter hotkey capture mode — the listener should capture the next key press.
+    EnterHotkeyCaptureMode,
+    /// Save the captured hotkey and update the listener.
+    SetHotkey(String),
     Quit,
     LogError(String),
 }
@@ -74,6 +81,8 @@ pub struct AppState {
     /// Used to discard stale transcriber loads when the user changes
     /// model/language multiple times quickly.
     pub reload_generation: u64,
+    /// True while waiting for the user to press a key to set as the new hotkey.
+    pub capturing_hotkey: bool,
 }
 
 impl AppState {
@@ -90,6 +99,7 @@ impl AppState {
             language: config.language.clone(),
             streaming_active: false,
             reload_generation: 0,
+            capturing_hotkey: false,
         }
     }
 
@@ -103,6 +113,8 @@ impl AppState {
 
     pub fn handle_message(&mut self, msg: &AppMessage) -> Vec<AppEffect> {
         match msg {
+            AppMessage::KeyDown if self.capturing_hotkey => vec![AppEffect::None],
+            AppMessage::KeyUp if self.capturing_hotkey => vec![AppEffect::None],
             AppMessage::KeyDown => self.on_key_down(),
             AppMessage::KeyUp => self.on_key_up(),
             AppMessage::TranscriptionDone(text) => self.on_transcription_done(text),
@@ -117,6 +129,8 @@ impl AppState {
             AppMessage::TrayToggleTranslate => self.on_toggle_translate(),
             AppMessage::TrayOpenConfig => vec![AppEffect::OpenConfig],
             AppMessage::TrayReloadConfig => vec![AppEffect::ReloadConfig],
+            AppMessage::TraySetHotkey => self.on_tray_set_hotkey(),
+            AppMessage::HotkeyCapture(key) => self.on_hotkey_capture(key),
             // TranscriberReady is handled directly in the run() loop before
             // reaching handle_message, but we need an arm for exhaustiveness.
             AppMessage::TranscriberReady(_, _) => vec![AppEffect::None],
@@ -249,6 +263,17 @@ impl AppState {
         vec![AppEffect::SaveConfig]
     }
 
+    fn on_tray_set_hotkey(&mut self) -> Vec<AppEffect> {
+        self.capturing_hotkey = true;
+        vec![AppEffect::EnterHotkeyCaptureMode, AppEffect::SetTrayState(TrayState::Idle)]
+    }
+
+    fn on_hotkey_capture(&mut self, key: &Key) -> Vec<AppEffect> {
+        self.capturing_hotkey = false;
+        let key_name = crate::keycodes::key_to_name(key);
+        vec![AppEffect::SetHotkey(key_name), AppEffect::SaveConfig]
+    }
+
     pub fn to_config(&self, base: &Config) -> Config {
         Config {
             hotkey: base.hotkey.clone(),
@@ -280,6 +305,7 @@ mod tests {
             language: "en".to_string(),
             streaming_active: false,
             reload_generation: 0,
+            capturing_hotkey: false,
         }
     }
 
@@ -673,5 +699,47 @@ mod tests {
             AppMessage::TrayReloadConfig => {}
             _ => panic!("expected TrayReloadConfig"),
         }
+    }
+
+    #[test]
+    fn from_tray_action_set_hotkey() {
+        match AppMessage::from(TrayAction::SetHotkey) {
+            AppMessage::TraySetHotkey => {}
+            _ => panic!("expected TraySetHotkey"),
+        }
+    }
+
+    #[test]
+    fn tray_set_hotkey_enters_capture_mode() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::TraySetHotkey);
+        assert!(state.capturing_hotkey);
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::EnterHotkeyCaptureMode)));
+    }
+
+    #[test]
+    fn hotkey_capture_sets_hotkey() {
+        let mut state = default_state();
+        state.capturing_hotkey = true;
+        let effects = state.handle_message(&AppMessage::HotkeyCapture(rdev::Key::F5));
+        assert!(!state.capturing_hotkey);
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetHotkey(k) if k == "f5")));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::SaveConfig)));
+    }
+
+    #[test]
+    fn key_down_ignored_during_capture() {
+        let mut state = default_state();
+        state.capturing_hotkey = true;
+        let effects = state.handle_message(&AppMessage::KeyDown);
+        assert_eq!(effects, vec![AppEffect::None]);
+    }
+
+    #[test]
+    fn key_up_ignored_during_capture() {
+        let mut state = default_state();
+        state.capturing_hotkey = true;
+        let effects = state.handle_message(&AppMessage::KeyUp);
+        assert_eq!(effects, vec![AppEffect::None]);
     }
 }

@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use log::error;
 use rdev::{listen, Event, EventType, Key};
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub struct ParsedHotkey {
@@ -12,6 +13,9 @@ pub struct ParsedHotkey {
 /// Shared hotkey configuration that can be updated at runtime.
 /// The listener thread reads from this on every key event.
 pub type SharedHotkeyConfig = Arc<Mutex<(Key, HashSet<Key>)>>;
+
+/// Shared flag to enter hotkey capture mode.
+pub type CaptureFlag = Arc<AtomicBool>;
 
 /// Create a shared hotkey config from a parsed hotkey.
 pub fn shared_hotkey(parsed: &ParsedHotkey) -> SharedHotkeyConfig {
@@ -58,14 +62,28 @@ impl HotkeyManager {
     ///
     /// The hotkey is read dynamically from `hotkey_config` on every key event,
     /// allowing it to be updated at runtime via `ReloadConfig`.
+    ///
+    /// When `capture_flag` is set, the next key press is captured via `on_capture`
+    /// instead of being matched against the hotkey.
     pub fn start(
         hotkey_config: SharedHotkeyConfig,
+        capture_flag: CaptureFlag,
         on_key_down: impl Fn() + Send + 'static,
         on_key_up: impl Fn() + Send + 'static,
+        on_capture: impl Fn(Key) + Send + 'static,
     ) -> Result<()> {
         let held_modifiers: Mutex<HashSet<Key>> = Mutex::new(HashSet::new());
 
         listen(move |event: Event| {
+            // Capture mode: intercept the next key press as the new hotkey
+            if capture_flag.load(Ordering::Relaxed) {
+                if let EventType::KeyPress(key) = event.event_type {
+                    capture_flag.store(false, Ordering::Relaxed);
+                    on_capture(key);
+                }
+                return;
+            }
+
             // Read the current hotkey config on each event
             let (target_key, required) = match hotkey_config.lock() {
                 Ok(cfg) => cfg.clone(),

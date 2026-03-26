@@ -2,7 +2,7 @@
 
 # murmur
 
-Cross-platform, local voice dictation. Hold a key, speak, release — your words appear at the cursor.
+Cross-platform, local voice dictation. Hold a key, speak, release — worry free speech to text.
 
 [![CI](https://github.com/jafreck/murmur/actions/workflows/ci.yml/badge.svg)](https://github.com/jafreck/murmur/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

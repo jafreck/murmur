@@ -97,7 +97,7 @@ fn uuid_short() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    format!("{:08x}", (ts as u64).wrapping_add(count) as u32)
+    format!("{:016x}", (ts as u64).wrapping_add(count))
 }
 
 #[cfg(test)]
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn test_uuid_short() {
         let id = uuid_short();
-        assert_eq!(id.len(), 8);
+        assert_eq!(id.len(), 16);
     }
 
     #[test]

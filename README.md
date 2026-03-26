@@ -16,7 +16,7 @@ Cross-platform, local voice dictation. Hold a key, speak, release — your words
 
 ## How It Works
 
-1. Hold the hotkey (default: `Ctrl+Shift+Space` on Windows/Linux, `Globe` on macOS)
+1. Hold the hotkey (default: `Right Option` on macOS, `Right Alt` on Windows/Linux)
 2. Speak naturally
 3. Release — transcribed text is pasted at your cursor
 
@@ -121,6 +121,8 @@ Edit the config file:
 ```
 
 ### Models
+
+murmur uses [OpenAI Whisper](https://github.com/openai/whisper) models running locally via [whisper.cpp](https://github.com/ggml-org/whisper.cpp). Models are downloaded in GGML format on first run.
 
 | Model | Size | Speed | Accuracy | Best for |
 |---|---|---|---|---|

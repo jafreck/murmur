@@ -1,10 +1,12 @@
-//! Chunked streaming transcription.
+//! Growing-window streaming transcription.
 //!
-//! While the user holds the toggle key, audio is recorded continuously.
-//! This module periodically grabs overlapping chunks from the in-memory
-//! sample buffer, transcribes each chunk, and stitches partial results
-//! together using longest-common-subsequence (LCS) deduplication on the
-//! overlap region.
+//! While the user holds the hotkey, audio is recorded continuously.
+//! This module periodically transcribes a growing window of audio
+//! (from the start up to the current position), diffs against what
+//! was already emitted, and sends only new words incrementally.
+//!
+//! Once the window exceeds MAX_WINDOW_SECS, the start anchor slides
+//! forward to keep Whisper's input under its 30s native limit.
 
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -14,13 +16,14 @@ use crate::transcriber::Transcriber;
 
 // ── Configuration ──────────────────────────────────────────────────────
 
-/// Duration of each chunk sent to Whisper, in seconds.
-const CHUNK_DURATION_SECS: f32 = 5.0;
-/// How much overlap between consecutive chunks, in seconds.
-const OVERLAP_DURATION_SECS: f32 = 2.0;
-/// Minimum interval between chunk transcriptions, in milliseconds.
-const POLL_INTERVAL_MS: u64 = 500;
-/// RMS threshold below which a chunk is considered silence and skipped.
+/// Minimum new audio (seconds) before re-transcribing.
+const MIN_NEW_AUDIO_SECS: f32 = 1.0;
+/// Minimum interval between transcription attempts, in milliseconds.
+const POLL_INTERVAL_MS: u64 = 300;
+/// Maximum window size sent to Whisper, in seconds.
+/// Whisper natively handles up to 30s; leave headroom.
+const MAX_WINDOW_SECS: f32 = 28.0;
+/// RMS threshold below which audio is considered silence.
 const SILENCE_RMS_THRESHOLD: f32 = 0.005;
 
 // ── Public API ─────────────────────────────────────────────────────────
@@ -70,69 +73,78 @@ fn streaming_loop(
     tx: mpsc::Sender<StreamingEvent>,
     stop_rx: mpsc::Receiver<()>,
 ) {
-    let chunk_samples = (CHUNK_DURATION_SECS * TARGET_RATE as f32) as usize;
-    let overlap_samples = (OVERLAP_DURATION_SECS * TARGET_RATE as f32) as usize;
-    let step_samples = chunk_samples - overlap_samples;
+    let min_new_samples = (MIN_NEW_AUDIO_SECS * TARGET_RATE as f32) as usize;
+    let max_window_samples = (MAX_WINDOW_SECS * TARGET_RATE as f32) as usize;
 
-    // Position in the sample buffer where the next chunk starts.
-    let mut cursor: usize = 0;
-    // Accumulated words from all previous chunks (the "committed" output).
-    let mut committed_words: Vec<String> = Vec::new();
+    // Anchor: start of the window in the sample buffer.
+    // Slides forward only when the window would exceed MAX_WINDOW_SECS.
+    let mut anchor: usize = 0;
+    // Number of samples that have been transcribed (relative to buffer start).
+    let mut last_transcribed: usize = 0;
+    // Words already emitted to the user.
+    let mut emitted_words: Vec<String> = Vec::new();
 
     loop {
-        // Check for stop signal (non-blocking).
-        // Breaks on both explicit message and sender being dropped.
         match stop_rx.try_recv() {
             Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
             Err(mpsc::TryRecvError::Empty) => {}
         }
 
-        // How many samples are available?
         let total_samples = sample_buffer
             .lock()
             .map(|b| b.len())
             .unwrap_or(0);
 
-        // Wait until we have at least one full chunk from the current cursor.
-        if total_samples < cursor + chunk_samples {
+        // Wait until enough new audio has accumulated.
+        if total_samples < last_transcribed + min_new_samples {
             std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
             continue;
         }
 
-        // Extract the chunk.
-        let chunk: Vec<f32> = {
+        // Slide the anchor forward if the window is too large.
+        let window_len = total_samples - anchor;
+        if window_len > max_window_samples {
+            anchor = total_samples - max_window_samples;
+        }
+
+        // Extract the window from anchor to current end.
+        let window: Vec<f32> = {
             let buf = sample_buffer.lock().unwrap();
-            buf[cursor..cursor + chunk_samples].to_vec()
+            buf[anchor..total_samples].to_vec()
         };
 
-        // Skip silent chunks.
-        if is_silent(&chunk) {
-            cursor += step_samples;
+        if is_silent(&window) {
+            last_transcribed = total_samples;
+            std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
             continue;
         }
 
-        // Transcribe the chunk (this is the expensive part).
-        let chunk_text = match transcriber.transcribe_samples(&chunk, translate) {
+        // Transcribe the entire window.
+        let full_text = match transcriber.transcribe_samples(&window, translate) {
             Ok(t) => t,
             Err(e) => {
-                log::error!("Streaming chunk transcription failed: {e}");
-                cursor += step_samples;
+                log::error!("Streaming transcription failed: {e}");
+                last_transcribed = total_samples;
                 continue;
             }
         };
 
-        if chunk_text.is_empty() {
-            cursor += step_samples;
+        last_transcribed = total_samples;
+
+        if full_text.is_empty() {
             continue;
         }
 
-        let chunk_words = split_words(&chunk_text);
+        let all_words = split_words(&full_text);
 
-        // Stitch: find where committed output overlaps with this chunk's words,
-        // then emit only the new (non-overlapping) portion.
-        let new_words = stitch(&committed_words, &chunk_words);
+        // Diff: find words beyond what we've already emitted.
+        // Since we're re-transcribing the same growing audio, the
+        // emitted words should be a prefix of all_words (or close to it).
+        let new_start = find_emit_boundary(&emitted_words, &all_words);
 
-        if !new_words.is_empty() {
+        if new_start < all_words.len() {
+            let new_words: Vec<String> = all_words[new_start..].to_vec();
+
             let new_text = if spoken_punctuation {
                 crate::postprocess::process(&new_words.join(" "))
             } else {
@@ -140,14 +152,40 @@ fn streaming_loop(
             };
 
             if !new_text.is_empty() {
-                committed_words.extend(new_words);
+                emitted_words = all_words;
                 let _ = tx.send(StreamingEvent::PartialText(new_text));
             }
         }
-
-        // Advance cursor by the non-overlapping step.
-        cursor += step_samples;
     }
+}
+
+/// Find the index in `all_words` where new (un-emitted) content starts.
+///
+/// Compares emitted words against the beginning of all_words using
+/// punctuation-insensitive matching to handle Whisper's nondeterministic
+/// punctuation. Returns the index of the first new word.
+fn find_emit_boundary(emitted: &[String], all_words: &[String]) -> usize {
+    if emitted.is_empty() {
+        return 0;
+    }
+
+    // Walk through emitted and all_words in parallel, matching with
+    // punctuation tolerance. If they diverge, the emitted prefix has
+    // been revised by Whisper — anchor from the best match point.
+    let mut matched = 0;
+    for (e, a) in emitted.iter().zip(all_words.iter()) {
+        if normalize_for_match(e).eq_ignore_ascii_case(normalize_for_match(a)) {
+            matched += 1;
+        } else {
+            break;
+        }
+    }
+
+    // If we matched all emitted words, new content starts after them.
+    // If we matched fewer (Whisper revised earlier words), be conservative
+    // and don't re-emit — just skip to after the emitted count to avoid
+    // duplication. The revised words are already on screen.
+    emitted.len().min(all_words.len()).max(matched)
 }
 
 // ── Stitching ──────────────────────────────────────────────────────────
@@ -352,9 +390,9 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        const { assert!(CHUNK_DURATION_SECS > 0.0) };
-        const { assert!(OVERLAP_DURATION_SECS > 0.0) };
-        const { assert!(OVERLAP_DURATION_SECS < CHUNK_DURATION_SECS) };
+        const { assert!(MIN_NEW_AUDIO_SECS > 0.0) };
+        const { assert!(MAX_WINDOW_SECS > 0.0) };
+        const { assert!(MAX_WINDOW_SECS <= 30.0) };
         const { assert!(POLL_INTERVAL_MS > 0) };
         const { assert!(SILENCE_RMS_THRESHOLD > 0.0) };
         assert_eq!(TARGET_RATE, 16_000);
@@ -433,5 +471,54 @@ mod tests {
         assert_eq!(normalize_for_match("hello,"), "hello");
         assert_eq!(normalize_for_match("\"hello\""), "hello");
         assert_eq!(normalize_for_match("..."), "");
+    }
+
+    // ── find_emit_boundary tests ──────────────────────────────────────
+
+    #[test]
+    fn test_find_emit_boundary_empty_emitted() {
+        let all: Vec<String> = vec!["hello".into(), "world".into()];
+        assert_eq!(find_emit_boundary(&[], &all), 0);
+    }
+
+    #[test]
+    fn test_find_emit_boundary_exact_prefix() {
+        let emitted: Vec<String> = vec!["hello".into(), "world".into()];
+        let all: Vec<String> = vec!["hello".into(), "world".into(), "foo".into()];
+        assert_eq!(find_emit_boundary(&emitted, &all), 2);
+    }
+
+    #[test]
+    fn test_find_emit_boundary_no_new_words() {
+        let emitted: Vec<String> = vec!["hello".into(), "world".into()];
+        let all: Vec<String> = vec!["hello".into(), "world".into()];
+        assert_eq!(find_emit_boundary(&emitted, &all), 2);
+    }
+
+    #[test]
+    fn test_find_emit_boundary_punctuation_tolerance() {
+        let emitted: Vec<String> = vec!["hello".into(), "world.".into()];
+        let all: Vec<String> = vec!["hello".into(), "world".into(), "foo".into()];
+        assert_eq!(find_emit_boundary(&emitted, &all), 2);
+    }
+
+    #[test]
+    fn test_find_emit_boundary_whisper_revision() {
+        // Whisper revised an earlier word — don't re-emit
+        let emitted: Vec<String> = vec!["hello".into(), "world".into()];
+        let all: Vec<String> = vec!["hello".into(), "word".into(), "foo".into()];
+        // Diverges at index 1, but emitted has 2 words — skip to 2
+        assert_eq!(find_emit_boundary(&emitted, &all), 2);
+    }
+
+    #[test]
+    fn test_find_emit_boundary_growing_window() {
+        // Simulate growing window: first call emits 3 words, second call has 5
+        let emitted: Vec<String> = vec!["the".into(), "quick".into(), "brown".into()];
+        let all: Vec<String> = vec![
+            "the".into(), "quick".into(), "brown".into(),
+            "fox".into(), "jumps".into(),
+        ];
+        assert_eq!(find_emit_boundary(&emitted, &all), 3);
     }
 }

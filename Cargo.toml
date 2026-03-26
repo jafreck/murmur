@@ -1,6 +1,6 @@
 [package]
 name = "murmur"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Cross-platform, local voice dictation. Worry free speech to text. Powered by whisper.cpp, runs 100% on-device."
 license = "MIT"

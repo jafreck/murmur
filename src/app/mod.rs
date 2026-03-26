@@ -91,21 +91,6 @@ impl From<TrayAction> for AppMessage {
 pub fn run() -> Result<()> {
     let mut config = Config::load();
 
-    // Ensure model is available
-    if !crate::transcriber::model_exists(&config.model_size) {
-        info!("Downloading {} model...", config.model_size);
-        let model_size = config.model_size.clone();
-        crate::model::download(&model_size, |percent| {
-            eprint!("\rDownloading {model_size} model... {percent:.0}%");
-        })?;
-        eprintln!();
-    }
-
-    let model_path = crate::transcriber::find_model(&config.model_size)
-        .ok_or_else(|| anyhow::anyhow!("Model '{}' not found after download", config.model_size))?;
-
-    let mut transcriber = Arc::new(Transcriber::new(&model_path, &config.language)?);
-
     info!("Hotkey: {}", config.hotkey);
     info!("Model: {}", config.model_size);
 
@@ -119,6 +104,7 @@ pub fn run() -> Result<()> {
     init_macos_app();
 
     let mut tray = TrayController::new(&config)?;
+    tray.set_state(crate::tray::TrayState::Loading);
 
     let (tx, rx) = mpsc::channel::<AppMessage>();
     let tx_down = tx.clone();
@@ -142,6 +128,50 @@ pub fn run() -> Result<()> {
         }
     });
 
+    // Load the model on a background thread so the tray appears immediately.
+    let mut transcriber: Option<Arc<Transcriber>> = None;
+    {
+        let model_size = config.model_size.clone();
+        let language = config.language.clone();
+        let tx_load = tx.clone();
+        std::thread::spawn(move || {
+            if !crate::transcriber::model_exists(&model_size) {
+                info!("Downloading {model_size} model...");
+                if let Err(e) = crate::model::download(&model_size, |percent| {
+                    eprint!("\rDownloading {model_size} model... {percent:.0}%");
+                }) {
+                    error!("Failed to download model '{model_size}': {e}");
+                    let _ = tx_load.send(AppMessage::TranscriptionError(
+                        format!("Failed to download model '{model_size}': {e}"),
+                    ));
+                    return;
+                }
+                eprintln!();
+            }
+
+            let Some(model_path) = crate::transcriber::find_model(&model_size) else {
+                error!("Model '{model_size}' not found after download");
+                let _ = tx_load.send(AppMessage::TranscriptionError(
+                    format!("Model '{model_size}' not found after download"),
+                ));
+                return;
+            };
+
+            match Transcriber::new(&model_path, &language) {
+                Ok(t) => {
+                    info!("Model '{model_size}' loaded");
+                    let _ = tx_load.send(AppMessage::TranscriberReady(Arc::new(t), 0));
+                }
+                Err(e) => {
+                    error!("Failed to load model '{model_size}': {e}");
+                    let _ = tx_load.send(AppMessage::TranscriptionError(
+                        format!("Failed to load model '{model_size}': {e}"),
+                    ));
+                }
+            }
+        });
+    }
+
     let mut recorder = AudioRecorder::new();
     let mut state = AppState::new(&config);
     let mut streaming_stop: Option<mpsc::Sender<()>> = None;
@@ -149,7 +179,7 @@ pub fn run() -> Result<()> {
     println!("open-bark v{VERSION}");
     println!("Hotkey: {}", config.hotkey);
     println!("Model: {}", config.model_size);
-    println!("Ready.");
+    println!("Loading model in background...");
 
     loop {
         let mut should_quit = false;
@@ -159,8 +189,12 @@ pub fn run() -> Result<()> {
             // so handle it directly instead of going through the state machine.
             if let AppMessage::TranscriberReady(new_t, generation) = msg {
                 if generation == state.reload_generation {
-                    transcriber = new_t;
-                    info!("Transcriber reloaded with new model");
+                    transcriber = Some(new_t);
+                    tray.set_state(crate::tray::TrayState::Idle);
+                    info!("Transcriber ready");
+                    if generation == 0 {
+                        println!("Ready.");
+                    }
                 } else {
                     info!("Discarding stale transcriber reload (gen {generation}, current {})", state.reload_generation);
                 }

@@ -72,23 +72,23 @@ impl HotkeyManager {
                 Err(_) => return,
             };
 
+            let modifiers_satisfied = || -> bool {
+                if required.is_empty() {
+                    return true;
+                }
+                held_modifiers
+                    .lock()
+                    .map(|held| required.is_subset(&held))
+                    .unwrap_or(false)
+            };
+
             match event.event_type {
                 EventType::KeyPress(key) if is_modifier(&key) => {
                     if let Ok(mut held) = held_modifiers.lock() {
                         held.insert(key);
                     }
-                    // If the modifier itself is the hotkey, fire on_key_down
-                    if key == target_key {
-                        let mods_ok = if required.is_empty() {
-                            true
-                        } else if let Ok(held) = held_modifiers.lock() {
-                            required.is_subset(&held)
-                        } else {
-                            false
-                        };
-                        if mods_ok {
-                            on_key_down();
-                        }
+                    if key == target_key && modifiers_satisfied() {
+                        on_key_down();
                     }
                 }
                 EventType::KeyRelease(key) if is_modifier(&key) => {
@@ -100,14 +100,7 @@ impl HotkeyManager {
                     }
                 }
                 EventType::KeyPress(key) if key == target_key => {
-                    let mods_ok = if required.is_empty() {
-                        true
-                    } else if let Ok(held) = held_modifiers.lock() {
-                        required.is_subset(&held)
-                    } else {
-                        false
-                    };
-                    if mods_ok {
+                    if modifiers_satisfied() {
                         on_key_down();
                     }
                 }

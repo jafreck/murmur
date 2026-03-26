@@ -125,14 +125,51 @@ impl MenuActionMap {
     }
 }
 
-/// A model radio item.
-struct ModelEntry { size: String, item: CheckMenuItem }
+/// A radio-style menu entry that tracks its value alongside a CheckMenuItem.
+struct RadioEntry<T> {
+    value: T,
+    item: CheckMenuItem,
+}
 
-/// A language radio item.
-struct LanguageEntry { code: String, item: CheckMenuItem }
+impl<T> RadioEntry<T> {
+    fn new(value: T, label: &str, checked: bool) -> Self {
+        let item = CheckMenuItem::new(radio_label(label, checked), true, checked, None);
+        Self { value, item }
+    }
+}
 
-/// A mode radio item.
-struct ModeEntry { mode: InputMode, item: CheckMenuItem }
+/// Build a submenu of radio-style CheckMenuItems, returning the entries and
+/// their (MenuId, value) pairs for the action map.
+fn build_radio_submenu<T: Clone>(
+    submenu: &Submenu,
+    items: &[(&str, T)],
+    is_selected: impl Fn(&T) -> bool,
+) -> Result<(Vec<RadioEntry<T>>, Vec<(MenuId, T)>)> {
+    let mut entries = Vec::new();
+    let mut ids = Vec::new();
+    for (label, value) in items {
+        let checked = is_selected(value);
+        let entry = RadioEntry::new(value.clone(), label, checked);
+        let id = entry.item.id().clone();
+        submenu.append(&entry.item)?;
+        ids.push((id, value.clone()));
+        entries.push(entry);
+    }
+    Ok((entries, ids))
+}
+
+/// Update radio-style entries so exactly one is selected.
+fn update_radio_entries<T: PartialEq>(
+    entries: &[RadioEntry<T>],
+    selected: &T,
+    display_name: impl Fn(&T) -> String,
+) {
+    for entry in entries {
+        let is_selected = entry.value == *selected;
+        entry.item.set_checked(is_selected);
+        entry.item.set_text(radio_label(&display_name(&entry.value), is_selected));
+    }
+}
 
 /// Manages the system tray icon and context menu.
 pub struct TrayController {
@@ -140,9 +177,9 @@ pub struct TrayController {
     pub state: TrayState,
     action_map: MenuActionMap,
 
-    model_entries: Vec<ModelEntry>,
-    language_entries: Vec<LanguageEntry>,
-    mode_entries: Vec<ModeEntry>,
+    model_entries: Vec<RadioEntry<String>>,
+    language_entries: Vec<RadioEntry<String>>,
+    mode_entries: Vec<RadioEntry<InputMode>>,
 
     #[allow(dead_code)]
     spoken_punct_item: CheckMenuItem,
@@ -168,53 +205,44 @@ impl TrayController {
         let copy_last_id = copy_last.id().clone();
 
         let model_submenu = Submenu::new("Model", true);
-        let mut model_entries = Vec::new();
-        let mut model_ids = Vec::new();
-
-        for &size in crate::config::SUPPORTED_MODELS {
-            let checked = size == config.model_size;
-            let label = radio_label(size, checked);
-            let item = CheckMenuItem::new(label, true, checked, None);
-            let id = item.id().clone();
-            model_submenu.append(&item)?;
-            model_ids.push((id.clone(), size.to_string()));
-            model_entries.push(ModelEntry { size: size.to_string(), item });
-        }
+        let model_items: Vec<(&str, String)> = crate::config::SUPPORTED_MODELS
+            .iter()
+            .map(|&s| (s, s.to_string()))
+            .collect();
+        let (model_entries, model_ids) = build_radio_submenu(
+            &model_submenu,
+            &model_items,
+            |s| s == &config.model_size,
+        )?;
 
         let lang_submenu = Submenu::new("Language", true);
-        let mut language_entries = Vec::new();
-        let mut language_ids = Vec::new();
-
-        for &code in TOP_LANGUAGES {
-            let name = config::language_name(code).unwrap_or(code);
-            let checked = code == config.language;
-            let label = radio_label(name, checked);
-            let item = CheckMenuItem::new(label, true, checked, None);
-            let id = item.id().clone();
-            lang_submenu.append(&item)?;
-            language_ids.push((id.clone(), code.to_string()));
-            language_entries.push(LanguageEntry { code: code.to_string(), item });
-        }
+        let lang_items: Vec<(&str, String)> = TOP_LANGUAGES
+            .iter()
+            .map(|&code| {
+                let name = config::language_name(code).unwrap_or(code);
+                (name, code.to_string())
+            })
+            .collect();
+        let (language_entries, language_ids) = build_radio_submenu(
+            &lang_submenu,
+            &lang_items,
+            |c| c == &config.language,
+        )?;
 
         let spoken_punct_item =
             CheckMenuItem::new("Spoken Punctuation", true, config.spoken_punctuation, None);
         let spoken_punct_id = spoken_punct_item.id().clone();
 
         let mode_submenu = Submenu::new("Mode", true);
-        let mut mode_entries = Vec::new();
-        let mut mode_ids = Vec::new();
-
-        let modes = [InputMode::PushToTalk, InputMode::OpenMic];
-        for mode in &modes {
-            let name = mode.to_string();
-            let selected = *mode == config.mode;
-            let label = radio_label(&name, selected);
-            let item = CheckMenuItem::new(label, true, selected, None);
-            let id = item.id().clone();
-            mode_submenu.append(&item)?;
-            mode_ids.push((id.clone(), mode.clone()));
-            mode_entries.push(ModeEntry { mode: mode.clone(), item });
-        }
+        let mode_items: Vec<(&str, InputMode)> = vec![
+            ("Push to Talk", InputMode::PushToTalk),
+            ("Open Mic", InputMode::OpenMic),
+        ];
+        let (mode_entries, mode_ids) = build_radio_submenu(
+            &mode_submenu,
+            &mode_items,
+            |m| *m == config.mode,
+        )?;
 
         let streaming_item =
             CheckMenuItem::new("Live Streaming", true, config.streaming, None);
@@ -298,29 +326,19 @@ impl TrayController {
     }
 
     pub fn set_model(&mut self, new_model: &str) {
-        for entry in &self.model_entries {
-            let selected = entry.size == new_model;
-            entry.item.set_checked(selected);
-            entry.item.set_text(radio_label(&entry.size, selected));
-        }
+        let new_model = new_model.to_string();
+        update_radio_entries(&self.model_entries, &new_model, |s| s.clone());
     }
 
     pub fn set_language(&mut self, new_code: &str) {
-        for entry in &self.language_entries {
-            let selected = entry.code == new_code;
-            entry.item.set_checked(selected);
-            let name = config::language_name(&entry.code).unwrap_or(&entry.code);
-            entry.item.set_text(radio_label(name, selected));
-        }
+        let new_code = new_code.to_string();
+        update_radio_entries(&self.language_entries, &new_code, |code| {
+            config::language_name(code).unwrap_or(code).to_string()
+        });
     }
 
     pub fn set_mode(&mut self, mode: &InputMode) {
-        for entry in &self.mode_entries {
-            let selected = entry.mode == *mode;
-            let name = entry.mode.to_string();
-            entry.item.set_checked(selected);
-            entry.item.set_text(radio_label(&name, selected));
-        }
+        update_radio_entries(&self.mode_entries, mode, |m| m.to_string());
     }
 
     #[allow(dead_code)]

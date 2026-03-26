@@ -130,63 +130,44 @@ impl AppState {
         }
     }
 
+    fn start_recording_effects(&mut self) -> Vec<AppEffect> {
+        self.is_pressed = true;
+        self.streaming_active = self.streaming;
+        let path = self.recording_output_path();
+        let mut effects = vec![AppEffect::StartRecording(path)];
+        if self.streaming {
+            effects.push(AppEffect::StartStreaming);
+        }
+        effects.push(AppEffect::SetTrayState(TrayState::Recording));
+        effects
+    }
+
+    fn stop_recording_effects(&mut self) -> Vec<AppEffect> {
+        self.is_pressed = false;
+        let mut effects = vec![];
+        if self.streaming {
+            effects.push(AppEffect::StopStreaming);
+        }
+        effects.push(AppEffect::StopAndTranscribe);
+        effects.push(AppEffect::SetTrayState(TrayState::Transcribing));
+        effects
+    }
+
     fn on_key_down(&mut self) -> Vec<AppEffect> {
-        if self.mode == InputMode::OpenMic {
-            if self.is_pressed {
-                self.is_pressed = false;
-                let mut effects = vec![];
-                if self.streaming {
-                    effects.push(AppEffect::StopStreaming);
-                }
-                effects.push(AppEffect::StopAndTranscribe);
-                effects.push(AppEffect::SetTrayState(TrayState::Transcribing));
-                effects
-            } else {
-                self.is_pressed = true;
-                self.streaming_active = self.streaming;
-                let path = self.recording_output_path();
-                let mut effects = vec![AppEffect::StartRecording(path)];
-                if self.streaming {
-                    effects.push(AppEffect::StartStreaming);
-                }
-                effects.push(AppEffect::SetTrayState(TrayState::Recording));
-                effects
+        match (&self.mode, self.is_pressed) {
+            (InputMode::OpenMic, true) => self.stop_recording_effects(),
+            (InputMode::OpenMic, false) => self.start_recording_effects(),
+            (InputMode::PushToTalk, false) => self.start_recording_effects(),
+            (InputMode::PushToTalk, true) => {
+                // Key repeat while held — ignore.
+                vec![AppEffect::None]
             }
-        } else if !self.is_pressed {
-            self.is_pressed = true;
-            self.streaming_active = self.streaming;
-            let path = self.recording_output_path();
-            let mut effects = vec![AppEffect::StartRecording(path)];
-            if self.streaming {
-                effects.push(AppEffect::StartStreaming);
-            }
-            effects.push(AppEffect::SetTrayState(TrayState::Recording));
-            effects
-        } else {
-            // PushToTalk: key repeat or missed KeyRelease — recover by
-            // stopping the stale recording and starting fresh.
-            log::warn!("KeyDown while already pressed — recovering stale state");
-            self.is_pressed = false;
-            let mut effects = vec![];
-            if self.streaming {
-                effects.push(AppEffect::StopStreaming);
-            }
-            effects.push(AppEffect::StopAndTranscribe);
-            effects.push(AppEffect::SetTrayState(TrayState::Transcribing));
-            effects
         }
     }
 
     fn on_key_up(&mut self) -> Vec<AppEffect> {
         if self.mode == InputMode::PushToTalk && self.is_pressed {
-            self.is_pressed = false;
-            let mut effects = vec![];
-            if self.streaming {
-                effects.push(AppEffect::StopStreaming);
-            }
-            effects.push(AppEffect::StopAndTranscribe);
-            effects.push(AppEffect::SetTrayState(TrayState::Transcribing));
-            effects
+            self.stop_recording_effects()
         } else {
             vec![AppEffect::None]
         }
@@ -314,14 +295,11 @@ mod tests {
     }
 
     #[test]
-    fn hold_mode_key_down_while_pressed_recovers() {
+    fn hold_mode_key_down_while_pressed_noop() {
         let mut state = default_state();
         state.is_pressed = true;
         let effects = state.handle_message(&AppMessage::KeyDown);
-        // Should recover by stopping the stale recording
-        assert!(!state.is_pressed);
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::StopAndTranscribe)));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Transcribing))));
+        assert_eq!(effects, vec![AppEffect::None]);
     }
 
     #[test]

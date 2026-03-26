@@ -21,7 +21,8 @@ impl RecordingStore {
     }
 
     pub fn temp_recording_path() -> PathBuf {
-        std::env::temp_dir().join("open-bark-recording.wav")
+        let unique = uuid_short();
+        std::env::temp_dir().join(format!("open-bark-{unique}.wav"))
     }
 
     pub fn new_recording_path() -> PathBuf {
@@ -107,7 +108,7 @@ mod tests {
     #[test]
     fn test_temp_recording_path() {
         let path = RecordingStore::temp_recording_path();
-        assert!(path.to_string_lossy().contains("open-bark-recording.wav"));
+        assert!(path.to_string_lossy().contains("open-bark-"));
     }
 
     #[test]

@@ -555,7 +555,7 @@ mod tests {
     fn recording_output_path_temp_when_no_max() {
         let state = default_state();
         let path = state.recording_output_path();
-        assert!(path.to_string_lossy().contains("open-bark-recording.wav"));
+        assert!(path.to_string_lossy().contains("open-bark-"));
     }
 
     // -- AppEffect enum tests --

@@ -17,7 +17,7 @@ pub fn read_wav_samples(audio_path: &Path) -> Result<Vec<f32>> {
     let spec = reader.spec();
     let samples: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Int => {
-            let max_val = (1 << (spec.bits_per_sample - 1)) as f32;
+            let max_val = (1_i64 << (spec.bits_per_sample - 1)) as f32;
             reader
                 .into_samples::<i32>()
                 .filter_map(|s| s.ok())

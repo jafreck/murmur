@@ -887,8 +887,9 @@ mod tests {
     fn transcription_done_during_recording_does_not_reset_tray() {
         let mut state = default_state();
         state.is_pressed = true;
-        let effects =
-            state.handle_message(&AppMessage::TranscriptionDone("from prev cycle".to_string()));
+        let effects = state.handle_message(&AppMessage::TranscriptionDone(
+            "from prev cycle".to_string(),
+        ));
         // Should NOT set tray to Idle since we're currently recording
         assert!(!effects
             .iter()
@@ -904,16 +905,13 @@ mod tests {
     fn transcription_error_during_recording_does_not_reset_tray() {
         let mut state = default_state();
         state.is_pressed = true;
-        let effects =
-            state.handle_message(&AppMessage::TranscriptionError("timeout".to_string()));
+        let effects = state.handle_message(&AppMessage::TranscriptionError("timeout".to_string()));
         // Should NOT set tray to Error since we're currently recording
         assert!(!effects
             .iter()
             .any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Error))));
         // Should still log the error
-        assert!(effects
-            .iter()
-            .any(|e| matches!(e, AppEffect::LogError(_))));
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::LogError(_))));
     }
 
     #[test]
@@ -969,12 +967,16 @@ mod tests {
 
         // First press: start recording + streaming
         let effects = state.handle_message(&AppMessage::KeyDown);
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::StartStreaming)));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::StartStreaming)));
         assert!(state.streaming_active);
 
         // Second press: stop recording + streaming
         let effects = state.handle_message(&AppMessage::KeyDown);
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::StopStreaming)));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::StopStreaming)));
     }
 
     // -- Multiple transcription results update last_transcription --

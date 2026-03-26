@@ -842,10 +842,7 @@ fn transcription_result_during_recording_does_not_reset_tray() {
     assert!(!has_tray_state(&fx, TrayState::Idle));
     // But result should still be inserted and saved
     assert!(has_insert_text(&fx, "stale result"));
-    assert_eq!(
-        h.state.last_transcription,
-        Some("stale result".to_string())
-    );
+    assert_eq!(h.state.last_transcription, Some("stale result".to_string()));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -924,10 +921,7 @@ fn streaming_push_to_talk_full_cycle() {
     // Final transcription — should NOT re-insert since streaming was active
     let fx = h.send(AppMessage::TranscriptionDone("hello world".into()));
     assert!(has_no_insert_text(&fx));
-    assert_eq!(
-        h.state.last_transcription,
-        Some("hello world".to_string())
-    );
+    assert_eq!(h.state.last_transcription, Some("hello world".to_string()));
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -430,10 +430,7 @@ mod tests {
                 "failed to parse canonical name '{canonical}'"
             );
             let parsed = parsed.unwrap();
-            assert_eq!(
-                &parsed.key, key,
-                "round-trip mismatch for '{canonical}'"
-            );
+            assert_eq!(&parsed.key, key, "round-trip mismatch for '{canonical}'");
         }
     }
 }

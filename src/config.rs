@@ -459,10 +459,7 @@ mod tests {
     fn test_supported_languages_no_duplicates() {
         let mut seen = std::collections::HashSet::new();
         for (code, _) in SUPPORTED_LANGUAGES {
-            assert!(
-                seen.insert(*code),
-                "duplicate language code: {code}"
-            );
+            assert!(seen.insert(*code), "duplicate language code: {code}");
         }
     }
 
@@ -470,10 +467,7 @@ mod tests {
     fn test_supported_models_no_duplicates() {
         let mut seen = std::collections::HashSet::new();
         for model in SUPPORTED_MODELS {
-            assert!(
-                seen.insert(*model),
-                "duplicate model: {model}"
-            );
+            assert!(seen.insert(*model), "duplicate model: {model}");
         }
     }
 }

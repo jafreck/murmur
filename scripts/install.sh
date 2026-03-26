@@ -8,15 +8,15 @@
 # No build tools required — just curl.
 #
 # Usage:
-#   curl -sSf https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.sh | bash
+#   curl -sSf https://github.com/jafreck/murmur/releases/latest/download/install.sh | bash
 #   # or from a local clone:
 #   ./scripts/install.sh
 #   # specific version:
-#   OPEN_BARK_VERSION=v0.1.0 ./scripts/install.sh
+#   MURMUR_VERSION=v0.1.0 ./scripts/install.sh
 
 set -euo pipefail
 
-REPO="jacobfreck/murmur"
+REPO="jafreck/murmur"
 INSTALL_DIR="/usr/local/bin"
 APP_NAME="murmur"
 
@@ -120,14 +120,14 @@ detect_platform() {
 # ── Resolve version ─────────────────────────────────────────────────────────
 
 resolve_version() {
-    VERSION="${OPEN_BARK_VERSION:-latest}"
+    VERSION="${MURMUR_VERSION:-latest}"
 
     if [ "$VERSION" = "latest" ]; then
         VERSION=$(curl -sI "https://github.com/$REPO/releases/latest" \
             | grep -i '^location:' \
             | sed 's|.*/tag/||' \
             | tr -d '\r\n')
-        [ -n "$VERSION" ] || error "Could not determine latest release. Set OPEN_BARK_VERSION=v0.1.0 to specify."
+        [ -n "$VERSION" ] || error "Could not determine latest release. Set MURMUR_VERSION=v0.1.0 to specify."
     fi
 }
 
@@ -163,7 +163,7 @@ setup_service() {
 
 setup_service_macos() {
     local plist_dir="$HOME/Library/LaunchAgents"
-    local plist="$plist_dir/com.jacobfreck.murmur.plist"
+    local plist="$plist_dir/com.jafreck.murmur.plist"
     local bin="$INSTALL_DIR/$APP_NAME"
     local log_dir="$HOME/Library/Logs/murmur"
 
@@ -176,7 +176,7 @@ setup_service_macos() {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.jacobfreck.murmur</string>
+    <string>com.jafreck.murmur</string>
     <key>ProgramArguments</key>
     <array>
         <string>${bin}</string>
@@ -199,7 +199,7 @@ setup_service_macos() {
 </plist>
 EOF
 
-    launchctl bootout "gui/$(id -u)/com.jacobfreck.murmur" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)/com.jafreck.murmur" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$plist"
 }
 
@@ -263,8 +263,8 @@ print_summary() {
         printf "     ${DIM}•${RESET} Microphone:    ${DIM}System Settings → Privacy → Microphone${RESET}\n"
         echo ""
         printf "  ${DIM}Manage service:${RESET}\n"
-        printf "     ${DIM}Stop:${RESET}    launchctl bootout gui/$(id -u)/com.jacobfreck.murmur\n"
-        printf "     ${DIM}Restart:${RESET} launchctl kickstart -k gui/$(id -u)/com.jacobfreck.murmur\n"
+        printf "     ${DIM}Stop:${RESET}    launchctl bootout gui/$(id -u)/com.jafreck.murmur\n"
+        printf "     ${DIM}Restart:${RESET} launchctl kickstart -k gui/$(id -u)/com.jafreck.murmur\n"
         printf "     ${DIM}Logs:${RESET}    ~/Library/Logs/murmur/\n"
     else
         printf "  ${YELLOW}⚠${RESET}  ${BOLD}Wayland users:${RESET} add yourself to the 'input' group:\n"

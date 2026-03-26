@@ -8,7 +8,7 @@
     registers murmur as a startup task. No build tools required.
 
 .EXAMPLE
-    irm https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.ps1 | iex
+    irm https://github.com/jafreck/murmur/releases/latest/download/install.ps1 | iex
 
 .EXAMPLE
     .\scripts\install.ps1
@@ -20,7 +20,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Repo = "jacobfreck/murmur"
+$Repo = "jafreck/murmur"
 $AppName = "murmur"
 $Artifact = "murmur-windows-x86_64"
 

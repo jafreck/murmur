@@ -108,6 +108,20 @@ jobs:
             ${{ matrix.artifact }}.zip
             ${{ matrix.artifact }}.exe
 
+  upload-installers:
+    name: Upload install scripts
+    runs-on: ubuntu-latest
+    needs: ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload install scripts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            scripts/install.sh
+            scripts/install.ps1
+
   publish-crate:
     name: Publish to crates.io
     runs-on: ubuntu-latest

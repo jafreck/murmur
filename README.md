@@ -4,7 +4,7 @@
 
 Cross-platform, local voice dictation. Hold a key, speak, release — your words appear at the cursor.
 
-[![CI](https://github.com/jafreck/open-bark/actions/workflows/ci.yml/badge.svg)](https://github.com/jafreck/murmur/actions/workflows/ci.yml)
+[![CI](https://github.com/jafreck/murmur/actions/workflows/ci.yml/badge.svg)](https://github.com/jafreck/murmur/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#platform-notes)
@@ -29,13 +29,13 @@ Pre-built binaries — no build tools required. macOS Apple Silicon builds inclu
 **macOS / Linux:**
 
 ```bash
-curl -sSf https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.sh | bash
+curl -sSf https://github.com/jafreck/murmur/releases/latest/download/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.ps1 | iex
+irm https://github.com/jafreck/murmur/releases/latest/download/install.ps1 | iex
 ```
 
 The installer downloads the correct binary for your platform, installs it, and registers murmur as a service that starts at login.
@@ -44,7 +44,7 @@ To install a specific version:
 
 ```bash
 # macOS / Linux
-OPEN_BARK_VERSION=v0.1.0 bash <(curl -sSf https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.sh)
+MURMUR_VERSION=v0.1.0 bash <(curl -sSf https://github.com/jafreck/murmur/releases/latest/download/install.sh)
 
 # Windows
 .\scripts\install.ps1 -Version v0.1.0
@@ -53,7 +53,7 @@ OPEN_BARK_VERSION=v0.1.0 bash <(curl -sSf https://raw.githubusercontent.com/jaco
 ### From source
 
 ```bash
-git clone https://github.com/jacobfreck/murmur.git
+git clone https://github.com/jafreck/murmur.git
 cd murmur
 cargo build --release
 ```

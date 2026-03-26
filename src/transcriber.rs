@@ -20,15 +20,17 @@ pub fn read_wav_samples(audio_path: &Path) -> Result<Vec<f32>> {
             let max_val = (1_i64 << (spec.bits_per_sample - 1)) as f32;
             reader
                 .into_samples::<i32>()
-                .filter_map(|s| s.ok())
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("Failed to decode integer WAV samples")?
+                .into_iter()
                 .map(|s| s as f32 / max_val)
                 .collect()
         }
         hound::SampleFormat::Float => {
             reader
                 .into_samples::<f32>()
-                .filter_map(|s| s.ok())
-                .collect()
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("Failed to decode float WAV samples")?
         }
     };
 

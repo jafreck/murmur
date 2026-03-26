@@ -101,9 +101,14 @@ pub enum AppEffect {
     InsertText(String),
     CopyToClipboard(String),
     SaveConfig,
+    /// Open the config file in the user's default editor/file manager.
+    OpenConfig,
+    /// Reload config from disk and apply changes.
+    ReloadConfig,
     SetTrayState(TrayStateTag),
     SetTrayModel(String),
     SetTrayLanguage(String),
+    SetTrayMode(InputMode),
     /// Download the model if needed and rebuild the Transcriber in a background thread.
     ReloadTranscriber(u64),
     Quit,
@@ -178,7 +183,8 @@ impl AppState {
             AppMessage::TraySetMode(mode) => self.on_set_mode(mode),
             AppMessage::TrayToggleStreaming => self.on_toggle_streaming(),
             AppMessage::TrayToggleTranslate => self.on_toggle_translate(),
-            AppMessage::TrayOpenConfig | AppMessage::TrayReloadConfig => vec![AppEffect::None],
+            AppMessage::TrayOpenConfig => vec![AppEffect::OpenConfig],
+            AppMessage::TrayReloadConfig => vec![AppEffect::ReloadConfig],
             // TranscriberReady is handled directly in the run() loop before
             // reaching handle_message, but we need an arm for exhaustiveness.
             AppMessage::TranscriberReady(_, _) => vec![AppEffect::None],
@@ -310,7 +316,7 @@ impl AppState {
 
     fn on_set_mode(&mut self, mode: &InputMode) -> Vec<AppEffect> {
         self.mode = mode.clone();
-        vec![AppEffect::SaveConfig]
+        vec![AppEffect::SaveConfig, AppEffect::SetTrayMode(mode.clone())]
     }
 
     fn on_toggle_streaming(&mut self) -> Vec<AppEffect> {
@@ -436,11 +442,15 @@ pub fn run() -> Result<()> {
             }
             let effects = state.handle_message(&msg);
             for effect in effects {
-                apply_effect(
-                    effect, &mut recorder, &mut transcriber,
-                    &mut tray, &mut config, &state, &tx,
-                    &mut streaming_stop,
-                )?;
+                apply_effect(effect, &mut EffectContext {
+                    recorder: &mut recorder,
+                    transcriber: &mut transcriber,
+                    tray: &mut tray,
+                    config: &mut config,
+                    state: &mut state,
+                    tx: &tx,
+                    streaming_stop: &mut streaming_stop,
+                })?;
             }
         }
 
@@ -456,41 +466,41 @@ pub fn run() -> Result<()> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn apply_effect(
-    effect: AppEffect,
-    recorder: &mut AudioRecorder,
-    transcriber: &mut Arc<Transcriber>,
-    tray: &mut TrayController,
-    config: &mut Config,
-    state: &AppState,
-    tx: &mpsc::Sender<AppMessage>,
-    streaming_stop: &mut Option<mpsc::Sender<()>>,
-) -> Result<()> {
+struct EffectContext<'a> {
+    recorder: &'a mut AudioRecorder,
+    transcriber: &'a mut Arc<Transcriber>,
+    tray: &'a mut TrayController,
+    config: &'a mut Config,
+    state: &'a mut AppState,
+    tx: &'a mpsc::Sender<AppMessage>,
+    streaming_stop: &'a mut Option<mpsc::Sender<()>>,
+}
+
+fn apply_effect(effect: AppEffect, ctx: &mut EffectContext<'_>) -> Result<()> {
     match effect {
         AppEffect::None => {}
         AppEffect::StartRecording(path) => {
             info!("Recording...");
-            if let Err(e) = recorder.start(&path) {
+            if let Err(e) = ctx.recorder.start(&path) {
                 error!("Failed to start recording: {e}");
-                let _ = tx.send(AppMessage::TranscriptionError(
+                let _ = ctx.tx.send(AppMessage::TranscriptionError(
                     format!("Failed to start recording: {e}"),
                 ));
             }
         }
         AppEffect::StopAndTranscribe => {
             // Stop streaming first (if running)
-            if let Some(stop) = streaming_stop.take() {
+            if let Some(stop) = ctx.streaming_stop.take() {
                 let _ = stop.send(());
             }
 
-            if let Some(audio_path) = recorder.stop() {
+            if let Some(audio_path) = ctx.recorder.stop() {
                 info!("Transcribing...");
-                let transcriber = Arc::clone(transcriber);
-                let spoken_punctuation = state.spoken_punctuation;
-                let translate_to_english = state.translate_to_english;
-                let max_recordings = state.max_recordings;
-                let tx = tx.clone();
+                let transcriber = Arc::clone(ctx.transcriber);
+                let spoken_punctuation = ctx.state.spoken_punctuation;
+                let translate_to_english = ctx.state.translate_to_english;
+                let max_recordings = ctx.state.max_recordings;
+                let tx = ctx.tx.clone();
                 std::thread::spawn(move || {
                     let result = transcriber.transcribe(&audio_path, translate_to_english);
                     if max_recordings == 0 {
@@ -516,12 +526,12 @@ fn apply_effect(
         }
         AppEffect::StartStreaming => {
             info!("Starting streaming transcription...");
-            let sample_buffer = recorder.sample_buffer();
-            let transcriber = Arc::clone(transcriber);
-            let tx_app = tx.clone();
-            let language = state.language.clone();
-            let translate = state.translate_to_english;
-            let spoken_punct = state.spoken_punctuation;
+            let sample_buffer = ctx.recorder.sample_buffer();
+            let transcriber = Arc::clone(ctx.transcriber);
+            let tx_app = ctx.tx.clone();
+            let language = ctx.state.language.clone();
+            let translate = ctx.state.translate_to_english;
+            let spoken_punct = ctx.state.spoken_punctuation;
 
             let (streaming_tx, streaming_rx) = mpsc::channel::<streaming::StreamingEvent>();
 
@@ -544,10 +554,10 @@ fn apply_effect(
                 spoken_punct,
                 streaming_tx,
             );
-            *streaming_stop = Some(stop);
+            *ctx.streaming_stop = Some(stop);
         }
         AppEffect::StopStreaming => {
-            if let Some(stop) = streaming_stop.take() {
+            if let Some(stop) = ctx.streaming_stop.take() {
                 info!("Stopping streaming transcription");
                 let _ = stop.send(());
             }
@@ -565,28 +575,57 @@ fn apply_effect(
             }
         }
         AppEffect::SaveConfig => {
-            let new_config = state.to_config(config);
-            *config = new_config;
-            if let Err(e) = config.save() {
+            let new_config = ctx.state.to_config(ctx.config);
+            *ctx.config = new_config;
+            if let Err(e) = ctx.config.save() {
                 error!("Failed to save config: {e}");
             }
         }
+        AppEffect::OpenConfig => {
+            let config_path = Config::file_path();
+            info!("Opening config: {}", config_path.display());
+            #[cfg(target_os = "macos")]
+            { let _ = std::process::Command::new("open").arg(&config_path).spawn(); }
+            #[cfg(target_os = "linux")]
+            { let _ = std::process::Command::new("xdg-open").arg(&config_path).spawn(); }
+            #[cfg(target_os = "windows")]
+            { let _ = std::process::Command::new("cmd").args(["/C", "start", ""]).arg(&config_path).spawn(); }
+        }
+        AppEffect::ReloadConfig => {
+            info!("Reloading config from disk...");
+            let new_config = Config::load();
+            let old_model = ctx.state.model_size.clone();
+            let old_lang = ctx.state.language.clone();
+            *ctx.state = AppState::new(&new_config);
+            *ctx.config = new_config;
+            // If model or language changed, reload the transcriber
+            if ctx.state.model_size != old_model || ctx.state.language != old_lang {
+                ctx.state.reload_generation += 1;
+                let gen = ctx.state.reload_generation;
+                apply_effect(AppEffect::ReloadTranscriber(gen), ctx)?;
+            }
+            info!("Config reloaded");
+        }
         AppEffect::SetTrayState(tag) => {
-            tray.set_state(tag_to_tray_state(&tag));
+            ctx.tray.set_state(tag_to_tray_state(&tag));
         }
         AppEffect::SetTrayModel(size) => {
-            tray.set_model(&size);
+            ctx.tray.set_model(&size);
             info!("Model changed to: {size}");
         }
         AppEffect::SetTrayLanguage(code) => {
             let name = crate::config::language_name(&code).unwrap_or(&code);
             info!("Language changed to: {name} ({code})");
-            tray.set_language(&code);
+            ctx.tray.set_language(&code);
+        }
+        AppEffect::SetTrayMode(mode) => {
+            ctx.tray.set_mode(&mode);
+            info!("Mode changed to: {mode}");
         }
         AppEffect::ReloadTranscriber(generation) => {
-            let model_size = state.model_size.clone();
-            let language = state.language.clone();
-            let tx = tx.clone();
+            let model_size = ctx.state.model_size.clone();
+            let language = ctx.state.language.clone();
+            let tx = ctx.tx.clone();
             info!("Loading model '{model_size}'...");
             std::thread::spawn(move || {
                 if !crate::transcriber::model_exists(&model_size) {
@@ -839,6 +878,7 @@ mod tests {
         let effects = state.handle_message(&AppMessage::TraySetMode(InputMode::OpenMic));
         assert_eq!(state.mode, InputMode::OpenMic);
         assert!(effects.contains(&AppEffect::SaveConfig));
+        assert!(effects.contains(&AppEffect::SetTrayMode(InputMode::OpenMic)));
     }
 
     #[test]
@@ -923,12 +963,17 @@ mod tests {
     }
 
     #[test]
-    fn open_config_and_reload_are_noop() {
+    fn open_config_returns_effect() {
         let mut state = default_state();
         let effects = state.handle_message(&AppMessage::TrayOpenConfig);
-        assert_eq!(effects, vec![AppEffect::None]);
+        assert_eq!(effects, vec![AppEffect::OpenConfig]);
+    }
+
+    #[test]
+    fn reload_config_returns_effect() {
+        let mut state = default_state();
         let effects = state.handle_message(&AppMessage::TrayReloadConfig);
-        assert_eq!(effects, vec![AppEffect::None]);
+        assert_eq!(effects, vec![AppEffect::ReloadConfig]);
     }
 
     #[test]

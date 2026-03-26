@@ -250,7 +250,7 @@ print_summary() {
     echo ""
     printf "  ${CYAN}┌──────────────────────────────────────┐${RESET}\n"
     printf "  ${CYAN}│${RESET}                                      ${CYAN}│${RESET}\n"
-    printf "  ${CYAN}│${RESET}  ${GREEN}${BOLD}✔ murmur installed successfully!${RESET}  ${CYAN}│${RESET}\n"
+    printf "  ${CYAN}│${RESET}  ${GREEN}${BOLD}✔ murmur installed successfully!${RESET}    ${CYAN}│${RESET}\n"
     printf "  ${CYAN}│${RESET}                                      ${CYAN}│${RESET}\n"
     printf "  ${CYAN}└──────────────────────────────────────┘${RESET}\n"
     echo ""

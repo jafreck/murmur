@@ -138,22 +138,35 @@ fn streaming_loop(
         let all_words = split_words(&full_text);
 
         // Diff: find words beyond what we've already emitted.
-        // Since we're re-transcribing the same growing audio, the
-        // emitted words should be a prefix of all_words (or close to it).
         let new_start = find_emit_boundary(&emitted_words, &all_words);
 
         if new_start < all_words.len() {
-            let new_words: Vec<String> = all_words[new_start..].to_vec();
+            // Hold back the last word — it's unstable because Whisper may
+            // revise it as more audio arrives (e.g. adding punctuation,
+            // changing word boundaries). Only emit confirmed words that
+            // have at least one word after them.
+            let confirmed_end = all_words.len() - 1;
 
-            let new_text = if spoken_punctuation {
-                crate::postprocess::process(&new_words.join(" "))
-            } else {
-                new_words.join(" ")
-            };
+            if new_start < confirmed_end {
+                let new_words: Vec<String> = all_words[new_start..confirmed_end].to_vec();
 
-            if !new_text.is_empty() {
-                emitted_words = all_words;
-                let _ = tx.send(StreamingEvent::PartialText(new_text));
+                let new_text = if spoken_punctuation {
+                    crate::postprocess::process(&new_words.join(" "))
+                } else {
+                    new_words.join(" ")
+                };
+
+                if !new_text.is_empty() {
+                    // Prepend space for continuation (text is appended at cursor)
+                    let spaced = if emitted_words.is_empty() {
+                        new_text
+                    } else {
+                        format!(" {new_text}")
+                    };
+                    // Update emitted to include confirmed words (but not the held-back last word)
+                    emitted_words = all_words[..confirmed_end].to_vec();
+                    let _ = tx.send(StreamingEvent::PartialText(spaced));
+                }
             }
         }
     }

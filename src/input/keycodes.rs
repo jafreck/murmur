@@ -175,13 +175,32 @@ mod tests {
     #[test]
     fn test_parse_all_letters() {
         for (letter, expected) in [
-            ("a", Key::KeyA), ("b", Key::KeyB), ("c", Key::KeyC), ("d", Key::KeyD),
-            ("e", Key::KeyE), ("f", Key::KeyF), ("g", Key::KeyG), ("h", Key::KeyH),
-            ("i", Key::KeyI), ("j", Key::KeyJ), ("k", Key::KeyK), ("l", Key::KeyL),
-            ("m", Key::KeyM), ("n", Key::KeyN), ("o", Key::KeyO), ("p", Key::KeyP),
-            ("q", Key::KeyQ), ("r", Key::KeyR), ("s", Key::KeyS), ("t", Key::KeyT),
-            ("u", Key::KeyU), ("v", Key::KeyV), ("w", Key::KeyW), ("x", Key::KeyX),
-            ("y", Key::KeyY), ("z", Key::KeyZ),
+            ("a", Key::KeyA),
+            ("b", Key::KeyB),
+            ("c", Key::KeyC),
+            ("d", Key::KeyD),
+            ("e", Key::KeyE),
+            ("f", Key::KeyF),
+            ("g", Key::KeyG),
+            ("h", Key::KeyH),
+            ("i", Key::KeyI),
+            ("j", Key::KeyJ),
+            ("k", Key::KeyK),
+            ("l", Key::KeyL),
+            ("m", Key::KeyM),
+            ("n", Key::KeyN),
+            ("o", Key::KeyO),
+            ("p", Key::KeyP),
+            ("q", Key::KeyQ),
+            ("r", Key::KeyR),
+            ("s", Key::KeyS),
+            ("t", Key::KeyT),
+            ("u", Key::KeyU),
+            ("v", Key::KeyV),
+            ("w", Key::KeyW),
+            ("x", Key::KeyX),
+            ("y", Key::KeyY),
+            ("z", Key::KeyZ),
         ] {
             let parsed = parse(letter).unwrap();
             assert_eq!(parsed.key, expected, "failed for letter '{letter}'");
@@ -191,9 +210,16 @@ mod tests {
     #[test]
     fn test_parse_all_numbers() {
         for (num, expected) in [
-            ("0", Key::Num0), ("1", Key::Num1), ("2", Key::Num2), ("3", Key::Num3),
-            ("4", Key::Num4), ("5", Key::Num5), ("6", Key::Num6), ("7", Key::Num7),
-            ("8", Key::Num8), ("9", Key::Num9),
+            ("0", Key::Num0),
+            ("1", Key::Num1),
+            ("2", Key::Num2),
+            ("3", Key::Num3),
+            ("4", Key::Num4),
+            ("5", Key::Num5),
+            ("6", Key::Num6),
+            ("7", Key::Num7),
+            ("8", Key::Num8),
+            ("9", Key::Num9),
         ] {
             let parsed = parse(num).unwrap();
             assert_eq!(parsed.key, expected, "failed for number '{num}'");
@@ -203,9 +229,18 @@ mod tests {
     #[test]
     fn test_parse_function_keys() {
         for (name, expected) in [
-            ("f1", Key::F1), ("f2", Key::F2), ("f3", Key::F3), ("f4", Key::F4),
-            ("f5", Key::F5), ("f6", Key::F6), ("f7", Key::F7), ("f8", Key::F8),
-            ("f9", Key::F9), ("f10", Key::F10), ("f11", Key::F11), ("f12", Key::F12),
+            ("f1", Key::F1),
+            ("f2", Key::F2),
+            ("f3", Key::F3),
+            ("f4", Key::F4),
+            ("f5", Key::F5),
+            ("f6", Key::F6),
+            ("f7", Key::F7),
+            ("f8", Key::F8),
+            ("f9", Key::F9),
+            ("f10", Key::F10),
+            ("f11", Key::F11),
+            ("f12", Key::F12),
         ] {
             let parsed = parse(name).unwrap();
             assert_eq!(parsed.key, expected, "failed for '{name}'");

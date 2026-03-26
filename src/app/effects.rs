@@ -3,13 +3,13 @@ use log::{error, info};
 use std::sync::mpsc;
 use std::sync::Arc;
 
+use crate::audio::recordings::RecordingStore;
 use crate::audio::AudioRecorder;
 use crate::config::Config;
 use crate::input::hotkey::{CaptureFlag, SharedHotkeyConfig};
 use crate::input::inserter::TextInserter;
-use crate::transcription::{model, postprocess, streaming};
 use crate::transcription::transcriber::Transcriber;
-use crate::audio::recordings::RecordingStore;
+use crate::transcription::{model, postprocess, streaming};
 use crate::ui::tray::{TrayController, TrayState};
 
 use super::{AppEffect, AppMessage, AppState};
@@ -42,9 +42,9 @@ pub fn apply_effect(
             };
             if let Err(e) = result {
                 error!("Failed to start recording: {e}");
-                let _ = ctx.tx.send(AppMessage::TranscriptionError(
-                    format!("Failed to start recording: {e}"),
-                ));
+                let _ = ctx.tx.send(AppMessage::TranscriptionError(format!(
+                    "Failed to start recording: {e}"
+                )));
             }
         }
         AppEffect::StopAndTranscribe => {
@@ -65,7 +65,10 @@ pub fn apply_effect(
                 error!("Insert failed: {e}");
             }
         }
-        AppEffect::StreamingReplace { text, replace_chars } => {
+        AppEffect::StreamingReplace {
+            text,
+            replace_chars,
+        } => {
             if replace_chars > 0 {
                 log::debug!("Streaming: replacing {replace_chars} chars with '{text}'");
             } else {
@@ -116,7 +119,8 @@ pub fn apply_effect(
             reload_transcriber(ctx, generation);
         }
         AppEffect::EnterHotkeyCaptureMode => {
-            ctx.capture_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            ctx.capture_flag
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             ctx.tray.set_status("Press a key...");
             info!("Hotkey capture mode: press any key");
         }
@@ -238,8 +242,14 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
     std::thread::spawn(move || {
         while let Ok(event) = streaming_rx.recv() {
             match event {
-                streaming::StreamingEvent::PartialText { text, replace_chars } => {
-                    let _ = tx_app.send(AppMessage::StreamingPartialText { text, replace_chars });
+                streaming::StreamingEvent::PartialText {
+                    text,
+                    replace_chars,
+                } => {
+                    let _ = tx_app.send(AppMessage::StreamingPartialText {
+                        text,
+                        replace_chars,
+                    });
                 }
             }
         }
@@ -259,11 +269,22 @@ fn open_config_file() {
     let config_path = Config::file_path();
     info!("Opening config: {}", config_path.display());
     #[cfg(target_os = "macos")]
-    { let _ = std::process::Command::new("open").arg(&config_path).spawn(); }
+    {
+        let _ = std::process::Command::new("open").arg(&config_path).spawn();
+    }
     #[cfg(target_os = "linux")]
-    { let _ = std::process::Command::new("xdg-open").arg(&config_path).spawn(); }
+    {
+        let _ = std::process::Command::new("xdg-open")
+            .arg(&config_path)
+            .spawn();
+    }
     #[cfg(target_os = "windows")]
-    { let _ = std::process::Command::new("cmd").args(["/C", "start", ""]).arg(&config_path).spawn(); }
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(&config_path)
+            .spawn();
+    }
 }
 
 fn reload_config(ctx: &mut EffectContext<'_>) -> Result<(bool, Vec<AppEffect>)> {
@@ -285,7 +306,10 @@ fn reload_config(ctx: &mut EffectContext<'_>) -> Result<(bool, Vec<AppEffect>)> 
             info!("Hotkey updated to: {}", new_config.hotkey);
             ctx.tray.set_hotkey(&new_config.hotkey);
         } else {
-            error!("Invalid hotkey in config: '{}', keeping previous", new_config.hotkey);
+            error!(
+                "Invalid hotkey in config: '{}', keeping previous",
+                new_config.hotkey
+            );
         }
     }
 
@@ -316,18 +340,18 @@ fn reload_transcriber(ctx: &mut EffectContext<'_>, generation: u64) {
                 }
             }) {
                 error!("Failed to download model '{model_size}': {e}");
-                let _ = tx.send(AppMessage::TranscriptionError(
-                    format!("Failed to download model '{model_size}': {e}"),
-                ));
+                let _ = tx.send(AppMessage::TranscriptionError(format!(
+                    "Failed to download model '{model_size}': {e}"
+                )));
                 return;
             }
         }
 
         let Some(model_path) = crate::transcription::transcriber::find_model(&model_size) else {
             error!("Model '{model_size}' not found after download");
-            let _ = tx.send(AppMessage::TranscriptionError(
-                format!("Model '{model_size}' not found after download"),
-            ));
+            let _ = tx.send(AppMessage::TranscriptionError(format!(
+                "Model '{model_size}' not found after download"
+            )));
             return;
         };
 
@@ -338,9 +362,9 @@ fn reload_transcriber(ctx: &mut EffectContext<'_>, generation: u64) {
             }
             Err(e) => {
                 error!("Failed to load model '{model_size}': {e}");
-                let _ = tx.send(AppMessage::TranscriptionError(
-                    format!("Failed to load model '{model_size}': {e}"),
-                ));
+                let _ = tx.send(AppMessage::TranscriptionError(format!(
+                    "Failed to load model '{model_size}': {e}"
+                )));
             }
         }
     });

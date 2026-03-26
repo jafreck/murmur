@@ -11,8 +11,8 @@
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use crate::audio::capture::TARGET_RATE;
 use super::transcriber::Transcriber;
+use crate::audio::capture::TARGET_RATE;
 
 // ── Configuration ──────────────────────────────────────────────────────
 
@@ -32,10 +32,7 @@ const SILENCE_RMS_THRESHOLD: f32 = 0.005;
 pub enum StreamingEvent {
     /// Replace the last `replace_chars` characters with `text`.
     /// If `replace_chars` is 0, just append.
-    PartialText {
-        text: String,
-        replace_chars: usize,
-    },
+    PartialText { text: String, replace_chars: usize },
 }
 
 /// Start streaming transcription in a background thread.
@@ -91,10 +88,7 @@ fn streaming_loop(
             Err(mpsc::TryRecvError::Empty) => {}
         }
 
-        let total_samples = sample_buffer
-            .lock()
-            .map(|b| b.len())
-            .unwrap_or(0);
+        let total_samples = sample_buffer.lock().map(|b| b.len()).unwrap_or(0);
 
         if total_samples < last_transcribed + min_new_samples {
             std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
@@ -378,7 +372,10 @@ mod tests {
             replace_chars: 3,
         };
         match event {
-            StreamingEvent::PartialText { text, replace_chars } => {
+            StreamingEvent::PartialText {
+                text,
+                replace_chars,
+            } => {
                 assert_eq!(text, "hello");
                 assert_eq!(replace_chars, 3);
             }
@@ -432,12 +429,19 @@ mod tests {
     fn test_stitch_punctuation_mismatch() {
         // Real-world case: chunk N ends with "come." and chunk N+1 starts with "come"
         let committed: Vec<String> = vec![
-            "keep".into(), "talking".into(), "and".into(),
-            "eventually".into(), "it'll".into(), "come.".into(),
+            "keep".into(),
+            "talking".into(),
+            "and".into(),
+            "eventually".into(),
+            "it'll".into(),
+            "come.".into(),
         ];
         let chunk: Vec<String> = vec![
-            "eventually".into(), "it'll".into(), "come".into(),
-            "pop".into(), "up".into(),
+            "eventually".into(),
+            "it'll".into(),
+            "come".into(),
+            "pop".into(),
+            "up".into(),
         ];
         let result = stitch(&committed, &chunk);
         assert_eq!(result, vec!["pop", "up"]);

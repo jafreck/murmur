@@ -101,10 +101,7 @@ fn push_to_talk_full_cycle() {
     let fx = h.send(AppMessage::TranscriptionDone("hello world".into()));
     assert!(has_insert_text(&fx, "hello world"));
     assert!(has_tray_state(&fx, TrayState::Idle));
-    assert_eq!(
-        h.state.last_transcription,
-        Some("hello world".to_string())
-    );
+    assert_eq!(h.state.last_transcription, Some("hello world".to_string()));
 }
 
 #[test]
@@ -192,10 +189,7 @@ fn push_to_talk_multiple_cycles() {
         assert!(has_tray_state(&fx, TrayState::Idle));
     }
 
-    assert_eq!(
-        h.state.last_transcription,
-        Some("cycle 2".to_string())
-    );
+    assert_eq!(h.state.last_transcription, Some("cycle 2".to_string()));
 }
 
 #[test]
@@ -315,10 +309,7 @@ fn streaming_suppresses_final_transcription() {
         "final transcription should be suppressed when streaming was active"
     );
     // But last_transcription is still saved for copy-last
-    assert_eq!(
-        h.state.last_transcription,
-        Some("hello world".to_string())
-    );
+    assert_eq!(h.state.last_transcription, Some("hello world".to_string()));
     assert!(!h.state.streaming_active);
 }
 
@@ -545,18 +536,21 @@ fn from_tray_action_all_variants() {
         (TrayAction::CopyLastDictation, |m| {
             matches!(m, AppMessage::TrayCopyLast)
         }),
-        (TrayAction::SetModel("base.en".into()), |m| {
-            matches!(m, AppMessage::TraySetModel(s) if s == "base.en")
-        }),
-        (TrayAction::SetLanguage("fr".into()), |m| {
-            matches!(m, AppMessage::TraySetLanguage(c) if c == "fr")
-        }),
+        (
+            TrayAction::SetModel("base.en".into()),
+            |m| matches!(m, AppMessage::TraySetModel(s) if s == "base.en"),
+        ),
+        (
+            TrayAction::SetLanguage("fr".into()),
+            |m| matches!(m, AppMessage::TraySetLanguage(c) if c == "fr"),
+        ),
         (TrayAction::ToggleSpokenPunctuation, |m| {
             matches!(m, AppMessage::TrayToggleSpokenPunctuation)
         }),
-        (TrayAction::SetMode(InputMode::OpenMic), |m| {
-            matches!(m, AppMessage::TraySetMode(mode) if *mode == InputMode::OpenMic)
-        }),
+        (
+            TrayAction::SetMode(InputMode::OpenMic),
+            |m| matches!(m, AppMessage::TraySetMode(mode) if *mode == InputMode::OpenMic),
+        ),
         (TrayAction::ToggleStreaming, |m| {
             matches!(m, AppMessage::TrayToggleStreaming)
         }),
@@ -791,7 +785,9 @@ fn hotkey_capture_full_cycle() {
     // Enter capture mode
     let fx = h.send(AppMessage::TraySetHotkey);
     assert!(h.state.capturing_hotkey);
-    assert!(fx.iter().any(|e| matches!(e, AppEffect::EnterHotkeyCaptureMode)));
+    assert!(fx
+        .iter()
+        .any(|e| matches!(e, AppEffect::EnterHotkeyCaptureMode)));
 
     // Key events are ignored during capture
     let fx = h.send(AppMessage::KeyDown);
@@ -800,7 +796,9 @@ fn hotkey_capture_full_cycle() {
     // Capture a key
     let fx = h.send(AppMessage::HotkeyCapture(rdev::Key::F5));
     assert!(!h.state.capturing_hotkey);
-    assert!(fx.iter().any(|e| matches!(e, AppEffect::SetHotkey(k) if k == "f5")));
+    assert!(fx
+        .iter()
+        .any(|e| matches!(e, AppEffect::SetHotkey(k) if k == "f5")));
     assert!(fx.iter().any(|e| matches!(e, AppEffect::SaveConfig)));
 
     // Normal operation resumes

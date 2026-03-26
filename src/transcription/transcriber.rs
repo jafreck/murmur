@@ -11,8 +11,7 @@ pub struct Transcriber {
 
 /// Read a WAV file and return f32 samples normalized to [-1.0, 1.0].
 pub fn read_wav_samples(audio_path: &Path) -> Result<Vec<f32>> {
-    let reader = hound::WavReader::open(audio_path)
-        .context("Failed to open audio file")?;
+    let reader = hound::WavReader::open(audio_path).context("Failed to open audio file")?;
 
     let spec = reader.spec();
     let samples: Vec<f32> = match spec.sample_format {
@@ -26,12 +25,10 @@ pub fn read_wav_samples(audio_path: &Path) -> Result<Vec<f32>> {
                 .map(|s| s as f32 / max_val)
                 .collect()
         }
-        hound::SampleFormat::Float => {
-            reader
-                .into_samples::<f32>()
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .context("Failed to decode float WAV samples")?
-        }
+        hound::SampleFormat::Float => reader
+            .into_samples::<f32>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("Failed to decode float WAV samples")?,
     };
 
     Ok(samples)
@@ -83,7 +80,9 @@ impl Transcriber {
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
 
-        let mut state = self.ctx.create_state()
+        let mut state = self
+            .ctx
+            .create_state()
             .map_err(|e| anyhow::anyhow!("Failed to create whisper state: {e}"))?;
 
         state
@@ -255,5 +254,4 @@ mod tests {
         let result = read_wav_samples(std::path::Path::new("/nonexistent/file.wav"));
         assert!(result.is_err());
     }
-
 }

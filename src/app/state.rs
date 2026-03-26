@@ -1,11 +1,11 @@
-use crate::config::{Config, InputMode};
 use crate::audio::recordings::RecordingStore;
+use crate::config::{Config, InputMode};
 use crate::ui::tray::TrayState;
 use rdev::Key;
 
+use crate::transcription::transcriber::Transcriber;
 #[cfg(test)]
 use crate::ui::tray::TrayAction;
-use crate::transcription::transcriber::Transcriber;
 use std::sync::Arc;
 
 pub enum AppMessage {
@@ -25,7 +25,10 @@ pub enum AppMessage {
     HotkeyCapture(Key),
     TranscriptionDone(String),
     TranscriptionError(String),
-    StreamingPartialText { text: String, replace_chars: usize },
+    StreamingPartialText {
+        text: String,
+        replace_chars: usize,
+    },
     /// A new Transcriber has been loaded in the background and is ready to swap in.
     /// The u64 is the reload generation; stale reloads are discarded.
     TranscriberReady(Arc<Transcriber>, u64),
@@ -43,7 +46,10 @@ pub enum AppEffect {
     StopStreaming,
     InsertText(String),
     /// Backspace `replace_chars` characters, then type `text` (streaming revisions).
-    StreamingReplace { text: String, replace_chars: usize },
+    StreamingReplace {
+        text: String,
+        replace_chars: usize,
+    },
     CopyToClipboard(String),
     SaveConfig,
     /// Open the config file in the user's default editor/file manager.
@@ -136,7 +142,10 @@ impl AppState {
             // TranscriberReady is handled directly in the run() loop before
             // reaching handle_message, but we need an arm for exhaustiveness.
             AppMessage::TranscriberReady(_, _) => vec![AppEffect::None],
-            AppMessage::StreamingPartialText { text, replace_chars } => {
+            AppMessage::StreamingPartialText {
+                text,
+                replace_chars,
+            } => {
                 if *replace_chars > 0 || !text.is_empty() {
                     vec![AppEffect::StreamingReplace {
                         text: text.clone(),
@@ -173,7 +182,11 @@ impl AppState {
     }
 
     fn on_key_down(&mut self) -> Vec<AppEffect> {
-        log::info!("on_key_down: mode={:?} is_pressed={}", self.mode, self.is_pressed);
+        log::info!(
+            "on_key_down: mode={:?} is_pressed={}",
+            self.mode,
+            self.is_pressed
+        );
         match (&self.mode, self.is_pressed) {
             (InputMode::OpenMic, true) => self.stop_recording_effects(),
             (InputMode::OpenMic, false) => self.start_recording_effects(),
@@ -186,7 +199,11 @@ impl AppState {
     }
 
     fn on_key_up(&mut self) -> Vec<AppEffect> {
-        log::info!("on_key_up: mode={:?} is_pressed={}", self.mode, self.is_pressed);
+        log::info!(
+            "on_key_up: mode={:?} is_pressed={}",
+            self.mode,
+            self.is_pressed
+        );
         if self.mode == InputMode::PushToTalk && self.is_pressed {
             self.stop_recording_effects()
         } else {
@@ -281,7 +298,10 @@ impl AppState {
 
     fn on_tray_set_hotkey(&mut self) -> Vec<AppEffect> {
         self.capturing_hotkey = true;
-        vec![AppEffect::EnterHotkeyCaptureMode, AppEffect::SetTrayState(TrayState::Idle)]
+        vec![
+            AppEffect::EnterHotkeyCaptureMode,
+            AppEffect::SetTrayState(TrayState::Idle),
+        ]
     }
 
     fn on_hotkey_capture(&mut self, key: &Key) -> Vec<AppEffect> {
@@ -332,8 +352,12 @@ mod tests {
         let mut state = default_state();
         let effects = state.handle_message(&AppMessage::KeyDown);
         assert!(state.is_pressed);
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::StartRecording(_))));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Recording))));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::StartRecording(_))));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Recording))));
     }
 
     #[test]
@@ -350,8 +374,12 @@ mod tests {
         state.is_pressed = true;
         let effects = state.handle_message(&AppMessage::KeyUp);
         assert!(!state.is_pressed);
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::StopAndTranscribe)));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Transcribing))));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::StopAndTranscribe)));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Transcribing))));
     }
 
     #[test]
@@ -369,8 +397,12 @@ mod tests {
         state.mode = InputMode::OpenMic;
         let effects = state.handle_message(&AppMessage::KeyDown);
         assert!(state.is_pressed);
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::StartRecording(_))));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Recording))));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::StartRecording(_))));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Recording))));
     }
 
     #[test]
@@ -380,8 +412,12 @@ mod tests {
         state.is_pressed = true;
         let effects = state.handle_message(&AppMessage::KeyDown);
         assert!(!state.is_pressed);
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::StopAndTranscribe)));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Transcribing))));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::StopAndTranscribe)));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Transcribing))));
     }
 
     #[test]
@@ -398,9 +434,14 @@ mod tests {
     #[test]
     fn transcription_done_inserts_text() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::TranscriptionDone("hello world".to_string()));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello world")));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Idle))));
+        let effects =
+            state.handle_message(&AppMessage::TranscriptionDone("hello world".to_string()));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello world")));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Idle))));
         assert_eq!(state.last_transcription, Some("hello world".to_string()));
     }
 
@@ -408,8 +449,12 @@ mod tests {
     fn transcription_done_empty_no_insert() {
         let mut state = default_state();
         let effects = state.handle_message(&AppMessage::TranscriptionDone("".to_string()));
-        assert!(!effects.iter().any(|e| matches!(e, AppEffect::InsertText(_))));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Idle))));
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::InsertText(_))));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Idle))));
         assert!(state.last_transcription.is_none());
     }
 
@@ -420,15 +465,21 @@ mod tests {
         let mut state = default_state();
         state.spoken_punctuation = true;
         let effects = state.handle_message(&AppMessage::TranscriptionDone("hello.".to_string()));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello.")));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello.")));
     }
 
     #[test]
     fn transcription_error_sets_error_state() {
         let mut state = default_state();
         let effects = state.handle_message(&AppMessage::TranscriptionError("fail".to_string()));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::LogError(t) if t == "fail")));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Error))));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::LogError(t) if t == "fail")));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Error))));
     }
 
     // -- Copy last --
@@ -438,7 +489,9 @@ mod tests {
         let mut state = default_state();
         state.last_transcription = Some("copied text".to_string());
         let effects = state.handle_message(&AppMessage::TrayCopyLast);
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::CopyToClipboard(t) if t == "copied text")));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::CopyToClipboard(t) if t == "copied text")));
     }
 
     #[test]
@@ -626,9 +679,12 @@ mod tests {
     fn transcription_done_skips_insert_when_streaming_was_active() {
         let mut state = default_state();
         state.streaming_active = true;
-        let effects = state.handle_message(&AppMessage::TranscriptionDone("hello world".to_string()));
+        let effects =
+            state.handle_message(&AppMessage::TranscriptionDone("hello world".to_string()));
         // Should NOT contain InsertText since streaming already inserted incrementally
-        assert!(!effects.iter().any(|e| matches!(e, AppEffect::InsertText(_))));
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::InsertText(_))));
         // But should still save last_transcription for copy-last
         assert_eq!(state.last_transcription, Some("hello world".to_string()));
         assert!(!state.streaming_active);
@@ -639,7 +695,9 @@ mod tests {
         let mut state = default_state();
         state.streaming_active = false;
         let effects = state.handle_message(&AppMessage::TranscriptionDone("hello".to_string()));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::InsertText(_))));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::InsertText(_))));
     }
 
     #[test]
@@ -739,7 +797,9 @@ mod tests {
         let mut state = default_state();
         let effects = state.handle_message(&AppMessage::TraySetHotkey);
         assert!(state.capturing_hotkey);
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::EnterHotkeyCaptureMode)));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::EnterHotkeyCaptureMode)));
     }
 
     #[test]
@@ -748,7 +808,9 @@ mod tests {
         state.capturing_hotkey = true;
         let effects = state.handle_message(&AppMessage::HotkeyCapture(rdev::Key::F5));
         assert!(!state.capturing_hotkey);
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::SetHotkey(k) if k == "f5")));
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::SetHotkey(k) if k == "f5")));
         assert!(effects.iter().any(|e| matches!(e, AppEffect::SaveConfig)));
     }
 

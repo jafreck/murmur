@@ -31,8 +31,7 @@ fn init_macos_app() {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 
-    let mtm = MainThreadMarker::new()
-        .expect("init_macos_app must be called on the main thread");
+    let mtm = MainThreadMarker::new().expect("init_macos_app must be called on the main thread");
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 }
@@ -122,9 +121,15 @@ pub fn run() -> Result<()> {
         if let Err(e) = HotkeyManager::start(
             hotkey_config_listener,
             capture_flag_listener,
-            move || { let _ = tx_down.send(AppMessage::KeyDown); },
-            move || { let _ = tx_up.send(AppMessage::KeyUp); },
-            move |key| { let _ = tx_capture.send(AppMessage::HotkeyCapture(key)); },
+            move || {
+                let _ = tx_down.send(AppMessage::KeyDown);
+            },
+            move || {
+                let _ = tx_up.send(AppMessage::KeyUp);
+            },
+            move |key| {
+                let _ = tx_capture.send(AppMessage::HotkeyCapture(key));
+            },
         ) {
             error!("Hotkey listener failed: {e}");
         }
@@ -143,19 +148,20 @@ pub fn run() -> Result<()> {
                     eprint!("\rDownloading {model_size} model... {percent:.0}%");
                 }) {
                     error!("Failed to download model '{model_size}': {e}");
-                    let _ = tx_load.send(AppMessage::TranscriptionError(
-                        format!("Failed to download model '{model_size}': {e}"),
-                    ));
+                    let _ = tx_load.send(AppMessage::TranscriptionError(format!(
+                        "Failed to download model '{model_size}': {e}"
+                    )));
                     return;
                 }
                 eprintln!();
             }
 
-            let Some(model_path) = crate::transcription::transcriber::find_model(&model_size) else {
+            let Some(model_path) = crate::transcription::transcriber::find_model(&model_size)
+            else {
                 error!("Model '{model_size}' not found after download");
-                let _ = tx_load.send(AppMessage::TranscriptionError(
-                    format!("Model '{model_size}' not found after download"),
-                ));
+                let _ = tx_load.send(AppMessage::TranscriptionError(format!(
+                    "Model '{model_size}' not found after download"
+                )));
                 return;
             };
 
@@ -166,9 +172,9 @@ pub fn run() -> Result<()> {
                 }
                 Err(e) => {
                     error!("Failed to load model '{model_size}': {e}");
-                    let _ = tx_load.send(AppMessage::TranscriptionError(
-                        format!("Failed to load model '{model_size}': {e}"),
-                    ));
+                    let _ = tx_load.send(AppMessage::TranscriptionError(format!(
+                        "Failed to load model '{model_size}': {e}"
+                    )));
                 }
             }
         });
@@ -198,23 +204,29 @@ pub fn run() -> Result<()> {
                         println!("Ready.");
                     }
                 } else {
-                    info!("Discarding stale transcriber reload (gen {generation}, current {})", state.reload_generation);
+                    info!(
+                        "Discarding stale transcriber reload (gen {generation}, current {})",
+                        state.reload_generation
+                    );
                 }
                 continue;
             }
             let mut effects = VecDeque::from(state.handle_message(&msg));
             while let Some(effect) = effects.pop_front() {
-                let (quit, extra) = effects::apply_effect(effect, &mut EffectContext {
-                    recorder: &mut recorder,
-                    transcriber: &mut transcriber,
-                    tray: &mut tray,
-                    config: &mut config,
-                    state: &mut state,
-                    tx: &tx,
-                    streaming_stop: &mut streaming_stop,
-                    hotkey_config: &hotkey_config,
-                    capture_flag: &capture_flag,
-                })?;
+                let (quit, extra) = effects::apply_effect(
+                    effect,
+                    &mut EffectContext {
+                        recorder: &mut recorder,
+                        transcriber: &mut transcriber,
+                        tray: &mut tray,
+                        config: &mut config,
+                        state: &mut state,
+                        tx: &tx,
+                        streaming_stop: &mut streaming_stop,
+                        hotkey_config: &hotkey_config,
+                        capture_flag: &capture_flag,
+                    },
+                )?;
                 effects.extend(extra);
                 if quit {
                     should_quit = true;

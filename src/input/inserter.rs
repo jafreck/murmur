@@ -16,9 +16,13 @@ pub struct TextInserter;
 /// The modifier key used for paste: Cmd on macOS, Ctrl elsewhere.
 pub fn paste_modifier() -> Key {
     #[cfg(target_os = "macos")]
-    { Key::Meta }
+    {
+        Key::Meta
+    }
     #[cfg(not(target_os = "macos"))]
-    { Key::Control }
+    {
+        Key::Control
+    }
 }
 
 impl TextInserter {
@@ -50,8 +54,12 @@ impl TextInserter {
         // there is no reliable cross-platform way to detect paste completion.
         thread::sleep(Duration::from_millis(400));
         match saved {
-            SavedClipboard::Text(prev) => { let _ = clipboard.set_text(prev); }
-            SavedClipboard::Image(img) => { let _ = clipboard.set_image(img); }
+            SavedClipboard::Text(prev) => {
+                let _ = clipboard.set_text(prev);
+            }
+            SavedClipboard::Image(img) => {
+                let _ = clipboard.set_image(img);
+            }
             SavedClipboard::Empty => {}
         }
 

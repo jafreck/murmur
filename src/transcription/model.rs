@@ -25,7 +25,10 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
 
     if dest_path.exists() {
         if is_valid_ggml_file(&dest_path) {
-            log::info!("Model '{model_size}' already exists at {}", dest_path.display());
+            log::info!(
+                "Model '{model_size}' already exists at {}",
+                dest_path.display()
+            );
             return Ok(dest_path);
         }
         log::warn!(
@@ -35,14 +38,12 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
         let _ = std::fs::remove_file(&dest_path);
     }
 
-    std::fs::create_dir_all(&models_dir)
-        .context("Failed to create models directory")?;
+    std::fs::create_dir_all(&models_dir).context("Failed to create models directory")?;
 
     let url = model_url(model_size);
     log::info!("Downloading {model_size} model from {url}...");
 
-    let response = reqwest::blocking::get(&url)
-        .context("Failed to connect to HuggingFace")?;
+    let response = reqwest::blocking::get(&url).context("Failed to connect to HuggingFace")?;
 
     if !response.status().is_success() {
         anyhow::bail!(
@@ -57,8 +58,7 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
     // Write to a temporary file first, then rename atomically to avoid
     // leaving a partial file at the final path if the process is killed.
     let part_path = models_dir.join(format!("{filename}.part"));
-    let mut file = File::create(&part_path)
-        .context("Failed to create temporary model file")?;
+    let mut file = File::create(&part_path).context("Failed to create temporary model file")?;
 
     let mut downloaded: u64 = 0;
     let mut buf = [0u8; 8192];
@@ -151,7 +151,9 @@ mod tests {
 
     #[test]
     fn test_is_valid_ggml_file_nonexistent() {
-        assert!(!is_valid_ggml_file(std::path::Path::new("/nonexistent/file")));
+        assert!(!is_valid_ggml_file(std::path::Path::new(
+            "/nonexistent/file"
+        )));
     }
 
     #[test]

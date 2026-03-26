@@ -20,11 +20,16 @@ impl std::fmt::Display for InputMode {
 }
 
 pub const SUPPORTED_MODELS: &[&str] = &[
-    "tiny.en", "tiny",
-    "base.en", "base",
-    "small.en", "small",
-    "medium.en", "medium",
-    "large-v3-turbo", "large",
+    "tiny.en",
+    "tiny",
+    "base.en",
+    "base",
+    "small.en",
+    "small",
+    "medium.en",
+    "medium",
+    "large-v3-turbo",
+    "large",
 ];
 
 pub const SUPPORTED_LANGUAGES: &[(&str, &str)] = &[
@@ -142,9 +147,13 @@ impl Default for Config {
 
 fn default_hotkey() -> &'static str {
     #[cfg(target_os = "macos")]
-    { "rightoption" }
+    {
+        "rightoption"
+    }
     #[cfg(not(target_os = "macos"))]
-    { "rightalt" }
+    {
+        "rightalt"
+    }
 }
 
 impl Config {

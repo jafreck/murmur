@@ -116,8 +116,14 @@ mod tests {
 
     #[test]
     fn test_ensure_space_after_punct() {
-        assert_eq!(ensure_space_after_punctuation("hello,world"), "hello, world");
-        assert_eq!(ensure_space_after_punctuation("hello, world"), "hello, world");
+        assert_eq!(
+            ensure_space_after_punctuation("hello,world"),
+            "hello, world"
+        );
+        assert_eq!(
+            ensure_space_after_punctuation("hello, world"),
+            "hello, world"
+        );
     }
 
     #[test]

@@ -79,7 +79,6 @@ impl RecordingStore {
             }
         }
     }
-
 }
 
 fn chrono_timestamp() -> String {

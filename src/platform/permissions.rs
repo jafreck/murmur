@@ -6,7 +6,9 @@ pub fn check_accessibility() -> bool {
     // The system will prompt automatically when rdev::listen is called.
     // We just log a hint for the user.
     log::info!("macOS: Accessibility permission is required for hotkey detection.");
-    log::info!("If prompted, grant access in System Settings → Privacy & Security → Accessibility.");
+    log::info!(
+        "If prompted, grant access in System Settings → Privacy & Security → Accessibility."
+    );
     true
 }
 

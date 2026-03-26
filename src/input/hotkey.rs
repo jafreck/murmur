@@ -31,7 +31,8 @@ impl ParsedHotkey {
         if self.modifiers.is_empty() {
             key_name
         } else {
-            let mod_names: Vec<String> = self.modifiers
+            let mod_names: Vec<String> = self
+                .modifiers
                 .iter()
                 .map(super::keycodes::key_to_name)
                 .collect();
@@ -113,9 +114,7 @@ impl HotkeyManager {
                 // desync rdev's internal state, inverting press/release polarity.
                 // Use hotkey_active as the source of truth and toggle on any
                 // flagsChanged event for the target modifier key.
-                EventType::KeyPress(key) | EventType::KeyRelease(key)
-                    if is_modifier(&key) =>
-                {
+                EventType::KeyPress(key) | EventType::KeyRelease(key) if is_modifier(&key) => {
                     // Update held_modifiers for combo support
                     if matches!(event.event_type, EventType::KeyPress(_)) {
                         if let Ok(mut held) = held_modifiers.lock() {
@@ -208,14 +207,26 @@ mod tests {
     fn to_config_string_round_trips() {
         // Every config string produced by to_config_string must be parseable
         let cases = vec![
-            ParsedHotkey { key: Key::F9, modifiers: vec![] },
-            ParsedHotkey { key: Key::Space, modifiers: vec![Key::ControlLeft] },
-            ParsedHotkey { key: Key::KeyA, modifiers: vec![Key::MetaLeft, Key::ShiftLeft] },
+            ParsedHotkey {
+                key: Key::F9,
+                modifiers: vec![],
+            },
+            ParsedHotkey {
+                key: Key::Space,
+                modifiers: vec![Key::ControlLeft],
+            },
+            ParsedHotkey {
+                key: Key::KeyA,
+                modifiers: vec![Key::MetaLeft, Key::ShiftLeft],
+            },
         ];
         for hk in &cases {
             let s = hk.to_config_string();
             let parsed = crate::input::keycodes::parse(&s);
-            assert!(parsed.is_some(), "Failed to parse round-tripped config: {s}");
+            assert!(
+                parsed.is_some(),
+                "Failed to parse round-tripped config: {s}"
+            );
             let parsed = parsed.unwrap();
             assert_eq!(parsed.key, hk.key, "Key mismatch for config: {s}");
         }

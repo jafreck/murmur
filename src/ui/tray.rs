@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use tray_icon::menu::{
-    CheckMenuItem, Menu, MenuEvent, MenuItem, MenuId, PredefinedMenuItem, Submenu,
+    CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
 };
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
@@ -57,7 +57,11 @@ pub fn state_display(state: &TrayState) -> (&'static str, &'static str) {
 
 /// Build a radio-style label.
 pub fn radio_label(name: &str, selected: bool) -> String {
-    if selected { format!("● {name}") } else { format!("○ {name}") }
+    if selected {
+        format!("● {name}")
+    } else {
+        format!("○ {name}")
+    }
 }
 
 /// Grouped menu item IDs for constructing a MenuActionMap.
@@ -103,30 +107,54 @@ impl MenuActionMap {
             streaming_id: ids.streaming,
             translate_id: ids.translate,
             set_hotkey_id: ids.set_hotkey,
-            model_ids, language_ids, mode_ids,
+            model_ids,
+            language_ids,
+            mode_ids,
         }
     }
 
     pub fn match_event(&self, event_id: &MenuId) -> Option<TrayAction> {
-        if event_id == &self.quit_id { return Some(TrayAction::Quit); }
-        if event_id == &self.copy_last_id { return Some(TrayAction::CopyLastDictation); }
-        if event_id == &self.open_config_id { return Some(TrayAction::OpenConfig); }
-        if event_id == &self.reload_config_id { return Some(TrayAction::ReloadConfig); }
-        if event_id == &self.spoken_punct_id { return Some(TrayAction::ToggleSpokenPunctuation); }
-        if event_id == &self.streaming_id { return Some(TrayAction::ToggleStreaming); }
-        if event_id == &self.translate_id { return Some(TrayAction::ToggleTranslate); }
-        if event_id == &self.set_hotkey_id { return Some(TrayAction::SetHotkey); }
+        if event_id == &self.quit_id {
+            return Some(TrayAction::Quit);
+        }
+        if event_id == &self.copy_last_id {
+            return Some(TrayAction::CopyLastDictation);
+        }
+        if event_id == &self.open_config_id {
+            return Some(TrayAction::OpenConfig);
+        }
+        if event_id == &self.reload_config_id {
+            return Some(TrayAction::ReloadConfig);
+        }
+        if event_id == &self.spoken_punct_id {
+            return Some(TrayAction::ToggleSpokenPunctuation);
+        }
+        if event_id == &self.streaming_id {
+            return Some(TrayAction::ToggleStreaming);
+        }
+        if event_id == &self.translate_id {
+            return Some(TrayAction::ToggleTranslate);
+        }
+        if event_id == &self.set_hotkey_id {
+            return Some(TrayAction::SetHotkey);
+        }
 
         for (id, size) in &self.model_ids {
-            if event_id == id { return Some(TrayAction::SetModel(size.clone())); }
+            if event_id == id {
+                return Some(TrayAction::SetModel(size.clone()));
+            }
         }
 
         for (id, code) in &self.language_ids {
-            if event_id == id { return Some(TrayAction::SetLanguage(code.clone())); }
+            if event_id == id {
+                return Some(TrayAction::SetLanguage(code.clone()));
+            }
         }
 
         for (id, mode) in &self.mode_ids {
-            if event_id == id { return Some(TrayAction::SetMode(mode.clone())); }
+            if event_id == id {
+                return Some(TrayAction::SetMode(mode.clone()));
+            }
         }
 
         None
@@ -177,7 +205,9 @@ fn update_radio_entries<T: PartialEq>(
     for entry in entries {
         let is_selected = entry.value == *selected;
         entry.item.set_checked(is_selected);
-        entry.item.set_text(radio_label(&display_name(&entry.value), is_selected));
+        entry
+            .item
+            .set_text(radio_label(&display_name(&entry.value), is_selected));
     }
 }
 
@@ -223,11 +253,8 @@ impl TrayController {
             .iter()
             .map(|&s| (s, s.to_string()))
             .collect();
-        let (model_entries, model_ids) = build_radio_submenu(
-            &model_submenu,
-            &model_items,
-            |s| s == &config.model_size,
-        )?;
+        let (model_entries, model_ids) =
+            build_radio_submenu(&model_submenu, &model_items, |s| s == &config.model_size)?;
 
         let lang_submenu = Submenu::new("Language", true);
         let lang_items: Vec<(&str, String)> = TOP_LANGUAGES
@@ -237,11 +264,8 @@ impl TrayController {
                 (name, code.to_string())
             })
             .collect();
-        let (language_entries, language_ids) = build_radio_submenu(
-            &lang_submenu,
-            &lang_items,
-            |c| c == &config.language,
-        )?;
+        let (language_entries, language_ids) =
+            build_radio_submenu(&lang_submenu, &lang_items, |c| c == &config.language)?;
 
         let spoken_punct_item =
             CheckMenuItem::new("Spoken Punctuation", true, config.spoken_punctuation, None);
@@ -252,18 +276,19 @@ impl TrayController {
             ("Push to Talk", InputMode::PushToTalk),
             ("Open Mic", InputMode::OpenMic),
         ];
-        let (mode_entries, mode_ids) = build_radio_submenu(
-            &mode_submenu,
-            &mode_items,
-            |m| *m == config.mode,
-        )?;
+        let (mode_entries, mode_ids) =
+            build_radio_submenu(&mode_submenu, &mode_items, |m| *m == config.mode)?;
 
         let streaming_item =
             CheckMenuItem::new("Live Streaming (Preview)", true, config.streaming, None);
         let streaming_id = streaming_item.id().clone();
 
-        let translate_item =
-            CheckMenuItem::new("Translate to English", true, config.translate_to_english, None);
+        let translate_item = CheckMenuItem::new(
+            "Translate to English",
+            true,
+            config.translate_to_english,
+            None,
+        );
         let translate_id = translate_item.id().clone();
 
         let open_config = MenuItem::new("Open Config…", true, None);
@@ -305,7 +330,9 @@ impl TrayController {
                 translate: translate_id,
                 set_hotkey: set_hotkey_id,
             },
-            model_ids, language_ids, mode_ids,
+            model_ids,
+            language_ids,
+            mode_ids,
         );
 
         let idle_icon = make_bark_icon(100, 150, 255, 200)?;
@@ -321,11 +348,21 @@ impl TrayController {
             .build()?;
 
         Ok(Self {
-            tray, state: TrayState::Idle, action_map,
-            model_entries, language_entries, mode_entries,
-            spoken_punct_item, streaming_item, translate_item,
-            status_item, hotkey_item,
-            idle_icon, recording_icon, transcribing_icon, loading_icon,
+            tray,
+            state: TrayState::Idle,
+            action_map,
+            model_entries,
+            language_entries,
+            mode_entries,
+            spoken_punct_item,
+            streaming_item,
+            translate_item,
+            status_item,
+            hotkey_item,
+            idle_icon,
+            recording_icon,
+            transcribing_icon,
+            loading_icon,
         })
     }
 
@@ -385,9 +422,13 @@ fn make_bark_icon(r: u8, g: u8, b: u8, a: u8) -> Result<Icon> {
 pub fn tint_png_rgba(png_data: &[u8], r: u8, g: u8, b: u8, a: u8) -> Result<(Vec<u8>, u32, u32)> {
     let cursor = std::io::Cursor::new(png_data);
     let decoder = png::Decoder::new(cursor);
-    let mut reader = decoder.read_info().map_err(|e| anyhow::anyhow!("PNG decode: {e}"))?;
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| anyhow::anyhow!("PNG decode: {e}"))?;
     let mut buf = vec![0u8; reader.output_buffer_size().expect("PNG info missing")];
-    let info = reader.next_frame(&mut buf).map_err(|e| anyhow::anyhow!("PNG frame: {e}"))?;
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| anyhow::anyhow!("PNG frame: {e}"))?;
     let width = info.width;
     let height = info.height;
     let src = &buf[..info.buffer_size()];
@@ -470,8 +511,13 @@ mod tests {
 
     #[test]
     fn state_display_all() {
-        for state in [TrayState::Idle, TrayState::Recording, TrayState::Transcribing,
-                      TrayState::Downloading, TrayState::Error] {
+        for state in [
+            TrayState::Idle,
+            TrayState::Recording,
+            TrayState::Transcribing,
+            TrayState::Downloading,
+            TrayState::Error,
+        ] {
             let (tooltip, label) = state_display(&state);
             assert!(!tooltip.is_empty());
             assert!(!label.is_empty());
@@ -511,8 +557,13 @@ mod tests {
     fn menu_action_map_matches_quit() {
         let quit_id = MenuId::new("quit");
         let map = MenuActionMap::new(
-            MenuActionIds { quit: quit_id.clone(), ..default_ids() },
-            vec![], vec![], vec![],
+            MenuActionIds {
+                quit: quit_id.clone(),
+                ..default_ids()
+            },
+            vec![],
+            vec![],
+            vec![],
         );
         assert_eq!(map.match_event(&quit_id), Some(TrayAction::Quit));
     }
@@ -521,8 +572,13 @@ mod tests {
     fn menu_action_map_matches_copy_last() {
         let id = MenuId::new("copy");
         let map = MenuActionMap::new(
-            MenuActionIds { copy_last: id.clone(), ..default_ids() },
-            vec![], vec![], vec![],
+            MenuActionIds {
+                copy_last: id.clone(),
+                ..default_ids()
+            },
+            vec![],
+            vec![],
+            vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::CopyLastDictation));
     }
@@ -531,8 +587,13 @@ mod tests {
     fn menu_action_map_matches_open_config() {
         let id = MenuId::new("oc2");
         let map = MenuActionMap::new(
-            MenuActionIds { open_config: id.clone(), ..default_ids() },
-            vec![], vec![], vec![],
+            MenuActionIds {
+                open_config: id.clone(),
+                ..default_ids()
+            },
+            vec![],
+            vec![],
+            vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::OpenConfig));
     }
@@ -541,8 +602,13 @@ mod tests {
     fn menu_action_map_matches_reload_config() {
         let id = MenuId::new("rc2");
         let map = MenuActionMap::new(
-            MenuActionIds { reload_config: id.clone(), ..default_ids() },
-            vec![], vec![], vec![],
+            MenuActionIds {
+                reload_config: id.clone(),
+                ..default_ids()
+            },
+            vec![],
+            vec![],
+            vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ReloadConfig));
     }
@@ -551,10 +617,18 @@ mod tests {
     fn menu_action_map_matches_spoken_punct() {
         let id = MenuId::new("sp2");
         let map = MenuActionMap::new(
-            MenuActionIds { spoken_punct: id.clone(), ..default_ids() },
-            vec![], vec![], vec![],
+            MenuActionIds {
+                spoken_punct: id.clone(),
+                ..default_ids()
+            },
+            vec![],
+            vec![],
+            vec![],
         );
-        assert_eq!(map.match_event(&id), Some(TrayAction::ToggleSpokenPunctuation));
+        assert_eq!(
+            map.match_event(&id),
+            Some(TrayAction::ToggleSpokenPunctuation)
+        );
     }
 
     #[test]
@@ -562,18 +636,27 @@ mod tests {
         let id = MenuId::new("mode_ptt");
         let map = MenuActionMap::new(
             default_ids(),
-            vec![], vec![],
+            vec![],
+            vec![],
             vec![(id.clone(), InputMode::PushToTalk)],
         );
-        assert_eq!(map.match_event(&id), Some(TrayAction::SetMode(InputMode::PushToTalk)));
+        assert_eq!(
+            map.match_event(&id),
+            Some(TrayAction::SetMode(InputMode::PushToTalk))
+        );
     }
 
     #[test]
     fn menu_action_map_matches_streaming() {
         let id = MenuId::new("st2");
         let map = MenuActionMap::new(
-            MenuActionIds { streaming: id.clone(), ..default_ids() },
-            vec![], vec![], vec![],
+            MenuActionIds {
+                streaming: id.clone(),
+                ..default_ids()
+            },
+            vec![],
+            vec![],
+            vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ToggleStreaming));
     }
@@ -582,8 +665,13 @@ mod tests {
     fn menu_action_map_matches_translate() {
         let id = MenuId::new("tr2");
         let map = MenuActionMap::new(
-            MenuActionIds { translate: id.clone(), ..default_ids() },
-            vec![], vec![], vec![],
+            MenuActionIds {
+                translate: id.clone(),
+                ..default_ids()
+            },
+            vec![],
+            vec![],
+            vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ToggleTranslate));
     }
@@ -592,8 +680,13 @@ mod tests {
     fn menu_action_map_matches_set_hotkey() {
         let id = MenuId::new("sh2");
         let map = MenuActionMap::new(
-            MenuActionIds { set_hotkey: id.clone(), ..default_ids() },
-            vec![], vec![], vec![],
+            MenuActionIds {
+                set_hotkey: id.clone(),
+                ..default_ids()
+            },
+            vec![],
+            vec![],
+            vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::SetHotkey));
     }
@@ -604,9 +697,13 @@ mod tests {
         let map = MenuActionMap::new(
             default_ids(),
             vec![(model_id.clone(), "base.en".to_string())],
-            vec![], vec![],
+            vec![],
+            vec![],
         );
-        assert_eq!(map.match_event(&model_id), Some(TrayAction::SetModel("base.en".to_string())));
+        assert_eq!(
+            map.match_event(&model_id),
+            Some(TrayAction::SetModel("base.en".to_string()))
+        );
     }
 
     #[test]
@@ -618,15 +715,15 @@ mod tests {
             vec![(lang_id.clone(), "fr".to_string())],
             vec![],
         );
-        assert_eq!(map.match_event(&lang_id), Some(TrayAction::SetLanguage("fr".to_string())));
+        assert_eq!(
+            map.match_event(&lang_id),
+            Some(TrayAction::SetLanguage("fr".to_string()))
+        );
     }
 
     #[test]
     fn menu_action_map_unknown_id() {
-        let map = MenuActionMap::new(
-            default_ids(),
-            vec![], vec![], vec![],
-        );
+        let map = MenuActionMap::new(default_ids(), vec![], vec![], vec![]);
         assert_eq!(map.match_event(&MenuId::new("unknown")), None);
     }
 
@@ -636,11 +733,21 @@ mod tests {
         let m2 = MenuId::new("m2");
         let map = MenuActionMap::new(
             default_ids(),
-            vec![(m1.clone(), "tiny.en".to_string()), (m2.clone(), "large".to_string())],
-            vec![], vec![],
+            vec![
+                (m1.clone(), "tiny.en".to_string()),
+                (m2.clone(), "large".to_string()),
+            ],
+            vec![],
+            vec![],
         );
-        assert_eq!(map.match_event(&m1), Some(TrayAction::SetModel("tiny.en".to_string())));
-        assert_eq!(map.match_event(&m2), Some(TrayAction::SetModel("large".to_string())));
+        assert_eq!(
+            map.match_event(&m1),
+            Some(TrayAction::SetModel("tiny.en".to_string()))
+        );
+        assert_eq!(
+            map.match_event(&m2),
+            Some(TrayAction::SetModel("large".to_string()))
+        );
     }
 
     // -- tint_pixels --
@@ -737,6 +844,4 @@ mod tests {
             assert!(crate::config::is_valid_language(code));
         }
     }
-
-
 }

@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use hound::{SampleFormat, WavSpec, WavWriter};
-use std::io::BufWriter;
 use std::fs::File;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -63,9 +63,7 @@ impl AudioRecorder {
 
     pub fn start_in_memory(&mut self) -> Result<()> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .context("No microphone found")?;
+        let device = host.default_input_device().context("No microphone found")?;
 
         let supported_config = device
             .default_input_config()
@@ -81,23 +79,25 @@ impl AudioRecorder {
         let dropped = Arc::new(AtomicU64::new(0));
         let dropped_clone = Arc::clone(&dropped);
 
-        let stream = device.build_input_stream(
-            &supported_config.into(),
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                let mono = mix_to_mono(data, native_channels);
-                let resampled = resample(&mono, native_rate, TARGET_RATE);
+        let stream = device
+            .build_input_stream(
+                &supported_config.into(),
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let mono = mix_to_mono(data, native_channels);
+                    let resampled = resample(&mono, native_rate, TARGET_RATE);
 
-                if let Ok(mut buf) = samples_clone.try_lock() {
-                    buf.extend_from_slice(&resampled);
-                } else {
-                    dropped_clone.fetch_add(resampled.len() as u64, Ordering::Relaxed);
-                }
-            },
-            |err| {
-                log::error!("Audio stream error: {err}");
-            },
-            None,
-        ).context("Failed to build input stream")?;
+                    if let Ok(mut buf) = samples_clone.try_lock() {
+                        buf.extend_from_slice(&resampled);
+                    } else {
+                        dropped_clone.fetch_add(resampled.len() as u64, Ordering::Relaxed);
+                    }
+                },
+                |err| {
+                    log::error!("Audio stream error: {err}");
+                },
+                None,
+            )
+            .context("Failed to build input stream")?;
 
         stream.play().context("Failed to start audio stream")?;
         self.stream = Some(stream);
@@ -126,9 +126,7 @@ impl AudioRecorder {
 
     pub fn start(&mut self, output_path: &Path) -> Result<()> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .context("No microphone found")?;
+        let device = host.default_input_device().context("No microphone found")?;
 
         let supported_config = device
             .default_input_config()
@@ -151,33 +149,35 @@ impl AudioRecorder {
         let dropped = Arc::new(AtomicU64::new(0));
         let dropped_clone = Arc::clone(&dropped);
 
-        let stream = device.build_input_stream(
-            &supported_config.into(),
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                let mono = mix_to_mono(data, native_channels);
-                let resampled = resample(&mono, native_rate, TARGET_RATE);
+        let stream = device
+            .build_input_stream(
+                &supported_config.into(),
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let mono = mix_to_mono(data, native_channels);
+                    let resampled = resample(&mono, native_rate, TARGET_RATE);
 
-                // Write to WAV file
-                if let Ok(mut guard) = writer_clone.try_lock() {
-                    if let Some(ref mut w) = *guard {
-                        for &sample in &resampled {
-                            let _ = w.write_sample(f32_to_i16(sample));
+                    // Write to WAV file
+                    if let Ok(mut guard) = writer_clone.try_lock() {
+                        if let Some(ref mut w) = *guard {
+                            for &sample in &resampled {
+                                let _ = w.write_sample(f32_to_i16(sample));
+                            }
                         }
+                    } else {
+                        dropped_clone.fetch_add(resampled.len() as u64, Ordering::Relaxed);
                     }
-                } else {
-                    dropped_clone.fetch_add(resampled.len() as u64, Ordering::Relaxed);
-                }
 
-                // Append to in-memory buffer for streaming access
-                if let Ok(mut buf) = samples_clone.try_lock() {
-                    buf.extend_from_slice(&resampled);
-                }
-            },
-            |err| {
-                log::error!("Audio stream error: {err}");
-            },
-            None,
-        ).context("Failed to build input stream")?;
+                    // Append to in-memory buffer for streaming access
+                    if let Ok(mut buf) = samples_clone.try_lock() {
+                        buf.extend_from_slice(&resampled);
+                    }
+                },
+                |err| {
+                    log::error!("Audio stream error: {err}");
+                },
+                None,
+            )
+            .context("Failed to build input stream")?;
 
         stream.play().context("Failed to start audio stream")?;
         self.stream = Some(stream);

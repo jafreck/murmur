@@ -50,8 +50,7 @@ enum Commands {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     // Log panics with full backtraces instead of just printing to stderr.
     // This catches panics in the main thread and provides context for debugging.
@@ -93,8 +92,9 @@ fn cmd_start() -> Result<()> {
 }
 
 fn cmd_set_hotkey(key_string: &str) -> Result<()> {
-    let parsed = keycodes::parse(key_string)
-        .ok_or_else(|| anyhow::anyhow!("Unknown key '{key_string}'. Run 'murmur --help' for examples."))?;
+    let parsed = keycodes::parse(key_string).ok_or_else(|| {
+        anyhow::anyhow!("Unknown key '{key_string}'. Run 'murmur --help' for examples.")
+    })?;
 
     let mut cfg = config::Config::load();
     cfg.hotkey = parsed.to_config_string();

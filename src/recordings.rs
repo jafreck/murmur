@@ -12,10 +12,6 @@ impl RecordingStore {
         Config::dir().join("recordings")
     }
 
-    pub fn ensure_dir() {
-        Self::ensure_dir_at(&Self::recordings_dir());
-    }
-
     pub fn ensure_dir_at(dir: &std::path::Path) {
         if let Err(e) = std::fs::create_dir_all(dir) {
             eprintln!("Warning: could not create recordings directory: {e}");
@@ -36,10 +32,6 @@ impl RecordingStore {
         let unique = &uuid_short();
         let filename = format!("{FILE_PREFIX}{now}-{unique}.{FILE_EXTENSION}");
         dir.join(filename)
-    }
-
-    pub fn list_recordings() -> Vec<(PathBuf, String)> {
-        Self::list_recordings_in(&Self::recordings_dir())
     }
 
     pub fn list_recordings_in(dir: &std::path::Path) -> Vec<(PathBuf, String)> {
@@ -85,16 +77,6 @@ impl RecordingStore {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn delete_all() {
-        Self::delete_all_in(&Self::recordings_dir());
-    }
-
-    pub fn delete_all_in(dir: &std::path::Path) {
-        for (path, _) in Self::list_recordings_in(dir) {
-            let _ = std::fs::remove_file(&path);
-        }
-    }
 }
 
 fn chrono_timestamp() -> String {
@@ -219,7 +201,10 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         std::fs::write(tmp.path().join("recording-001-aaa.wav"), "").unwrap();
         std::fs::write(tmp.path().join("recording-002-bbb.wav"), "").unwrap();
-        RecordingStore::delete_all_in(tmp.path());
+        // Inline delete-all logic (the wrapper was removed as dead code)
+        for (path, _) in RecordingStore::list_recordings_in(tmp.path()) {
+            let _ = std::fs::remove_file(&path);
+        }
         let remaining = RecordingStore::list_recordings_in(tmp.path());
         assert!(remaining.is_empty());
     }
@@ -240,29 +225,9 @@ mod tests {
     }
 
     #[test]
-    fn test_ensure_dir_wrapper() {
-        // Just verify it doesn't panic — uses the real config dir
-        RecordingStore::ensure_dir();
-    }
-
-    #[test]
-    fn test_list_recordings_wrapper() {
-        // Calls the real dir but should not panic
-        let _ = RecordingStore::list_recordings();
-    }
-
-    #[test]
     fn test_prune_wrapper() {
         // Calls the real dir but safe with a large limit
         RecordingStore::prune(1000);
-    }
-
-    #[test]
-    fn test_delete_all_wrapper() {
-        // We don't actually want to delete real recordings,
-        // so test via delete_all_in with an empty temp dir
-        let tmp = tempfile::TempDir::new().unwrap();
-        RecordingStore::delete_all_in(tmp.path());
     }
 
     #[test]

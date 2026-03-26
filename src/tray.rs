@@ -61,6 +61,17 @@ pub fn radio_label(name: &str, selected: bool) -> String {
     if selected { format!("● {name}") } else { format!("○ {name}") }
 }
 
+/// Grouped menu item IDs for constructing a MenuActionMap.
+pub struct MenuActionIds {
+    pub quit: MenuId,
+    pub copy_last: MenuId,
+    pub open_config: MenuId,
+    pub reload_config: MenuId,
+    pub spoken_punct: MenuId,
+    pub streaming: MenuId,
+    pub translate: MenuId,
+}
+
 /// Menu event matching engine. Maps MenuId → TrayAction.
 pub struct MenuActionMap {
     quit_id: MenuId,
@@ -77,20 +88,19 @@ pub struct MenuActionMap {
 
 impl MenuActionMap {
     pub fn new(
-        quit_id: MenuId,
-        copy_last_id: MenuId,
-        open_config_id: MenuId,
-        reload_config_id: MenuId,
-        spoken_punct_id: MenuId,
-        streaming_id: MenuId,
-        translate_id: MenuId,
+        ids: MenuActionIds,
         model_ids: Vec<(MenuId, String)>,
         language_ids: Vec<(MenuId, String)>,
         mode_ids: Vec<(MenuId, InputMode)>,
     ) -> Self {
         Self {
-            quit_id, copy_last_id, open_config_id, reload_config_id,
-            spoken_punct_id, streaming_id, translate_id,
+            quit_id: ids.quit,
+            copy_last_id: ids.copy_last,
+            open_config_id: ids.open_config,
+            reload_config_id: ids.reload_config,
+            spoken_punct_id: ids.spoken_punct,
+            streaming_id: ids.streaming,
+            translate_id: ids.translate,
             model_ids, language_ids, mode_ids,
         }
     }
@@ -121,13 +131,13 @@ impl MenuActionMap {
 }
 
 /// A model radio item.
-struct ModelEntry { id: MenuId, size: String, item: CheckMenuItem }
+struct ModelEntry { size: String, item: CheckMenuItem }
 
 /// A language radio item.
-struct LanguageEntry { id: MenuId, code: String, item: CheckMenuItem }
+struct LanguageEntry { code: String, item: CheckMenuItem }
 
 /// A mode radio item.
-struct ModeEntry { id: MenuId, mode: InputMode, item: CheckMenuItem }
+struct ModeEntry { mode: InputMode, item: CheckMenuItem }
 
 /// Manages the system tray icon and context menu.
 pub struct TrayController {
@@ -173,7 +183,7 @@ impl TrayController {
             let id = item.id().clone();
             model_submenu.append(&item)?;
             model_ids.push((id.clone(), size.to_string()));
-            model_entries.push(ModelEntry { id, size: size.to_string(), item });
+            model_entries.push(ModelEntry { size: size.to_string(), item });
         }
 
         let lang_submenu = Submenu::new("Language", true);
@@ -188,7 +198,7 @@ impl TrayController {
             let id = item.id().clone();
             lang_submenu.append(&item)?;
             language_ids.push((id.clone(), code.to_string()));
-            language_entries.push(LanguageEntry { id, code: code.to_string(), item });
+            language_entries.push(LanguageEntry { code: code.to_string(), item });
         }
 
         let spoken_punct_item =
@@ -210,7 +220,7 @@ impl TrayController {
             let id = item.id().clone();
             mode_submenu.append(&item)?;
             mode_ids.push((id.clone(), mode.clone()));
-            mode_entries.push(ModeEntry { id, mode: mode.clone(), item });
+            mode_entries.push(ModeEntry { mode: mode.clone(), item });
         }
 
         let streaming_item =
@@ -249,8 +259,15 @@ impl TrayController {
         menu.append(&quit)?;
 
         let action_map = MenuActionMap::new(
-            quit_id, copy_last_id, open_config_id, reload_config_id,
-            spoken_punct_id, streaming_id, translate_id,
+            MenuActionIds {
+                quit: quit_id,
+                copy_last: copy_last_id,
+                open_config: open_config_id,
+                reload_config: reload_config_id,
+                spoken_punct: spoken_punct_id,
+                streaming: streaming_id,
+                translate: translate_id,
+            },
             model_ids, language_ids, mode_ids,
         );
 
@@ -451,13 +468,23 @@ mod tests {
 
     // -- MenuActionMap --
 
+    fn default_ids() -> MenuActionIds {
+        MenuActionIds {
+            quit: MenuId::new("q"),
+            copy_last: MenuId::new("c"),
+            open_config: MenuId::new("oc"),
+            reload_config: MenuId::new("rc"),
+            spoken_punct: MenuId::new("sp"),
+            streaming: MenuId::new("st"),
+            translate: MenuId::new("tr"),
+        }
+    }
+
     #[test]
     fn menu_action_map_matches_quit() {
         let quit_id = MenuId::new("quit");
         let map = MenuActionMap::new(
-            quit_id.clone(),
-            MenuId::new("copy"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            MenuActionIds { quit: quit_id.clone(), ..default_ids() },
             vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&quit_id), Some(TrayAction::Quit));
@@ -467,8 +494,7 @@ mod tests {
     fn menu_action_map_matches_copy_last() {
         let id = MenuId::new("copy");
         let map = MenuActionMap::new(
-            MenuId::new("q"), id.clone(), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            MenuActionIds { copy_last: id.clone(), ..default_ids() },
             vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::CopyLastDictation));
@@ -476,10 +502,9 @@ mod tests {
 
     #[test]
     fn menu_action_map_matches_open_config() {
-        let id = MenuId::new("oc");
+        let id = MenuId::new("oc2");
         let map = MenuActionMap::new(
-            MenuId::new("q"), MenuId::new("c"), id.clone(), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            MenuActionIds { open_config: id.clone(), ..default_ids() },
             vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::OpenConfig));
@@ -487,10 +512,9 @@ mod tests {
 
     #[test]
     fn menu_action_map_matches_reload_config() {
-        let id = MenuId::new("rc");
+        let id = MenuId::new("rc2");
         let map = MenuActionMap::new(
-            MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), id.clone(),
-            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            MenuActionIds { reload_config: id.clone(), ..default_ids() },
             vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ReloadConfig));
@@ -498,10 +522,9 @@ mod tests {
 
     #[test]
     fn menu_action_map_matches_spoken_punct() {
-        let id = MenuId::new("sp");
+        let id = MenuId::new("sp2");
         let map = MenuActionMap::new(
-            MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            id.clone(), MenuId::new("st"), MenuId::new("tr"),
+            MenuActionIds { spoken_punct: id.clone(), ..default_ids() },
             vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ToggleSpokenPunctuation));
@@ -511,8 +534,7 @@ mod tests {
     fn menu_action_map_matches_set_mode() {
         let id = MenuId::new("mode_ptt");
         let map = MenuActionMap::new(
-            MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            default_ids(),
             vec![], vec![],
             vec![(id.clone(), InputMode::PushToTalk)],
         );
@@ -521,10 +543,9 @@ mod tests {
 
     #[test]
     fn menu_action_map_matches_streaming() {
-        let id = MenuId::new("st");
+        let id = MenuId::new("st2");
         let map = MenuActionMap::new(
-            MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), id.clone(), MenuId::new("tr"),
+            MenuActionIds { streaming: id.clone(), ..default_ids() },
             vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ToggleStreaming));
@@ -532,10 +553,9 @@ mod tests {
 
     #[test]
     fn menu_action_map_matches_translate() {
-        let id = MenuId::new("tr");
+        let id = MenuId::new("tr2");
         let map = MenuActionMap::new(
-            MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("st"), id.clone(),
+            MenuActionIds { translate: id.clone(), ..default_ids() },
             vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ToggleTranslate));
@@ -545,8 +565,7 @@ mod tests {
     fn menu_action_map_matches_model() {
         let model_id = MenuId::new("m1");
         let map = MenuActionMap::new(
-            MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            default_ids(),
             vec![(model_id.clone(), "base.en".to_string())],
             vec![], vec![],
         );
@@ -557,8 +576,7 @@ mod tests {
     fn menu_action_map_matches_language() {
         let lang_id = MenuId::new("l1");
         let map = MenuActionMap::new(
-            MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            default_ids(),
             vec![],
             vec![(lang_id.clone(), "fr".to_string())],
             vec![],
@@ -569,8 +587,7 @@ mod tests {
     #[test]
     fn menu_action_map_unknown_id() {
         let map = MenuActionMap::new(
-            MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            default_ids(),
             vec![], vec![], vec![],
         );
         assert_eq!(map.match_event(&MenuId::new("unknown")), None);
@@ -581,8 +598,7 @@ mod tests {
         let m1 = MenuId::new("m1");
         let m2 = MenuId::new("m2");
         let map = MenuActionMap::new(
-            MenuId::new("q"), MenuId::new("c"), MenuId::new("oc"), MenuId::new("rc"),
-            MenuId::new("sp"), MenuId::new("st"), MenuId::new("tr"),
+            default_ids(),
             vec![(m1.clone(), "tiny.en".to_string()), (m2.clone(), "large".to_string())],
             vec![], vec![],
         );

@@ -2,17 +2,12 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputMode {
+    #[default]
     PushToTalk,
     OpenMic,
-}
-
-impl Default for InputMode {
-    fn default() -> Self {
-        InputMode::PushToTalk
-    }
 }
 
 impl std::fmt::Display for InputMode {

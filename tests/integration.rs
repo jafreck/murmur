@@ -805,3 +805,171 @@ fn hotkey_capture_full_cycle() {
     let fx = h.send(AppMessage::KeyDown);
     assert!(has_start_recording(&fx));
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Error during active recording
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn error_during_recording_does_not_reset_tray() {
+    let mut h = Harness::new();
+
+    // Start recording
+    h.send(AppMessage::KeyDown);
+    assert!(h.state.is_pressed);
+
+    // Error arrives from a previous transcription cycle
+    let fx = h.send(AppMessage::TranscriptionError("stale error".into()));
+    // Tray should NOT go to Error state since we're recording
+    assert!(!has_tray_state(&fx, TrayState::Error));
+    // But error should still be logged
+    assert!(fx.iter().any(|e| matches!(e, AppEffect::LogError(_))));
+    // Recording state should be preserved
+    assert!(h.state.is_pressed);
+}
+
+#[test]
+fn transcription_result_during_recording_does_not_reset_tray() {
+    let mut h = Harness::new();
+
+    // Start recording
+    h.send(AppMessage::KeyDown);
+    assert!(h.state.is_pressed);
+
+    // Result from a previous cycle arrives
+    let fx = h.send(AppMessage::TranscriptionDone("stale result".into()));
+    // Tray should NOT reset to Idle — we're still recording
+    assert!(!has_tray_state(&fx, TrayState::Idle));
+    // But result should still be inserted and saved
+    assert!(has_insert_text(&fx, "stale result"));
+    assert_eq!(
+        h.state.last_transcription,
+        Some("stale result".to_string())
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Config round-trip via to_config
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn to_config_reflects_tray_mutations() {
+    let base = Config::default();
+    let mut h = Harness::with_config(&base);
+
+    // Mutate state through messages
+    h.send(AppMessage::TraySetModel("small.en".into()));
+    h.send(AppMessage::TraySetLanguage("de".into()));
+    h.send(AppMessage::TrayToggleSpokenPunctuation);
+    h.send(AppMessage::TraySetMode(InputMode::OpenMic));
+    h.send(AppMessage::TrayToggleStreaming);
+    h.send(AppMessage::TrayToggleTranslate);
+
+    // Build config from state
+    let cfg = h.state.to_config(&base);
+    assert_eq!(cfg.model_size, "small.en");
+    assert_eq!(cfg.language, "de");
+    assert!(cfg.spoken_punctuation);
+    assert_eq!(cfg.mode, InputMode::OpenMic);
+    assert!(cfg.streaming);
+    assert!(cfg.translate_to_english);
+    // Hotkey and max_recordings come from base, not state
+    assert_eq!(cfg.hotkey, base.hotkey);
+    assert_eq!(cfg.max_recordings, base.max_recordings);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Streaming full cycle
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn streaming_push_to_talk_full_cycle() {
+    let config = Config {
+        streaming: true,
+        ..Config::default()
+    };
+    let mut h = Harness::with_config(&config);
+
+    // Press: start recording + streaming
+    let fx = h.send(AppMessage::KeyDown);
+    assert!(has_start_recording(&fx));
+    assert!(fx.iter().any(|e| matches!(e, AppEffect::StartStreaming)));
+    assert!(h.state.streaming_active);
+
+    // Partial text arrives
+    let fx = h.send(AppMessage::StreamingPartialText {
+        text: "hel".into(),
+        replace_chars: 0,
+    });
+    assert!(fx.iter().any(|e| matches!(
+        e, AppEffect::StreamingReplace { text, replace_chars }
+        if text == "hel" && *replace_chars == 0
+    )));
+
+    // Revised partial text
+    let fx = h.send(AppMessage::StreamingPartialText {
+        text: "hello".into(),
+        replace_chars: 3,
+    });
+    assert!(fx.iter().any(|e| matches!(
+        e, AppEffect::StreamingReplace { text, replace_chars }
+        if text == "hello" && *replace_chars == 3
+    )));
+
+    // Release: stop recording + streaming
+    let fx = h.send(AppMessage::KeyUp);
+    assert!(has_stop_and_transcribe(&fx));
+    assert!(fx.iter().any(|e| matches!(e, AppEffect::StopStreaming)));
+
+    // Final transcription — should NOT re-insert since streaming was active
+    let fx = h.send(AppMessage::TranscriptionDone("hello world".into()));
+    assert!(has_no_insert_text(&fx));
+    assert_eq!(
+        h.state.last_transcription,
+        Some("hello world".to_string())
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Multiple rapid cycles
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn multiple_push_to_talk_cycles() {
+    let mut h = Harness::new();
+
+    for i in 0..5 {
+        let fx = h.send(AppMessage::KeyDown);
+        assert!(has_start_recording(&fx));
+
+        let fx = h.send(AppMessage::KeyUp);
+        assert!(has_stop_and_transcribe(&fx));
+
+        let text = format!("cycle {i}");
+        let fx = h.send(AppMessage::TranscriptionDone(text.clone()));
+        assert!(has_insert_text(&fx, &text));
+        assert!(has_tray_state(&fx, TrayState::Idle));
+        assert_eq!(h.state.last_transcription, Some(text));
+    }
+}
+
+#[test]
+fn copy_last_after_multiple_transcriptions() {
+    let mut h = Harness::new();
+
+    // First cycle
+    h.send(AppMessage::KeyDown);
+    h.send(AppMessage::KeyUp);
+    h.send(AppMessage::TranscriptionDone("first".into()));
+
+    // Second cycle
+    h.send(AppMessage::KeyDown);
+    h.send(AppMessage::KeyUp);
+    h.send(AppMessage::TranscriptionDone("second".into()));
+
+    // Copy last should give the most recent
+    let fx = h.send(AppMessage::TrayCopyLast);
+    assert!(fx
+        .iter()
+        .any(|e| matches!(e, AppEffect::CopyToClipboard(t) if t == "second")));
+}

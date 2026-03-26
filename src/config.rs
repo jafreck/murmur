@@ -393,4 +393,87 @@ mod tests {
         assert_eq!(Config::effective_max_recordings(101), 100);
         assert_eq!(Config::effective_max_recordings(u32::MAX), 100);
     }
+
+    #[test]
+    fn test_input_mode_display() {
+        assert_eq!(InputMode::PushToTalk.to_string(), "Push to Talk");
+        assert_eq!(InputMode::OpenMic.to_string(), "Open Mic");
+    }
+
+    #[test]
+    fn test_input_mode_default() {
+        let mode: InputMode = Default::default();
+        assert_eq!(mode, InputMode::PushToTalk);
+    }
+
+    #[test]
+    fn test_input_mode_serde_round_trip() {
+        let push = InputMode::PushToTalk;
+        let json = serde_json::to_string(&push).unwrap();
+        assert_eq!(json, "\"push_to_talk\"");
+        let parsed: InputMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, InputMode::PushToTalk);
+
+        let open = InputMode::OpenMic;
+        let json = serde_json::to_string(&open).unwrap();
+        assert_eq!(json, "\"open_mic\"");
+        let parsed: InputMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, InputMode::OpenMic);
+    }
+
+    #[test]
+    fn test_default_config_hotkey_platform() {
+        let cfg = Config::default();
+        #[cfg(target_os = "macos")]
+        assert_eq!(cfg.hotkey, "rightoption");
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(cfg.hotkey, "rightalt");
+    }
+
+    #[test]
+    fn test_config_all_fields_serialize() {
+        let cfg = Config {
+            hotkey: "f5".to_string(),
+            model_size: "large".to_string(),
+            language: "auto".to_string(),
+            spoken_punctuation: true,
+            max_recordings: 50,
+            mode: InputMode::OpenMic,
+            streaming: true,
+            translate_to_english: true,
+        };
+        let json = serde_json::to_string_pretty(&cfg).unwrap();
+        assert!(json.contains("\"hotkey\": \"f5\""));
+        assert!(json.contains("\"streaming\": true"));
+        assert!(json.contains("\"translate_to_english\": true"));
+        assert!(json.contains("\"mode\": \"open_mic\""));
+    }
+
+    #[test]
+    fn test_supported_languages_has_auto() {
+        assert!(is_valid_language("auto"));
+        assert_eq!(language_name("auto"), Some("Auto-Detect"));
+    }
+
+    #[test]
+    fn test_supported_languages_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for (code, _) in SUPPORTED_LANGUAGES {
+            assert!(
+                seen.insert(*code),
+                "duplicate language code: {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_supported_models_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for model in SUPPORTED_MODELS {
+            assert!(
+                seen.insert(*model),
+                "duplicate model: {model}"
+            );
+        }
+    }
 }

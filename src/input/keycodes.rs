@@ -350,4 +350,90 @@ mod tests {
         // Unknown modifier should be filtered out
         assert!(parsed.modifiers.is_empty());
     }
+
+    #[test]
+    fn test_parse_empty_string() {
+        assert!(parse("").is_none());
+    }
+
+    #[test]
+    fn test_key_to_name_mapped_keys() {
+        assert_eq!(key_to_name(&Key::F9), "f9");
+        assert_eq!(key_to_name(&Key::Space), "space");
+        assert_eq!(key_to_name(&Key::KeyA), "a");
+        assert_eq!(key_to_name(&Key::ControlLeft), "ctrl");
+        assert_eq!(key_to_name(&Key::MetaLeft), "cmd");
+        assert_eq!(key_to_name(&Key::Alt), "alt");
+        assert_eq!(key_to_name(&Key::ShiftLeft), "shift");
+        assert_eq!(key_to_name(&Key::Return), "return");
+        assert_eq!(key_to_name(&Key::Escape), "escape");
+        assert_eq!(key_to_name(&Key::Tab), "tab");
+        assert_eq!(key_to_name(&Key::Backspace), "backspace");
+    }
+
+    #[test]
+    fn test_key_to_name_unmapped_key_fallback() {
+        // Keys not in KEY_MAP should get debug format fallback
+        let name = key_to_name(&Key::Unknown(12345));
+        assert!(name.contains("unknown"));
+    }
+
+    #[test]
+    fn test_parse_single_modifier_as_key() {
+        // A single modifier should be parsed as the key itself (no modifiers)
+        let parsed = parse("ctrl").unwrap();
+        assert_eq!(parsed.key, Key::ControlLeft);
+        assert!(parsed.modifiers.is_empty());
+    }
+
+    #[test]
+    fn test_key_to_name_punctuation() {
+        assert_eq!(key_to_name(&Key::Minus), "minus");
+        assert_eq!(key_to_name(&Key::Equal), "equal");
+        assert_eq!(key_to_name(&Key::Comma), "comma");
+        assert_eq!(key_to_name(&Key::Dot), "dot");
+        assert_eq!(key_to_name(&Key::Slash), "slash");
+        assert_eq!(key_to_name(&Key::SemiColon), "semicolon");
+        assert_eq!(key_to_name(&Key::Quote), "quote");
+        assert_eq!(key_to_name(&Key::BackQuote), "grave");
+    }
+
+    #[test]
+    fn test_parse_triple_modifier_combo() {
+        let parsed = parse("ctrl+shift+alt+a").unwrap();
+        assert_eq!(parsed.key, Key::KeyA);
+        assert_eq!(parsed.modifiers.len(), 3);
+        assert!(parsed.modifiers.contains(&Key::ControlLeft));
+        assert!(parsed.modifiers.contains(&Key::ShiftLeft));
+        assert!(parsed.modifiers.contains(&Key::Alt));
+    }
+
+    #[test]
+    fn test_key_map_canonical_names_are_lowercase() {
+        for (_key, aliases) in KEY_MAP {
+            let canonical = aliases[0];
+            assert_eq!(
+                canonical,
+                canonical.to_lowercase(),
+                "canonical name '{canonical}' should be lowercase"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_round_trip_all_key_map_entries() {
+        for (key, aliases) in KEY_MAP {
+            let canonical = aliases[0];
+            let parsed = parse(canonical);
+            assert!(
+                parsed.is_some(),
+                "failed to parse canonical name '{canonical}'"
+            );
+            let parsed = parsed.unwrap();
+            assert_eq!(
+                &parsed.key, key,
+                "round-trip mismatch for '{canonical}'"
+            );
+        }
+    }
 }

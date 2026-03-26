@@ -829,4 +829,162 @@ mod tests {
         let effects = state.handle_message(&AppMessage::KeyUp);
         assert_eq!(effects, vec![AppEffect::None]);
     }
+
+    // -- Streaming mode effects --
+
+    #[test]
+    fn streaming_key_down_includes_start_streaming() {
+        let mut state = default_state();
+        state.streaming = true;
+        let effects = state.handle_message(&AppMessage::KeyDown);
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::StartStreaming)));
+        assert!(state.streaming_active);
+    }
+
+    #[test]
+    fn streaming_key_up_includes_stop_streaming() {
+        let mut state = default_state();
+        state.streaming = true;
+        state.is_pressed = true;
+        state.streaming_active = true;
+        let effects = state.handle_message(&AppMessage::KeyUp);
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::StopStreaming)));
+    }
+
+    #[test]
+    fn streaming_partial_text_with_replace_chars() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::StreamingPartialText {
+            text: "world".to_string(),
+            replace_chars: 5,
+        });
+        assert!(effects.iter().any(|e| matches!(
+            e, AppEffect::StreamingReplace { text, replace_chars }
+            if text == "world" && *replace_chars == 5
+        )));
+    }
+
+    #[test]
+    fn streaming_partial_text_empty_text_with_replace_is_not_noop() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::StreamingPartialText {
+            text: String::new(),
+            replace_chars: 3,
+        });
+        // replace_chars > 0, so should produce StreamingReplace even with empty text
+        assert!(effects.iter().any(|e| matches!(
+            e, AppEffect::StreamingReplace { replace_chars, .. } if *replace_chars == 3
+        )));
+    }
+
+    // -- Transcription results during recording --
+
+    #[test]
+    fn transcription_done_during_recording_does_not_reset_tray() {
+        let mut state = default_state();
+        state.is_pressed = true;
+        let effects =
+            state.handle_message(&AppMessage::TranscriptionDone("from prev cycle".to_string()));
+        // Should NOT set tray to Idle since we're currently recording
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Idle))));
+        // Should still save the transcription
+        assert_eq!(
+            state.last_transcription,
+            Some("from prev cycle".to_string())
+        );
+    }
+
+    #[test]
+    fn transcription_error_during_recording_does_not_reset_tray() {
+        let mut state = default_state();
+        state.is_pressed = true;
+        let effects =
+            state.handle_message(&AppMessage::TranscriptionError("timeout".to_string()));
+        // Should NOT set tray to Error since we're currently recording
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::SetTrayState(TrayState::Error))));
+        // Should still log the error
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::LogError(_))));
+    }
+
+    #[test]
+    fn transcription_done_during_recording_does_not_clear_streaming_active() {
+        let mut state = default_state();
+        state.is_pressed = true;
+        state.streaming_active = true;
+        state.handle_message(&AppMessage::TranscriptionDone("text".to_string()));
+        // streaming_active should NOT be cleared since we're still recording
+        assert!(state.streaming_active);
+    }
+
+    // -- Toggle streaming state --
+
+    #[test]
+    fn toggle_streaming() {
+        let mut state = default_state();
+        assert!(!state.streaming);
+        let effects = state.handle_message(&AppMessage::TrayToggleStreaming);
+        assert!(state.streaming);
+        assert!(effects.contains(&AppEffect::SaveConfig));
+        let effects = state.handle_message(&AppMessage::TrayToggleStreaming);
+        assert!(!state.streaming);
+        assert!(effects.contains(&AppEffect::SaveConfig));
+    }
+
+    // -- to_config preserves base config fields --
+
+    #[test]
+    fn to_config_preserves_base_hotkey_and_max_recordings() {
+        let base = Config {
+            hotkey: "ctrl+shift+space".to_string(),
+            max_recordings: 42,
+            ..Config::default()
+        };
+        let state = AppState::new(&base);
+        let cfg = state.to_config(&base);
+        assert_eq!(cfg.hotkey, "ctrl+shift+space");
+        assert_eq!(cfg.max_recordings, 42);
+    }
+
+    // -- TranscriberReady exhaustiveness --
+    // TranscriberReady is handled in the run() loop, not handle_message().
+    // Exhaustiveness is verified at compile time. No runtime test needed.
+
+    // -- Open mic streaming --
+
+    #[test]
+    fn open_mic_streaming_start_stop() {
+        let mut state = default_state();
+        state.mode = InputMode::OpenMic;
+        state.streaming = true;
+
+        // First press: start recording + streaming
+        let effects = state.handle_message(&AppMessage::KeyDown);
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::StartStreaming)));
+        assert!(state.streaming_active);
+
+        // Second press: stop recording + streaming
+        let effects = state.handle_message(&AppMessage::KeyDown);
+        assert!(effects.iter().any(|e| matches!(e, AppEffect::StopStreaming)));
+    }
+
+    // -- Multiple transcription results update last_transcription --
+
+    #[test]
+    fn last_transcription_updated_on_each_result() {
+        let mut state = default_state();
+        state.handle_message(&AppMessage::TranscriptionDone("first".to_string()));
+        assert_eq!(state.last_transcription, Some("first".to_string()));
+        state.handle_message(&AppMessage::TranscriptionDone("second".to_string()));
+        assert_eq!(state.last_transcription, Some("second".to_string()));
+    }
 }

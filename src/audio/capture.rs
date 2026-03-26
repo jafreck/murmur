@@ -437,4 +437,88 @@ mod tests {
         let buf = recorder.sample_buffer();
         assert_eq!(buf.lock().unwrap().len(), 0);
     }
+
+    #[test]
+    fn test_stop_samples_without_start_returns_none() {
+        let mut recorder = AudioRecorder::new();
+        let samples = recorder.stop_samples();
+        assert!(samples.is_none());
+    }
+
+    #[test]
+    fn test_default_trait() {
+        let recorder = AudioRecorder::default();
+        assert!(recorder.stream.is_none());
+        assert!(recorder.current_path.is_none());
+        assert_eq!(recorder.sample_count(), 0);
+    }
+
+    #[test]
+    fn test_snapshot_with_offset_beyond_len() {
+        let recorder = AudioRecorder::new();
+        let snap = recorder.snapshot(100);
+        assert!(snap.is_empty());
+    }
+
+    #[test]
+    fn test_snapshot_with_manual_samples() {
+        let recorder = AudioRecorder::new();
+        // Manually push samples into the buffer
+        {
+            let mut buf = recorder.samples.lock().unwrap();
+            buf.extend_from_slice(&[0.1, 0.2, 0.3, 0.4, 0.5]);
+        }
+        let snap = recorder.snapshot(0);
+        assert_eq!(snap.len(), 5);
+        assert!((snap[0] - 0.1).abs() < 0.001);
+
+        let snap = recorder.snapshot(3);
+        assert_eq!(snap.len(), 2);
+        assert!((snap[0] - 0.4).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_sample_count_with_manual_samples() {
+        let recorder = AudioRecorder::new();
+        assert_eq!(recorder.sample_count(), 0);
+        {
+            let mut buf = recorder.samples.lock().unwrap();
+            buf.extend_from_slice(&[0.0; 100]);
+        }
+        assert_eq!(recorder.sample_count(), 100);
+    }
+
+    #[test]
+    fn test_mix_to_mono_six_channels() {
+        // 6-channel surround: one frame
+        let data = vec![1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let mono = mix_to_mono(&data, 6);
+        assert_eq!(mono.len(), 1);
+        assert!((mono[0] - 1.0 / 6.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_resample_ratio_accuracy() {
+        // 44.1kHz -> 16kHz: common real-world ratio
+        let input: Vec<f32> = (0..44100).map(|i| (i as f32 / 44100.0).sin()).collect();
+        let output = resample(&input, 44100, 16000);
+        // Should produce approximately 16000 samples
+        assert!((output.len() as i64 - 16000).abs() <= 1);
+    }
+
+    #[test]
+    fn test_f32_to_i16_negative_half() {
+        let v = f32_to_i16(-0.5);
+        assert!(v < -16000 && v > -17000);
+    }
+
+    #[test]
+    fn test_stop_clears_current_path() {
+        let mut recorder = AudioRecorder::new();
+        recorder.current_path = Some(std::path::PathBuf::from("/tmp/test.wav"));
+        let path = recorder.stop();
+        // stop() should return and clear the path
+        assert_eq!(path, Some(std::path::PathBuf::from("/tmp/test.wav")));
+        assert!(recorder.current_path.is_none());
+    }
 }

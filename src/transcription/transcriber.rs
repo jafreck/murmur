@@ -254,4 +254,82 @@ mod tests {
         let result = read_wav_samples(std::path::Path::new("/nonexistent/file.wav"));
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_read_wav_samples_24bit_int() {
+        use hound::{SampleFormat, WavSpec, WavWriter};
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 24,
+            sample_format: SampleFormat::Int,
+        };
+        let mut writer = WavWriter::create(tmp.path(), spec).unwrap();
+        writer.write_sample(0i32).unwrap();
+        writer.write_sample(4194304i32).unwrap(); // ~half of 2^23
+        writer.write_sample(-4194304i32).unwrap();
+        writer.finalize().unwrap();
+
+        let samples = read_wav_samples(tmp.path()).unwrap();
+        assert_eq!(samples.len(), 3);
+        assert!((samples[0] - 0.0).abs() < 0.01);
+        assert!(samples[1] > 0.4 && samples[1] < 0.6);
+        assert!(samples[2] < -0.4 && samples[2] > -0.6);
+    }
+
+    #[test]
+    fn test_read_wav_samples_max_values() {
+        use hound::{SampleFormat, WavSpec, WavWriter};
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 16,
+            sample_format: SampleFormat::Int,
+        };
+        let mut writer = WavWriter::create(tmp.path(), spec).unwrap();
+        writer.write_sample(i16::MAX).unwrap();
+        writer.write_sample(i16::MIN).unwrap();
+        writer.finalize().unwrap();
+
+        let samples = read_wav_samples(tmp.path()).unwrap();
+        assert_eq!(samples.len(), 2);
+        // i16::MAX / 32768.0 ≈ 1.0
+        assert!(samples[0] > 0.99);
+        // i16::MIN / 32768.0 = -1.0
+        assert!(samples[1] < -0.99);
+    }
+
+    #[test]
+    fn test_read_wav_samples_multi_sample() {
+        use hound::{SampleFormat, WavSpec, WavWriter};
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 32,
+            sample_format: SampleFormat::Float,
+        };
+        let mut writer = WavWriter::create(tmp.path(), spec).unwrap();
+        for i in 0..100 {
+            writer.write_sample(i as f32 / 100.0).unwrap();
+        }
+        writer.finalize().unwrap();
+
+        let samples = read_wav_samples(tmp.path()).unwrap();
+        assert_eq!(samples.len(), 100);
+        assert!((samples[50] - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_find_model_returns_none_for_empty_string() {
+        assert!(find_model("").is_none());
+    }
+
+    #[test]
+    fn test_model_exists_consistent_with_find_model() {
+        let size = "nonexistent_test_model_xyz";
+        assert_eq!(model_exists(size), find_model(size).is_some());
+    }
 }

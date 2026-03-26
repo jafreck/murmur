@@ -250,4 +250,60 @@ mod tests {
         assert!(!is_modifier(&Key::KeyA));
         assert!(!is_modifier(&Key::F9));
     }
+
+    #[test]
+    fn shared_hotkey_creates_valid_config() {
+        let hk = ParsedHotkey {
+            key: Key::Space,
+            modifiers: vec![Key::ControlLeft, Key::ShiftLeft],
+        };
+        let config = shared_hotkey(&hk);
+        let guard = config.lock().unwrap();
+        assert_eq!(guard.0, Key::Space);
+        assert!(guard.1.contains(&Key::ControlLeft));
+        assert!(guard.1.contains(&Key::ShiftLeft));
+        assert_eq!(guard.1.len(), 2);
+    }
+
+    #[test]
+    fn shared_hotkey_no_modifiers() {
+        let hk = ParsedHotkey {
+            key: Key::F9,
+            modifiers: vec![],
+        };
+        let config = shared_hotkey(&hk);
+        let guard = config.lock().unwrap();
+        assert_eq!(guard.0, Key::F9);
+        assert!(guard.1.is_empty());
+    }
+
+    #[test]
+    fn shared_hotkey_deduplicates_modifiers() {
+        let hk = ParsedHotkey {
+            key: Key::Space,
+            modifiers: vec![Key::ControlLeft, Key::ControlLeft],
+        };
+        let config = shared_hotkey(&hk);
+        let guard = config.lock().unwrap();
+        // HashSet deduplicates
+        assert_eq!(guard.1.len(), 1);
+    }
+
+    #[test]
+    fn to_config_string_alt_modifier() {
+        let hk = ParsedHotkey {
+            key: Key::Space,
+            modifiers: vec![Key::Alt],
+        };
+        assert_eq!(hk.to_config_string(), "alt+space");
+    }
+
+    #[test]
+    fn to_config_string_altgr_modifier() {
+        let hk = ParsedHotkey {
+            key: Key::KeyA,
+            modifiers: vec![Key::AltGr],
+        };
+        assert_eq!(hk.to_config_string(), "rightalt+a");
+    }
 }

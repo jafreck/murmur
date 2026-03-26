@@ -67,6 +67,16 @@ pub fn apply_effect(
                 error!("Insert failed: {e}");
             }
         }
+        AppEffect::StreamingReplace { text, replace_chars } => {
+            if replace_chars > 0 {
+                log::debug!("Streaming: replacing {replace_chars} chars with '{text}'");
+            } else {
+                log::debug!("Streaming: appending '{text}'");
+            }
+            if let Err(e) = TextInserter::replace(replace_chars, &text) {
+                error!("Streaming replace failed: {e}");
+            }
+        }
         AppEffect::CopyToClipboard(text) => {
             if let Ok(mut cb) = arboard::Clipboard::new() {
                 let _ = cb.set_text(text);
@@ -230,8 +240,8 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
     std::thread::spawn(move || {
         while let Ok(event) = streaming_rx.recv() {
             match event {
-                streaming::StreamingEvent::PartialText(text) => {
-                    let _ = tx_app.send(AppMessage::StreamingPartialText(text));
+                streaming::StreamingEvent::PartialText { text, replace_chars } => {
+                    let _ = tx_app.send(AppMessage::StreamingPartialText { text, replace_chars });
                 }
             }
         }

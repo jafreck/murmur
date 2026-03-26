@@ -297,9 +297,14 @@ fn streaming_suppresses_final_transcription() {
     h.send(AppMessage::KeyDown);
     assert!(h.state.streaming_active);
 
-    // Partial text during streaming inserts normally
-    let fx = h.send(AppMessage::StreamingPartialText("hello ".into()));
-    assert!(has_insert_text(&fx, "hello "));
+    // Partial text during streaming produces a replace effect
+    let fx = h.send(AppMessage::StreamingPartialText {
+        text: "hello ".to_string(),
+        replace_chars: 0,
+    });
+    assert!(fx.iter().any(|e| matches!(
+        e, AppEffect::StreamingReplace { text, .. } if text == "hello "
+    )));
 
     h.send(AppMessage::KeyUp);
 
@@ -321,7 +326,10 @@ fn streaming_suppresses_final_transcription() {
 fn streaming_partial_text_empty_ignored() {
     let mut h = Harness::new();
 
-    let fx = h.send(AppMessage::StreamingPartialText(String::new()));
+    let fx = h.send(AppMessage::StreamingPartialText {
+        text: String::new(),
+        replace_chars: 0,
+    });
     assert_eq!(fx, vec![AppEffect::None]);
 }
 

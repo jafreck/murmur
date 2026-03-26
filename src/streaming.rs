@@ -30,8 +30,12 @@ const SILENCE_RMS_THRESHOLD: f32 = 0.005;
 
 /// A message carrying newly-transcribed text from a streaming chunk.
 pub enum StreamingEvent {
-    /// New words to insert at the cursor (incremental).
-    PartialText(String),
+    /// Replace the last `replace_chars` characters with `text`.
+    /// If `replace_chars` is 0, just append.
+    PartialText {
+        text: String,
+        replace_chars: usize,
+    },
 }
 
 /// Start streaming transcription in a background thread.
@@ -76,13 +80,10 @@ fn streaming_loop(
     let min_new_samples = (MIN_NEW_AUDIO_SECS * TARGET_RATE as f32) as usize;
     let max_window_samples = (MAX_WINDOW_SECS * TARGET_RATE as f32) as usize;
 
-    // Anchor: start of the window in the sample buffer.
-    // Slides forward only when the window would exceed MAX_WINDOW_SECS.
     let mut anchor: usize = 0;
-    // Number of samples that have been transcribed (relative to buffer start).
     let mut last_transcribed: usize = 0;
-    // Words already emitted to the user.
-    let mut emitted_words: Vec<String> = Vec::new();
+    // The exact text currently on screen from streaming emissions.
+    let mut emitted_text = String::new();
 
     loop {
         match stop_rx.try_recv() {
@@ -95,19 +96,16 @@ fn streaming_loop(
             .map(|b| b.len())
             .unwrap_or(0);
 
-        // Wait until enough new audio has accumulated.
         if total_samples < last_transcribed + min_new_samples {
             std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
             continue;
         }
 
-        // Slide the anchor forward if the window is too large.
         let window_len = total_samples - anchor;
         if window_len > max_window_samples {
             anchor = total_samples - max_window_samples;
         }
 
-        // Extract the window from anchor to current end.
         let window: Vec<f32> = {
             let buf = sample_buffer.lock().unwrap();
             buf[anchor..total_samples].to_vec()
@@ -119,8 +117,7 @@ fn streaming_loop(
             continue;
         }
 
-        // Transcribe the entire window.
-        let full_text = match transcriber.transcribe_samples(&window, translate) {
+        let mut full_text = match transcriber.transcribe_samples(&window, translate) {
             Ok(t) => t,
             Err(e) => {
                 log::error!("Streaming transcription failed: {e}");
@@ -135,70 +132,36 @@ fn streaming_loop(
             continue;
         }
 
-        let all_words = split_words(&full_text);
+        if spoken_punctuation {
+            full_text = crate::postprocess::process(&full_text);
+        }
 
-        // Diff: find words beyond what we've already emitted.
-        let new_start = find_emit_boundary(&emitted_words, &all_words);
+        // Find the common prefix between what's on screen and the new transcription.
+        let common_len = common_prefix_len(&emitted_text, &full_text);
 
-        if new_start < all_words.len() {
-            // Hold back the last word — it's unstable because Whisper may
-            // revise it as more audio arrives (e.g. adding punctuation,
-            // changing word boundaries). Only emit confirmed words that
-            // have at least one word after them.
-            let confirmed_end = all_words.len() - 1;
+        // Characters to delete = old text after common prefix
+        let replace_chars = emitted_text.len() - common_len;
+        // New characters to type = new text after common prefix
+        let new_suffix = &full_text[common_len..];
 
-            if new_start < confirmed_end {
-                let new_words: Vec<String> = all_words[new_start..confirmed_end].to_vec();
-
-                let new_text = if spoken_punctuation {
-                    crate::postprocess::process(&new_words.join(" "))
-                } else {
-                    new_words.join(" ")
-                };
-
-                if !new_text.is_empty() {
-                    // Prepend space for continuation (text is appended at cursor)
-                    let spaced = if emitted_words.is_empty() {
-                        new_text
-                    } else {
-                        format!(" {new_text}")
-                    };
-                    // Update emitted to include confirmed words (but not the held-back last word)
-                    emitted_words = all_words[..confirmed_end].to_vec();
-                    let _ = tx.send(StreamingEvent::PartialText(spaced));
-                }
-            }
+        if replace_chars > 0 || !new_suffix.is_empty() {
+            let _ = tx.send(StreamingEvent::PartialText {
+                text: new_suffix.to_string(),
+                replace_chars,
+            });
+            emitted_text = full_text;
         }
     }
 }
 
-/// Find the index in `all_words` where new (un-emitted) content starts.
-///
-/// Compares emitted words against the beginning of all_words using
-/// punctuation-insensitive matching to handle Whisper's nondeterministic
-/// punctuation. Returns the index of the first new word.
-fn find_emit_boundary(emitted: &[String], all_words: &[String]) -> usize {
-    if emitted.is_empty() {
-        return 0;
-    }
-
-    // Walk through emitted and all_words in parallel, matching with
-    // punctuation tolerance. If they diverge, the emitted prefix has
-    // been revised by Whisper — anchor from the best match point.
-    let mut matched = 0;
-    for (e, a) in emitted.iter().zip(all_words.iter()) {
-        if normalize_for_match(e).eq_ignore_ascii_case(normalize_for_match(a)) {
-            matched += 1;
-        } else {
-            break;
-        }
-    }
-
-    // If we matched all emitted words, new content starts after them.
-    // If we matched fewer (Whisper revised earlier words), be conservative
-    // and don't re-emit — just skip to after the emitted count to avoid
-    // duplication. The revised words are already on screen.
-    emitted.len().min(all_words.len()).max(matched)
+/// Find the byte length of the common prefix between two strings,
+/// aligned to char boundaries.
+fn common_prefix_len(a: &str, b: &str) -> usize {
+    a.chars()
+        .zip(b.chars())
+        .take_while(|(ac, bc)| ac == bc)
+        .map(|(c, _)| c.len_utf8())
+        .sum()
 }
 
 // ── Stitching ──────────────────────────────────────────────────────────
@@ -270,6 +233,7 @@ pub fn is_silent(samples: &[f32]) -> bool {
 }
 
 /// Split text into words, normalising whitespace.
+#[allow(dead_code)]
 fn split_words(text: &str) -> Vec<String> {
     text.split_whitespace().map(|w| w.to_string()).collect()
 }
@@ -413,9 +377,15 @@ mod tests {
 
     #[test]
     fn test_streaming_event_partial_text() {
-        let event = StreamingEvent::PartialText("hello".to_string());
+        let event = StreamingEvent::PartialText {
+            text: "hello".to_string(),
+            replace_chars: 3,
+        };
         match event {
-            StreamingEvent::PartialText(s) => assert_eq!(s, "hello"),
+            StreamingEvent::PartialText { text, replace_chars } => {
+                assert_eq!(text, "hello");
+                assert_eq!(replace_chars, 3);
+            }
         }
     }
 
@@ -486,52 +456,47 @@ mod tests {
         assert_eq!(normalize_for_match("..."), "");
     }
 
-    // ── find_emit_boundary tests ──────────────────────────────────────
+    // ── common_prefix_len tests ──────────────────────────────────────
 
     #[test]
-    fn test_find_emit_boundary_empty_emitted() {
-        let all: Vec<String> = vec!["hello".into(), "world".into()];
-        assert_eq!(find_emit_boundary(&[], &all), 0);
+    fn test_common_prefix_len_identical() {
+        assert_eq!(common_prefix_len("hello world", "hello world"), 11);
     }
 
     #[test]
-    fn test_find_emit_boundary_exact_prefix() {
-        let emitted: Vec<String> = vec!["hello".into(), "world".into()];
-        let all: Vec<String> = vec!["hello".into(), "world".into(), "foo".into()];
-        assert_eq!(find_emit_boundary(&emitted, &all), 2);
+    fn test_common_prefix_len_prefix_match() {
+        assert_eq!(common_prefix_len("hello world", "hello world foo"), 11);
     }
 
     #[test]
-    fn test_find_emit_boundary_no_new_words() {
-        let emitted: Vec<String> = vec!["hello".into(), "world".into()];
-        let all: Vec<String> = vec!["hello".into(), "world".into()];
-        assert_eq!(find_emit_boundary(&emitted, &all), 2);
+    fn test_common_prefix_len_diverges() {
+        assert_eq!(common_prefix_len("hello world", "hello earth"), 6);
     }
 
     #[test]
-    fn test_find_emit_boundary_punctuation_tolerance() {
-        let emitted: Vec<String> = vec!["hello".into(), "world.".into()];
-        let all: Vec<String> = vec!["hello".into(), "world".into(), "foo".into()];
-        assert_eq!(find_emit_boundary(&emitted, &all), 2);
+    fn test_common_prefix_len_empty() {
+        assert_eq!(common_prefix_len("", "hello"), 0);
+        assert_eq!(common_prefix_len("hello", ""), 0);
     }
 
     #[test]
-    fn test_find_emit_boundary_whisper_revision() {
-        // Whisper revised an earlier word — don't re-emit
-        let emitted: Vec<String> = vec!["hello".into(), "world".into()];
-        let all: Vec<String> = vec!["hello".into(), "word".into(), "foo".into()];
-        // Diverges at index 1, but emitted has 2 words — skip to 2
-        assert_eq!(find_emit_boundary(&emitted, &all), 2);
+    fn test_common_prefix_len_no_common() {
+        assert_eq!(common_prefix_len("abc", "xyz"), 0);
     }
 
     #[test]
-    fn test_find_emit_boundary_growing_window() {
-        // Simulate growing window: first call emits 3 words, second call has 5
-        let emitted: Vec<String> = vec!["the".into(), "quick".into(), "brown".into()];
-        let all: Vec<String> = vec![
-            "the".into(), "quick".into(), "brown".into(),
-            "fox".into(), "jumps".into(),
-        ];
-        assert_eq!(find_emit_boundary(&emitted, &all), 3);
+    fn test_common_prefix_len_unicode() {
+        // "café " = c(1) + a(1) + f(1) + é(2) + space(1) = 6 bytes
+        assert_eq!(common_prefix_len("café latte", "café mocha"), 6);
+    }
+
+    #[test]
+    fn test_common_prefix_len_revision_scenario() {
+        // Simulates Whisper revising "Frack" to "Freck"
+        let old = "My name is Jacob Frack and I am";
+        let new_text = "My name is Jacob Freck and I am a principal";
+        // "My name is Jacob F" = 18 bytes, then 'r' vs 'r' matches, 'a' vs 'e' diverges
+        // "My name is Jacob Fr" = 19 bytes
+        assert_eq!(common_prefix_len(old, new_text), 19);
     }
 }

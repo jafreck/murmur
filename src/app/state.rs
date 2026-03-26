@@ -25,7 +25,7 @@ pub enum AppMessage {
     HotkeyCapture(Key),
     TranscriptionDone(String),
     TranscriptionError(String),
-    StreamingPartialText(String),
+    StreamingPartialText { text: String, replace_chars: usize },
     /// A new Transcriber has been loaded in the background and is ready to swap in.
     /// The u64 is the reload generation; stale reloads are discarded.
     TranscriberReady(Arc<Transcriber>, u64),
@@ -42,6 +42,8 @@ pub enum AppEffect {
     /// Stop the streaming transcription thread.
     StopStreaming,
     InsertText(String),
+    /// Backspace `replace_chars` characters, then type `text` (streaming revisions).
+    StreamingReplace { text: String, replace_chars: usize },
     CopyToClipboard(String),
     SaveConfig,
     /// Open the config file in the user's default editor/file manager.
@@ -134,9 +136,12 @@ impl AppState {
             // TranscriberReady is handled directly in the run() loop before
             // reaching handle_message, but we need an arm for exhaustiveness.
             AppMessage::TranscriberReady(_, _) => vec![AppEffect::None],
-            AppMessage::StreamingPartialText(text) => {
-                if !text.is_empty() {
-                    vec![AppEffect::InsertText(text.clone())]
+            AppMessage::StreamingPartialText { text, replace_chars } => {
+                if *replace_chars > 0 || !text.is_empty() {
+                    vec![AppEffect::StreamingReplace {
+                        text: text.clone(),
+                        replace_chars: *replace_chars,
+                    }]
                 } else {
                     vec![AppEffect::None]
                 }
@@ -595,16 +600,25 @@ mod tests {
     }
 
     #[test]
-    fn streaming_partial_text_inserts() {
+    fn streaming_partial_text_produces_replace() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::StreamingPartialText("hello".to_string()));
-        assert!(effects.iter().any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello")));
+        let effects = state.handle_message(&AppMessage::StreamingPartialText {
+            text: "hello".to_string(),
+            replace_chars: 0,
+        });
+        assert!(effects.iter().any(|e| matches!(
+            e, AppEffect::StreamingReplace { text, replace_chars }
+            if text == "hello" && *replace_chars == 0
+        )));
     }
 
     #[test]
     fn streaming_partial_text_empty_noop() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::StreamingPartialText("".to_string()));
+        let effects = state.handle_message(&AppMessage::StreamingPartialText {
+            text: String::new(),
+            replace_chars: 0,
+        });
         assert_eq!(effects, vec![AppEffect::None]);
     }
 

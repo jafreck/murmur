@@ -58,6 +58,29 @@ impl TextInserter {
         Ok(())
     }
 
+    /// Delete `backspace_count` characters, then type `text`.
+    /// Used for streaming revisions where Whisper changes earlier output.
+    pub fn replace(backspace_count: usize, text: &str) -> Result<()> {
+        let mut enigo =
+            Enigo::new(&Settings::default()).map_err(|e| anyhow::anyhow!("Enigo init: {e}"))?;
+
+        // Send backspaces to delete the revised portion
+        for _ in 0..backspace_count {
+            enigo
+                .key(Key::Backspace, Direction::Click)
+                .map_err(|e| anyhow::anyhow!("Backspace failed: {e}"))?;
+        }
+
+        if !text.is_empty() {
+            // Type the replacement text directly (no clipboard involvement)
+            enigo
+                .text(text)
+                .map_err(|e| anyhow::anyhow!("Text input failed: {e}"))?;
+        }
+
+        Ok(())
+    }
+
     fn simulate_paste() -> Result<()> {
         let mut enigo =
             Enigo::new(&Settings::default()).map_err(|e| anyhow::anyhow!("Enigo init: {e}"))?;

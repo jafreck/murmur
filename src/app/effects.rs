@@ -37,7 +37,12 @@ pub fn apply_effect(
         AppEffect::None => {}
         AppEffect::StartRecording(path) => {
             info!("Recording...");
-            if let Err(e) = ctx.recorder.start(&path) {
+            let result = if ctx.state.max_recordings == 0 {
+                ctx.recorder.start_in_memory()
+            } else {
+                ctx.recorder.start(&path)
+            };
+            if let Err(e) = result {
                 error!("Failed to start recording: {e}");
                 let _ = ctx.tx.send(AppMessage::TranscriptionError(
                     format!("Failed to start recording: {e}"),
@@ -135,41 +140,63 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
         let _ = stop.send(());
     }
 
-    let Some(audio_path) = ctx.recorder.stop() else {
-        // No active recording — reset state so the app doesn't get stuck
-        info!("StopAndTranscribe called but no active recording");
-        let _ = ctx.tx.send(AppMessage::TranscriptionDone(String::new()));
-        return;
-    };
-
-    info!("Transcribing...");
     let transcriber = Arc::clone(ctx.transcriber);
     let spoken_punctuation = ctx.state.spoken_punctuation;
     let translate_to_english = ctx.state.translate_to_english;
     let max_recordings = ctx.state.max_recordings;
     let tx = ctx.tx.clone();
 
-    std::thread::spawn(move || {
-        let result = transcriber.transcribe(&audio_path, translate_to_english);
-        if max_recordings == 0 {
-            let _ = std::fs::remove_file(&audio_path);
-        } else {
+    if max_recordings == 0 {
+        // In-memory path: no file I/O
+        let Some(samples) = ctx.recorder.stop_samples() else {
+            info!("StopAndTranscribe called but no audio captured");
+            let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
+            return;
+        };
+
+        info!("Transcribing {} samples from memory...", samples.len());
+        std::thread::spawn(move || {
+            match transcriber.transcribe_samples(&samples, translate_to_english) {
+                Ok(raw) => {
+                    let text = if spoken_punctuation {
+                        postprocess::process(&raw)
+                    } else {
+                        raw
+                    };
+                    let _ = tx.send(AppMessage::TranscriptionDone(text));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
+                }
+            }
+        });
+    } else {
+        // File path: write WAV for recording storage
+        let Some(audio_path) = ctx.recorder.stop() else {
+            info!("StopAndTranscribe called but no active recording");
+            let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
+            return;
+        };
+
+        info!("Transcribing...");
+        std::thread::spawn(move || {
+            let result = transcriber.transcribe(&audio_path, translate_to_english);
             RecordingStore::prune(max_recordings);
-        }
-        match result {
-            Ok(raw) => {
-                let text = if spoken_punctuation {
-                    postprocess::process(&raw)
-                } else {
-                    raw
-                };
-                let _ = tx.send(AppMessage::TranscriptionDone(text));
+            match result {
+                Ok(raw) => {
+                    let text = if spoken_punctuation {
+                        postprocess::process(&raw)
+                    } else {
+                        raw
+                    };
+                    let _ = tx.send(AppMessage::TranscriptionDone(text));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
+                }
             }
-            Err(e) => {
-                let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
-            }
-        }
-    });
+        });
+    }
 }
 
 fn start_streaming(ctx: &mut EffectContext<'_>) {

@@ -61,6 +61,69 @@ impl AudioRecorder {
         }
     }
 
+    pub fn start_in_memory(&mut self) -> Result<()> {
+        let host = cpal::default_host();
+        let device = host
+            .default_input_device()
+            .context("No microphone found")?;
+
+        let supported_config = device
+            .default_input_config()
+            .context("Failed to get default input config")?;
+
+        let native_rate = supported_config.sample_rate();
+        let native_channels = supported_config.channels() as u32;
+
+        // No WAV file — only record to in-memory buffer
+        let samples = Arc::new(Mutex::new(Vec::new()));
+        let samples_clone = Arc::clone(&samples);
+
+        let dropped = Arc::new(AtomicU64::new(0));
+        let dropped_clone = Arc::clone(&dropped);
+
+        let stream = device.build_input_stream(
+            &supported_config.into(),
+            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                let mono = mix_to_mono(data, native_channels);
+                let resampled = resample(&mono, native_rate, TARGET_RATE);
+
+                if let Ok(mut buf) = samples_clone.try_lock() {
+                    buf.extend_from_slice(&resampled);
+                } else {
+                    dropped_clone.fetch_add(resampled.len() as u64, Ordering::Relaxed);
+                }
+            },
+            |err| {
+                log::error!("Audio stream error: {err}");
+            },
+            None,
+        ).context("Failed to build input stream")?;
+
+        stream.play().context("Failed to start audio stream")?;
+        self.stream = Some(stream);
+        self.samples = samples;
+        self.dropped_samples = dropped;
+        self.current_path = None;
+
+        Ok(())
+    }
+
+    /// Stop recording and return the captured samples.
+    /// For in-memory recordings (no WAV file).
+    pub fn stop_samples(&mut self) -> Option<Vec<f32>> {
+        drop(self.stream.take());
+
+        let dropped = self.dropped_samples.load(Ordering::Relaxed);
+        if dropped > 0 {
+            log::warn!("Dropped {dropped} audio samples due to lock contention during recording");
+        }
+
+        let samples = self.samples.lock().ok().map(|b| b.clone());
+        // Clear current_path in case it was set
+        self.current_path.take();
+        samples.filter(|s| !s.is_empty())
+    }
+
     pub fn start(&mut self, output_path: &Path) -> Result<()> {
         let host = cpal::default_host();
         let device = host

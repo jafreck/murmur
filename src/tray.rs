@@ -259,7 +259,7 @@ impl TrayController {
         )?;
 
         let streaming_item =
-            CheckMenuItem::new("Live Streaming", true, config.streaming, None);
+            CheckMenuItem::new("Live Streaming (Preview)", true, config.streaming, None);
         let streaming_id = streaming_item.id().clone();
 
         let translate_item =

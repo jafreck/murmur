@@ -50,6 +50,12 @@ MURMUR_VERSION=v0.1.0 bash <(curl -sSfL https://github.com/jafreck/murmur/releas
 .\scripts\install.ps1 -Version v0.1.0
 ```
 
+### Homebrew (macOS / Linux)
+
+```bash
+brew install jafreck/murmur/murmur
+```
+
 ### From source
 
 ```bash

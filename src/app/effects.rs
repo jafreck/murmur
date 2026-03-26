@@ -334,9 +334,12 @@ fn reload_transcriber(ctx: &mut EffectContext<'_>, generation: u64) {
     std::thread::spawn(move || {
         if !crate::transcription::transcriber::model_exists(&model_size) {
             info!("Downloading {model_size} model...");
+            let last_milestone = std::cell::Cell::new(u32::MAX);
             if let Err(e) = model::download(&model_size, |percent| {
-                if (percent as u32).is_multiple_of(25) {
-                    info!("Downloading {model_size}... {percent:.0}%");
+                let milestone = percent as u32 / 10 * 10;
+                if milestone != last_milestone.get() {
+                    last_milestone.set(milestone);
+                    info!("Downloading {model_size}... {milestone}%");
                 }
             }) {
                 error!("Failed to download model '{model_size}': {e}");

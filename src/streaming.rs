@@ -181,8 +181,13 @@ pub fn stitch(committed: &[String], chunk_words: &[String]) -> Vec<String> {
     }
 }
 
+/// Strip leading/trailing punctuation from a word for comparison purposes.
+fn normalize_for_match(word: &str) -> &str {
+    word.trim_matches(|c: char| c.is_ascii_punctuation())
+}
+
 /// Find the length of the longest suffix of `a` that equals a prefix of `b`,
-/// using case-insensitive comparison.
+/// using case-insensitive, punctuation-insensitive comparison.
 fn longest_suffix_prefix_match(a: &[String], b: &[String]) -> usize {
     let max_len = a.len().min(b.len());
     let mut best = 0;
@@ -190,11 +195,11 @@ fn longest_suffix_prefix_match(a: &[String], b: &[String]) -> usize {
     for len in 1..=max_len {
         let suffix = &a[a.len() - len..];
         let prefix = &b[..len];
-        if suffix
-            .iter()
-            .zip(prefix.iter())
-            .all(|(s, p)| s.eq_ignore_ascii_case(p))
-        {
+        if suffix.iter().zip(prefix.iter()).all(|(s, p)| {
+            let s_norm = normalize_for_match(s);
+            let p_norm = normalize_for_match(p);
+            !s_norm.is_empty() && !p_norm.is_empty() && s_norm.eq_ignore_ascii_case(p_norm)
+        }) {
             best = len;
         }
     }
@@ -389,5 +394,44 @@ mod tests {
         let a: Vec<String> = vec!["Hello".into(), "WORLD".into()];
         let b: Vec<String> = vec!["hello".into(), "world".into(), "test".into()];
         assert_eq!(longest_suffix_prefix_match(&a, &b), 2);
+    }
+
+    #[test]
+    fn test_longest_suffix_prefix_match_punctuation() {
+        // "come." should match "come" (trailing punctuation stripped)
+        let a: Vec<String> = vec!["it'll".into(), "come.".into()];
+        let b: Vec<String> = vec!["come".into(), "pop".into(), "up".into()];
+        assert_eq!(longest_suffix_prefix_match(&a, &b), 1);
+    }
+
+    #[test]
+    fn test_longest_suffix_prefix_match_leading_punctuation() {
+        let a: Vec<String> = vec!["hello".into(), "world".into()];
+        let b: Vec<String> = vec!["\"world".into(), "today".into()];
+        assert_eq!(longest_suffix_prefix_match(&a, &b), 1);
+    }
+
+    #[test]
+    fn test_stitch_punctuation_mismatch() {
+        // Real-world case: chunk N ends with "come." and chunk N+1 starts with "come"
+        let committed: Vec<String> = vec![
+            "keep".into(), "talking".into(), "and".into(),
+            "eventually".into(), "it'll".into(), "come.".into(),
+        ];
+        let chunk: Vec<String> = vec![
+            "eventually".into(), "it'll".into(), "come".into(),
+            "pop".into(), "up".into(),
+        ];
+        let result = stitch(&committed, &chunk);
+        assert_eq!(result, vec!["pop", "up"]);
+    }
+
+    #[test]
+    fn test_normalize_for_match() {
+        assert_eq!(normalize_for_match("hello"), "hello");
+        assert_eq!(normalize_for_match("hello."), "hello");
+        assert_eq!(normalize_for_match("hello,"), "hello");
+        assert_eq!(normalize_for_match("\"hello\""), "hello");
+        assert_eq!(normalize_for_match("..."), "");
     }
 }

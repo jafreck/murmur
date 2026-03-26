@@ -168,6 +168,7 @@ impl AppState {
     }
 
     fn on_key_down(&mut self) -> Vec<AppEffect> {
+        log::info!("on_key_down: mode={:?} is_pressed={}", self.mode, self.is_pressed);
         match (&self.mode, self.is_pressed) {
             (InputMode::OpenMic, true) => self.stop_recording_effects(),
             (InputMode::OpenMic, false) => self.start_recording_effects(),
@@ -180,6 +181,7 @@ impl AppState {
     }
 
     fn on_key_up(&mut self) -> Vec<AppEffect> {
+        log::info!("on_key_up: mode={:?} is_pressed={}", self.mode, self.is_pressed);
         if self.mode == InputMode::PushToTalk && self.is_pressed {
             self.stop_recording_effects()
         } else {

@@ -87,10 +87,13 @@ impl HotkeyManager {
             // Read the current hotkey config on each event
             let (target_key, required) = match hotkey_config.lock() {
                 Ok(cfg) => cfg.clone(),
-                Err(_) => return,
+                Err(_) => {
+                    log::error!("Hotkey config mutex poisoned — dropping event");
+                    return;
+                }
             };
 
-            let modifiers_satisfied = || -> bool {
+            let modifiers_ok = || -> bool {
                 if required.is_empty() {
                     return true;
                 }
@@ -105,8 +108,12 @@ impl HotkeyManager {
                     if let Ok(mut held) = held_modifiers.lock() {
                         held.insert(key);
                     }
-                    if key == target_key && modifiers_satisfied() {
-                        on_key_down();
+                    if key == target_key {
+                        let mods = modifiers_ok();
+                        log::info!("Hotkey press detected (modifier key={key:?}, mods_ok={mods})");
+                        if mods {
+                            on_key_down();
+                        }
                     }
                 }
                 EventType::KeyRelease(key) if is_modifier(&key) => {
@@ -114,15 +121,19 @@ impl HotkeyManager {
                         held.remove(&key);
                     }
                     if key == target_key {
+                        log::info!("Hotkey release detected (modifier key={key:?})");
                         on_key_up();
                     }
                 }
                 EventType::KeyPress(key) if key == target_key => {
-                    if modifiers_satisfied() {
+                    let mods = modifiers_ok();
+                    log::info!("Hotkey press detected (key={key:?}, mods_ok={mods})");
+                    if mods {
                         on_key_down();
                     }
                 }
                 EventType::KeyRelease(key) if key == target_key => {
+                    log::info!("Hotkey release detected (key={key:?})");
                     on_key_up();
                 }
                 _ => {}

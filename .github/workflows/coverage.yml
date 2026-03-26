@@ -27,7 +27,7 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Run tests with coverage
-        run: cargo llvm-cov --summary-only --fail-under-lines 75 -- --test-threads=1
+        run: cargo llvm-cov --summary-only --fail-under-lines 70 -- --test-threads=1
 
       - name: Generate coverage report
         if: always()

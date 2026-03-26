@@ -50,7 +50,9 @@ enum Commands {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .filter_module("enigo", log::LevelFilter::Warn)
+        .init();
 
     // Log panics with full backtraces instead of just printing to stderr.
     // This catches panics in the main thread and provides context for debugging.
@@ -176,8 +178,13 @@ pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
 }
 
 fn cmd_download_model(size: &str) -> Result<()> {
+    let last_pct = std::cell::Cell::new(u32::MAX);
     model::download(size, |percent| {
-        eprint!("\rDownloading {size} model... {percent:.0}%");
+        let pct = percent as u32;
+        if pct != last_pct.get() {
+            last_pct.set(pct);
+            eprint!("\rDownloading {size} model... {pct}%");
+        }
     })?;
     eprintln!();
     println!("Model downloaded.");

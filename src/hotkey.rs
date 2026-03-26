@@ -17,6 +17,9 @@ pub type SharedHotkeyConfig = Arc<Mutex<(Key, HashSet<Key>)>>;
 /// Shared flag to enter hotkey capture mode.
 pub type CaptureFlag = Arc<AtomicBool>;
 
+/// Shared flag to suppress hotkey events during paste and reset modifier state.
+pub type PasteGuard = Arc<AtomicBool>;
+
 /// Create a shared hotkey config from a parsed hotkey.
 pub fn shared_hotkey(parsed: &ParsedHotkey) -> SharedHotkeyConfig {
     Arc::new(Mutex::new((
@@ -68,6 +71,7 @@ impl HotkeyManager {
     pub fn start(
         hotkey_config: SharedHotkeyConfig,
         capture_flag: CaptureFlag,
+        paste_guard: PasteGuard,
         on_key_down: impl Fn() + Send + 'static,
         on_key_up: impl Fn() + Send + 'static,
         on_capture: impl Fn(Key) + Send + 'static,
@@ -75,6 +79,16 @@ impl HotkeyManager {
         let held_modifiers: Mutex<HashSet<Key>> = Mutex::new(HashSet::new());
 
         listen(move |event: Event| {
+            // During paste, ignore all events and reset modifier state.
+            // Enigo's simulated Cmd+V generates phantom modifier events on
+            // macOS that corrupt rdev's flagsChanged state tracking.
+            if paste_guard.load(Ordering::Relaxed) {
+                if let Ok(mut held) = held_modifiers.lock() {
+                    held.clear();
+                }
+                return;
+            }
+
             // Capture mode: intercept the next key press as the new hotkey
             if capture_flag.load(Ordering::Relaxed) {
                 if let EventType::KeyPress(key) = event.event_type {

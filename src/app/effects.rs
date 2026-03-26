@@ -1,11 +1,12 @@
 use anyhow::Result;
 use log::{error, info};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::Arc;
 
 use crate::audio::AudioRecorder;
 use crate::config::Config;
-use crate::hotkey::{CaptureFlag, SharedHotkeyConfig};
+use crate::hotkey::{CaptureFlag, PasteGuard, SharedHotkeyConfig};
 use crate::inserter::TextInserter;
 use crate::model;
 use crate::postprocess;
@@ -26,6 +27,7 @@ pub struct EffectContext<'a> {
     pub streaming_stop: &'a mut Option<mpsc::Sender<()>>,
     pub hotkey_config: &'a SharedHotkeyConfig,
     pub capture_flag: &'a CaptureFlag,
+    pub paste_guard: &'a PasteGuard,
 }
 
 /// Apply a single effect, returning (should_quit, extra_effects).
@@ -63,9 +65,13 @@ pub fn apply_effect(
         }
         AppEffect::InsertText(text) => {
             info!("Transcription: {text}");
+            // Guard the hotkey listener during paste — enigo's simulated
+            // Cmd+V generates phantom modifier events on macOS.
+            ctx.paste_guard.store(true, Ordering::Relaxed);
             if let Err(e) = TextInserter::insert(&text) {
                 error!("Insert failed: {e}");
             }
+            ctx.paste_guard.store(false, Ordering::Relaxed);
         }
         AppEffect::CopyToClipboard(text) => {
             if let Ok(mut cb) = arboard::Clipboard::new() {

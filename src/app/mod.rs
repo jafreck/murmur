@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::audio::AudioRecorder;
 use crate::config::Config;
-use crate::hotkey::HotkeyManager;
+use crate::hotkey::{self, HotkeyManager};
 use crate::tray::{TrayAction, TrayController};
 use crate::transcriber::Transcriber;
 use crate::VERSION;
@@ -122,12 +122,12 @@ pub fn run() -> Result<()> {
     let tx_down = tx.clone();
     let tx_up = tx.clone();
 
-    let hotkey_key = parsed.key;
-    let hotkey_mods = parsed.modifiers;
+    let hotkey_config = hotkey::shared_hotkey(&parsed);
+
+    let hotkey_config_listener = hotkey_config.clone();
     std::thread::spawn(move || {
         if let Err(e) = HotkeyManager::start(
-            hotkey_key,
-            hotkey_mods,
+            hotkey_config_listener,
             move || { let _ = tx_down.send(AppMessage::KeyDown); },
             move || { let _ = tx_up.send(AppMessage::KeyUp); },
         ) {
@@ -169,6 +169,7 @@ pub fn run() -> Result<()> {
                     state: &mut state,
                     tx: &tx,
                     streaming_stop: &mut streaming_stop,
+                    hotkey_config: &hotkey_config,
                 })?;
                 effects.extend(extra);
                 if quit {

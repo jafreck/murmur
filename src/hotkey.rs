@@ -2,11 +2,23 @@ use anyhow::{Context, Result};
 use log::error;
 use rdev::{listen, Event, EventType, Key};
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub struct ParsedHotkey {
     pub key: Key,
     pub modifiers: Vec<Key>,
+}
+
+/// Shared hotkey configuration that can be updated at runtime.
+/// The listener thread reads from this on every key event.
+pub type SharedHotkeyConfig = Arc<Mutex<(Key, HashSet<Key>)>>;
+
+/// Create a shared hotkey config from a parsed hotkey.
+pub fn shared_hotkey(parsed: &ParsedHotkey) -> SharedHotkeyConfig {
+    Arc::new(Mutex::new((
+        parsed.key,
+        parsed.modifiers.iter().copied().collect(),
+    )))
 }
 
 impl ParsedHotkey {
@@ -17,7 +29,7 @@ impl ParsedHotkey {
         } else {
             let mod_names: Vec<String> = self.modifiers
                 .iter()
-                .map(|k| crate::keycodes::key_to_name(k))
+                .map(crate::keycodes::key_to_name)
                 .collect();
             format!("{}+{}", mod_names.join("+"), key_name)
         }
@@ -44,18 +56,22 @@ pub struct HotkeyManager;
 impl HotkeyManager {
     /// Start listening for global key events. This blocks the calling thread.
     ///
-    /// When `required_modifiers` is non-empty, the key-down callback only fires
-    /// when all listed modifier keys are currently held.
+    /// The hotkey is read dynamically from `hotkey_config` on every key event,
+    /// allowing it to be updated at runtime via `ReloadConfig`.
     pub fn start(
-        target_key: Key,
-        required_modifiers: Vec<Key>,
+        hotkey_config: SharedHotkeyConfig,
         on_key_down: impl Fn() + Send + 'static,
         on_key_up: impl Fn() + Send + 'static,
     ) -> Result<()> {
-        let required: HashSet<Key> = required_modifiers.into_iter().collect();
         let held_modifiers: Mutex<HashSet<Key>> = Mutex::new(HashSet::new());
 
         listen(move |event: Event| {
+            // Read the current hotkey config on each event
+            let (target_key, required) = match hotkey_config.lock() {
+                Ok(cfg) => cfg.clone(),
+                Err(_) => return,
+            };
+
             match event.event_type {
                 EventType::KeyPress(key) if is_modifier(&key) => {
                     if let Ok(mut held) = held_modifiers.lock() {

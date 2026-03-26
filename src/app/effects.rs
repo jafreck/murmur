@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::audio::AudioRecorder;
 use crate::config::Config;
+use crate::hotkey::SharedHotkeyConfig;
 use crate::inserter::TextInserter;
 use crate::model;
 use crate::postprocess;
@@ -23,6 +24,7 @@ pub struct EffectContext<'a> {
     pub state: &'a mut AppState,
     pub tx: &'a mpsc::Sender<AppMessage>,
     pub streaming_stop: &'a mut Option<mpsc::Sender<()>>,
+    pub hotkey_config: &'a SharedHotkeyConfig,
 }
 
 /// Apply a single effect, returning (should_quit, extra_effects).
@@ -147,7 +149,24 @@ pub fn apply_effect(
             let new_config = Config::load();
             let old_model = ctx.state.model_size.clone();
             let old_lang = ctx.state.language.clone();
+            let old_generation = ctx.state.reload_generation;
             *ctx.state = AppState::new(&new_config);
+            // Preserve reload_generation so in-flight reloads are correctly discarded
+            ctx.state.reload_generation = old_generation;
+
+            // Update the hotkey listener if the hotkey changed
+            if new_config.hotkey != ctx.config.hotkey {
+                if let Some(parsed) = crate::keycodes::parse(&new_config.hotkey) {
+                    if let Ok(mut hk) = ctx.hotkey_config.lock() {
+                        *hk = (parsed.key, parsed.modifiers.into_iter().collect());
+                    }
+                    info!("Hotkey updated to: {}", new_config.hotkey);
+                    ctx.tray.set_hotkey(&new_config.hotkey);
+                } else {
+                    error!("Invalid hotkey in config: '{}', keeping previous", new_config.hotkey);
+                }
+            }
+
             *ctx.config = new_config;
             // If model or language changed, reload the transcriber
             if ctx.state.model_size != old_model || ctx.state.language != old_lang {

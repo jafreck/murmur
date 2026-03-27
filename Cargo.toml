@@ -60,7 +60,7 @@ nnnoiseless = "0.5"
 png = "0.18.1"
 
 # Transparent overlay window
-eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts"] }
+eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
 egui = "0.33"
 
 # Timestamp formatting for note filenames

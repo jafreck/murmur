@@ -109,6 +109,9 @@ pub fn apply_effect(
             info!("Language changed to: {name} ({code})");
             ctx.tray.set_language(&code);
         }
+        AppEffect::SetLanguageMenuEnabled(enabled) => {
+            ctx.tray.set_language_menu_enabled(enabled);
+        }
         AppEffect::SetTrayMode(mode) => {
             ctx.tray.set_mode(&mode);
             info!("Mode changed to: {mode}");
@@ -310,6 +313,13 @@ fn reload_config(ctx: &mut EffectContext<'_>) -> Result<(bool, Vec<AppEffect>)> 
     *ctx.state = AppState::new(&new_config);
     // Preserve reload_generation so in-flight reloads are correctly discarded
     ctx.state.reload_generation = old_generation;
+
+    // Enforce English for English-only models
+    let english_only = crate::config::is_english_only_model(&ctx.state.model_size);
+    if english_only && ctx.state.language != "en" {
+        ctx.state.language = "en".to_string();
+    }
+    ctx.tray.set_language_menu_enabled(!english_only);
 
     // Update the hotkey listener if the hotkey changed
     if new_config.hotkey != ctx.config.hotkey {

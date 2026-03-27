@@ -64,6 +64,11 @@ pub const SUPPORTED_MODELS: &[&str] = &[
     "distil-large-v3",
 ];
 
+/// Returns true for models that only support English (`.en` suffix or `distil-*`).
+pub fn is_english_only_model(model: &str) -> bool {
+    model.ends_with(".en") || model.starts_with("distil-")
+}
+
 pub const SUPPORTED_LANGUAGES: &[(&str, &str)] = &[
     ("auto", "Auto-Detect"),
     ("en", "English"),
@@ -820,5 +825,25 @@ mod tests {
         let vscode_ctx = loaded.app_contexts.get("com.vscode").unwrap();
         assert_eq!(vscode_ctx.vocabulary, vec!["rustfmt", "clippy"]);
         assert_eq!(vscode_ctx.mode, Some(DictationMode::Code));
+    }
+
+    #[test]
+    fn is_english_only_model_detects_en_suffix() {
+        assert!(is_english_only_model("base.en"));
+        assert!(is_english_only_model("tiny.en"));
+        assert!(is_english_only_model("medium.en"));
+    }
+
+    #[test]
+    fn is_english_only_model_detects_distil_prefix() {
+        assert!(is_english_only_model("distil-large-v3"));
+    }
+
+    #[test]
+    fn is_english_only_model_rejects_multilingual() {
+        assert!(!is_english_only_model("base"));
+        assert!(!is_english_only_model("large"));
+        assert!(!is_english_only_model("large-v3-turbo"));
+        assert!(!is_english_only_model("tiny"));
     }
 }

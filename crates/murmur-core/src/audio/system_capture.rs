@@ -207,14 +207,14 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Requires audio hardware; segfaults on headless CI (Windows)
     fn test_list_audio_devices_returns_vec() {
-        // Just verify the function doesn't panic and returns a vec.
         let devices = list_audio_devices();
-        // We can't assert on specific devices in CI, but the call should succeed.
         let _ = devices;
     }
 
     #[test]
+    #[ignore] // Requires audio hardware; segfaults on headless CI (Windows)
     fn test_capturer_rejects_nonexistent_device() {
         let result = SystemAudioCapturer::new("__nonexistent_device_12345__");
         assert!(result.is_err());

@@ -3,3 +3,4 @@
 # Experimental/vendored git repos
 _candle_cormel/
 _whisper_cpp/
+node_modules/

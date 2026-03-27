@@ -294,9 +294,9 @@ mod tests {
 
     #[test]
     fn test_context_chars_constants() {
-        assert!(CONTEXT_CHARS_BEFORE > 0);
-        assert!(CONTEXT_CHARS_AFTER > 0);
-        assert!(CONTEXT_CHARS_BEFORE >= CONTEXT_CHARS_AFTER);
+        const { assert!(CONTEXT_CHARS_BEFORE > 0) };
+        const { assert!(CONTEXT_CHARS_AFTER > 0) };
+        const { assert!(CONTEXT_CHARS_BEFORE >= CONTEXT_CHARS_AFTER) };
     }
 
     #[test]

@@ -879,18 +879,13 @@ mod tests {
 
     #[test]
     fn test_novelty_threshold_constant() {
-        assert!(
-            NOVELTY_TOKEN_THRESHOLD >= 2,
-            "threshold must exclude single-token terms"
-        );
+        const { assert!(NOVELTY_TOKEN_THRESHOLD >= 2) };
     }
 
     #[test]
     fn test_max_prompt_chars_within_whisper_limits() {
-        // Whisper's decoder context is 448 tokens, prompt gets ~half.
-        // 500 chars ≈ 125-170 tokens, well within budget.
-        assert!(MAX_PROMPT_CHARS <= 1000);
-        assert!(MAX_PROMPT_CHARS >= 200);
+        const { assert!(MAX_PROMPT_CHARS <= 1000) };
+        const { assert!(MAX_PROMPT_CHARS >= 200) };
     }
 
     // -- CJK / UTF-8 truncation --

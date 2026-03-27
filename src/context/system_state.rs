@@ -16,6 +16,12 @@ const MAX_ENTRIES: usize = 50;
 /// to say it during dictation.
 pub struct ClipboardWatcher;
 
+impl Default for ClipboardWatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClipboardWatcher {
     pub fn new() -> Self {
         ClipboardWatcher
@@ -58,6 +64,12 @@ struct RecentTextBuffer {
     entries: Vec<String>,
     /// Maximum total characters to retain
     max_chars: usize,
+}
+
+impl Default for RecentTextTracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RecentTextTracker {
@@ -147,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_max_clipboard_chars_positive() {
-        assert!(MAX_CLIPBOARD_CHARS > 0);
+        const { assert!(MAX_CLIPBOARD_CHARS > 0) };
     }
 
     // -- RecentTextTracker --
@@ -281,8 +293,8 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert!(DEFAULT_MAX_RECENT_CHARS > 0);
-        assert!(MAX_ENTRIES > 0);
-        assert!(MAX_CLIPBOARD_CHARS > 0);
+        const { assert!(DEFAULT_MAX_RECENT_CHARS > 0) };
+        const { assert!(MAX_ENTRIES > 0) };
+        const { assert!(MAX_CLIPBOARD_CHARS > 0) };
     }
 }

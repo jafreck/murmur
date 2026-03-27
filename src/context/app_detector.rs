@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn app_detector_default() {
-        let detector = AppDetector::default();
+        let detector = AppDetector;
         assert_eq!(detector.name(), "AppDetector");
     }
 

@@ -182,10 +182,33 @@ pub struct Config {
     /// Default dictation mode
     #[serde(default)]
     pub dictation_mode: DictationMode,
+    /// Enable wake word detection to start dictation hands-free
+    #[serde(default)]
+    pub wake_word_enabled: bool,
+    /// Phrase that triggers dictation when spoken (default: "murmur start")
+    #[serde(default = "default_wake_word")]
+    pub wake_word: String,
+    /// Phrase that stops dictation when spoken (default: "murmur stop")
+    #[serde(default = "default_stop_phrase")]
+    pub stop_phrase: String,
+    /// Enable the transparent overlay for live note taking
+    #[serde(default)]
+    pub overlay_enabled: bool,
+    /// Directory for saving dictation notes (default: data_dir/murmur/notes)
+    #[serde(default)]
+    pub notes_dir: Option<std::path::PathBuf>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_wake_word() -> String {
+    "murmur start".to_string()
+}
+
+fn default_stop_phrase() -> String {
+    "murmur stop".to_string()
 }
 
 impl Default for Config {
@@ -205,6 +228,11 @@ impl Default for Config {
             app_contexts: std::collections::HashMap::new(),
             excluded_apps: Vec::new(),
             dictation_mode: DictationMode::default(),
+            wake_word_enabled: false,
+            wake_word: default_wake_word(),
+            stop_phrase: default_stop_phrase(),
+            overlay_enabled: false,
+            notes_dir: None,
         }
     }
 }
@@ -229,6 +257,16 @@ impl Config {
 
     pub fn file_path() -> PathBuf {
         Self::dir().join("config.json")
+    }
+
+    /// Resolved notes directory, falling back to data_dir/murmur/notes.
+    pub fn notes_dir(&self) -> PathBuf {
+        self.notes_dir.clone().unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("murmur")
+                .join("notes")
+        })
     }
 
     pub fn load() -> Self {
@@ -392,6 +430,7 @@ mod tests {
             excluded_apps: Vec::new(),
             dictation_mode: DictationMode::Code,
             noise_suppression: true,
+            ..Config::default()
         };
 
         let json = serde_json::to_string(&cfg).unwrap();
@@ -440,6 +479,7 @@ mod tests {
             excluded_apps: vec!["com.bank.app".to_string()],
             dictation_mode: DictationMode::Prose,
             noise_suppression: true,
+            ..Config::default()
         };
         cfg.save_to(&path).unwrap();
 
@@ -588,6 +628,7 @@ mod tests {
             excluded_apps: Vec::new(),
             dictation_mode: DictationMode::Command,
             noise_suppression: true,
+            ..Config::default()
         };
         let json = serde_json::to_string_pretty(&cfg).unwrap();
         assert!(json.contains("\"hotkey\": \"f5\""));

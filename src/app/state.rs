@@ -24,6 +24,8 @@ pub enum AppMessage {
     TrayOpenConfig,
     TrayReloadConfig,
     TraySetHotkey,
+    TrayToggleWakeWord,
+    TrayToggleOverlay,
     HotkeyCapture(Key),
     TranscriptionDone(String),
     TranscriptionError(String),
@@ -34,6 +36,10 @@ pub enum AppMessage {
     /// A new Transcriber has been loaded in the background and is ready to swap in.
     /// The u64 is the reload generation; stale reloads are discarded.
     TranscriberReady(Arc<Transcriber>, u64),
+    /// The wake word was detected — start dictation.
+    WakeWordDetected,
+    /// The stop phrase was detected — stop dictation.
+    StopPhraseDetected,
 }
 
 /// Effect returned by the app state machine in response to a message.
@@ -72,6 +78,26 @@ pub enum AppEffect {
     SetHotkey(String),
     /// Update the noise suppression state on the audio recorder.
     UpdateNoiseSuppression(bool),
+    /// Show the overlay window.
+    ShowOverlay,
+    /// Hide the overlay window.
+    HideOverlay,
+    /// Update the overlay with new text.
+    UpdateOverlayText(String),
+    /// Save the current overlay text to a note file.
+    SaveNote(String),
+    /// Pause the wake word detector (during active dictation).
+    PauseWakeWord,
+    /// Resume the wake word detector (after dictation ends).
+    ResumeWakeWord,
+    /// Start the wake word detector.
+    StartWakeWord,
+    /// Stop the wake word detector.
+    StopWakeWord,
+    /// Spawn the overlay subprocess.
+    SpawnOverlay,
+    /// Kill the overlay subprocess.
+    KillOverlay,
     Quit,
     LogError(String),
 }
@@ -90,18 +116,23 @@ pub struct AppState {
     pub model_size: String,
     pub language: String,
     /// True while a streaming session is actively inserting partial text.
-    /// When set, the final full-transcription result replaces the
-    /// streaming text (via StreamingReplace) instead of appending.
     pub streaming_active: bool,
     /// Number of characters currently on screen from streaming emissions.
-    /// Used to backspace-replace with the final transcription result.
     pub streaming_chars_emitted: usize,
     /// Monotonic counter incremented on each ReloadTranscriber request.
-    /// Used to discard stale transcriber loads when the user changes
-    /// model/language multiple times quickly.
     pub reload_generation: u64,
     /// True while waiting for the user to press a key to set as the new hotkey.
     pub capturing_hotkey: bool,
+    /// True when the current dictation session was started by the wake word.
+    pub wake_word_initiated: bool,
+    /// Wake word detection enabled.
+    pub wake_word_enabled: bool,
+    /// Overlay enabled.
+    pub overlay_enabled: bool,
+    /// Accumulated overlay text for the current session.
+    pub overlay_text: String,
+    /// The configured stop phrase for wake-word-initiated sessions.
+    pub stop_phrase: String,
 }
 
 impl AppState {
@@ -122,6 +153,11 @@ impl AppState {
             streaming_chars_emitted: 0,
             reload_generation: 0,
             capturing_hotkey: false,
+            wake_word_initiated: false,
+            wake_word_enabled: config.wake_word_enabled,
+            overlay_enabled: config.overlay_enabled,
+            overlay_text: String::new(),
+            stop_phrase: config.stop_phrase.clone(),
         }
     }
 
@@ -154,24 +190,18 @@ impl AppState {
             AppMessage::TrayOpenConfig => vec![AppEffect::OpenConfig],
             AppMessage::TrayReloadConfig => vec![AppEffect::ReloadConfig],
             AppMessage::TraySetHotkey => self.on_tray_set_hotkey(),
+            AppMessage::TrayToggleWakeWord => self.on_toggle_wake_word(),
+            AppMessage::TrayToggleOverlay => self.on_toggle_overlay(),
             AppMessage::HotkeyCapture(key) => self.on_hotkey_capture(key),
             // TranscriberReady is handled directly in the run() loop before
             // reaching handle_message, but we need an arm for exhaustiveness.
             AppMessage::TranscriberReady(_, _) => vec![AppEffect::None],
+            AppMessage::WakeWordDetected => self.on_wake_word_detected(),
+            AppMessage::StopPhraseDetected => self.on_stop_phrase_detected(),
             AppMessage::StreamingPartialText {
                 text,
                 replace_chars,
-            } => {
-                if *replace_chars > 0 || !text.is_empty() {
-                    self.streaming_chars_emitted = text.chars().count();
-                    vec![AppEffect::StreamingReplace {
-                        text: text.clone(),
-                        replace_chars: *replace_chars,
-                    }]
-                } else {
-                    vec![AppEffect::None]
-                }
-            }
+            } => self.on_streaming_partial(text, replace_chars),
         }
     }
 
@@ -184,18 +214,106 @@ impl AppState {
         if self.streaming {
             effects.push(AppEffect::StartStreaming);
         }
+        if self.overlay_enabled {
+            self.overlay_text.clear();
+            effects.push(AppEffect::ShowOverlay);
+        }
+        if self.wake_word_enabled {
+            effects.push(AppEffect::PauseWakeWord);
+        }
         effects.push(AppEffect::SetTrayState(TrayState::Recording));
         effects
     }
 
     fn stop_recording_effects(&mut self) -> Vec<AppEffect> {
         self.is_pressed = false;
+        self.wake_word_initiated = false;
         let mut effects = vec![];
         if self.streaming {
             effects.push(AppEffect::StopStreaming);
         }
         effects.push(AppEffect::StopAndTranscribe);
         effects.push(AppEffect::SetTrayState(TrayState::Transcribing));
+        effects
+    }
+
+    fn on_streaming_partial(&mut self, text: &str, replace_chars: &usize) -> Vec<AppEffect> {
+        // Check for stop phrase in wake-word-initiated sessions
+        if self.wake_word_initiated && !self.stop_phrase.is_empty() {
+            if let Some(cleaned) =
+                crate::input::wake_word::check_and_strip_stop_phrase(text, &self.stop_phrase)
+            {
+                // Stop phrase found — end dictation with cleaned text
+                let char_count = cleaned.chars().count();
+                let mut effects = vec![];
+                if *replace_chars > 0 || !cleaned.is_empty() {
+                    self.streaming_chars_emitted = char_count;
+                    effects.push(AppEffect::StreamingReplace {
+                        text: cleaned.clone(),
+                        replace_chars: *replace_chars,
+                    });
+                }
+                if self.overlay_enabled {
+                    self.overlay_text = cleaned;
+                }
+                // Trigger stop
+                effects.extend(self.stop_recording_effects());
+                return effects;
+            }
+        }
+
+        if *replace_chars > 0 || !text.is_empty() {
+            self.streaming_chars_emitted = text.chars().count();
+            let mut effects = vec![AppEffect::StreamingReplace {
+                text: text.to_string(),
+                replace_chars: *replace_chars,
+            }];
+            if self.overlay_enabled {
+                self.overlay_text = text.to_string();
+                effects.push(AppEffect::UpdateOverlayText(text.to_string()));
+            }
+            effects
+        } else {
+            vec![AppEffect::None]
+        }
+    }
+
+    fn on_wake_word_detected(&mut self) -> Vec<AppEffect> {
+        if self.is_pressed {
+            return vec![AppEffect::None];
+        }
+        log::info!("Wake word detected — starting dictation");
+        self.wake_word_initiated = true;
+        self.start_recording_effects()
+    }
+
+    fn on_stop_phrase_detected(&mut self) -> Vec<AppEffect> {
+        if !self.is_pressed {
+            return vec![AppEffect::None];
+        }
+        log::info!("Stop phrase detected — stopping dictation");
+        self.stop_recording_effects()
+    }
+
+    fn on_toggle_wake_word(&mut self) -> Vec<AppEffect> {
+        self.wake_word_enabled = !self.wake_word_enabled;
+        let mut effects = vec![AppEffect::SaveConfig];
+        if self.wake_word_enabled {
+            effects.push(AppEffect::StartWakeWord);
+        } else {
+            effects.push(AppEffect::StopWakeWord);
+        }
+        effects
+    }
+
+    fn on_toggle_overlay(&mut self) -> Vec<AppEffect> {
+        self.overlay_enabled = !self.overlay_enabled;
+        let mut effects = vec![AppEffect::SaveConfig];
+        if self.overlay_enabled {
+            effects.push(AppEffect::SpawnOverlay);
+        } else {
+            effects.push(AppEffect::KillOverlay);
+        }
         effects
     }
 
@@ -232,7 +350,7 @@ impl AppState {
     fn on_transcription_done(&mut self, text: &str) -> Vec<AppEffect> {
         let was_streaming = self.streaming_active;
         let streamed_chars = self.streaming_chars_emitted;
-        // Only clear streaming state if not currently recording (result may be from a previous cycle)
+        // Only clear streaming state if not currently recording
         if !self.is_pressed {
             self.streaming_active = false;
             self.streaming_chars_emitted = 0;
@@ -240,11 +358,7 @@ impl AppState {
 
         let mut effects = vec![];
         if !text.is_empty() {
-            // Text arrives already postprocessed (spoken punctuation applied
-            // by the background transcription thread or streaming loop).
             if was_streaming && streamed_chars > 0 {
-                // Streaming already inserted partial text. Replace it with
-                // the final (more complete and accurate) full transcription.
                 effects.push(AppEffect::StreamingReplace {
                     text: text.to_string(),
                     replace_chars: streamed_chars,
@@ -253,11 +367,24 @@ impl AppState {
                 effects.push(AppEffect::InsertText(text.to_string()));
             }
             self.last_transcription = Some(text.to_string());
+
+            // Update overlay with final text and save note
+            if self.overlay_enabled {
+                self.overlay_text = text.to_string();
+                effects.push(AppEffect::UpdateOverlayText(text.to_string()));
+                effects.push(AppEffect::SaveNote(text.to_string()));
+                effects.push(AppEffect::HideOverlay);
+            }
+        } else if self.overlay_enabled {
+            effects.push(AppEffect::HideOverlay);
         }
-        // Only reset tray if not currently recording — a result arriving
-        // during a new recording is from a previous cycle.
+
         if !self.is_pressed {
             effects.push(AppEffect::SetTrayState(TrayState::Idle));
+            // Resume wake word detection after dictation completes
+            if self.wake_word_enabled {
+                effects.push(AppEffect::ResumeWakeWord);
+            }
         }
         effects
     }
@@ -374,6 +501,11 @@ impl AppState {
             app_contexts: base.app_contexts.clone(),
             excluded_apps: base.excluded_apps.clone(),
             dictation_mode: base.dictation_mode,
+            wake_word_enabled: self.wake_word_enabled,
+            wake_word: base.wake_word.clone(),
+            stop_phrase: base.stop_phrase.clone(),
+            overlay_enabled: self.overlay_enabled,
+            notes_dir: base.notes_dir.clone(),
         }
     }
 }
@@ -399,6 +531,11 @@ mod tests {
             streaming_chars_emitted: 0,
             reload_generation: 0,
             capturing_hotkey: false,
+            wake_word_initiated: false,
+            wake_word_enabled: false,
+            overlay_enabled: false,
+            overlay_text: String::new(),
+            stop_phrase: "murmur stop".to_string(),
         }
     }
 

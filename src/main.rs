@@ -47,6 +47,9 @@ enum Commands {
     },
     /// Show configuration and status
     Status,
+    /// Run the transparent overlay window (internal — spawned by the daemon)
+    #[command(hide = true)]
+    Overlay,
 }
 
 fn main() {
@@ -73,6 +76,7 @@ fn main() {
         Some(Commands::SetLanguage { code }) => cmd_set_language(&code),
         Some(Commands::DownloadModel { size }) => cmd_download_model(&size),
         Some(Commands::Status) => cmd_status(),
+        Some(Commands::Overlay) => murmur::ui::overlay::run_overlay(),
         None => {
             use clap::CommandFactory;
             Cli::command().print_help().ok();

@@ -8,8 +8,11 @@ use crate::audio::AudioRecorder;
 use crate::config::Config;
 use crate::input::hotkey::{CaptureFlag, SharedHotkeyConfig};
 use crate::input::inserter::TextInserter;
+use crate::input::wake_word::WakeWordHandle;
+use crate::notes::NotesManager;
 use crate::transcription::transcriber::Transcriber;
 use crate::transcription::{model, postprocess, streaming};
+use crate::ui::overlay::OverlayHandle;
 use crate::ui::tray::{TrayController, TrayState};
 
 use super::{AppEffect, AppMessage, AppState};
@@ -24,6 +27,9 @@ pub struct EffectContext<'a> {
     pub streaming_stop: &'a mut Option<streaming::StreamingHandle>,
     pub hotkey_config: &'a SharedHotkeyConfig,
     pub capture_flag: &'a CaptureFlag,
+    pub overlay: &'a mut Option<OverlayHandle>,
+    pub wake_word: &'a mut Option<WakeWordHandle>,
+    pub notes: &'a NotesManager,
 }
 
 /// Apply a single effect, returning (should_quit, extra_effects).
@@ -150,6 +156,62 @@ pub fn apply_effect(
                 "Noise suppression {}",
                 if enabled { "enabled" } else { "disabled" }
             );
+        }
+        AppEffect::ShowOverlay => {
+            if let Some(ref mut overlay) = ctx.overlay {
+                if let Err(e) = overlay.show() {
+                    error!("Failed to show overlay: {e}");
+                }
+            }
+        }
+        AppEffect::HideOverlay => {
+            if let Some(ref mut overlay) = ctx.overlay {
+                if let Err(e) = overlay.done() {
+                    error!("Failed to hide overlay: {e}");
+                }
+            }
+        }
+        AppEffect::UpdateOverlayText(text) => {
+            if let Some(ref mut overlay) = ctx.overlay {
+                if let Err(e) = overlay.set_text(&text) {
+                    error!("Failed to update overlay text: {e}");
+                }
+            }
+        }
+        AppEffect::SaveNote(text) => {
+            if !text.is_empty() {
+                if let Err(e) = ctx.notes.save(&text) {
+                    error!("Failed to save note: {e}");
+                }
+            }
+        }
+        AppEffect::PauseWakeWord => {
+            if let Some(ref ww) = ctx.wake_word {
+                ww.pause();
+            }
+        }
+        AppEffect::ResumeWakeWord => {
+            if let Some(ref ww) = ctx.wake_word {
+                ww.resume();
+            }
+        }
+        AppEffect::StartWakeWord => {
+            start_wake_word(ctx);
+        }
+        AppEffect::StopWakeWord => {
+            if let Some(ww) = ctx.wake_word.take() {
+                ww.stop();
+                info!("Wake word detector stopped");
+            }
+        }
+        AppEffect::SpawnOverlay => {
+            spawn_overlay(ctx);
+        }
+        AppEffect::KillOverlay => {
+            if let Some(mut overlay) = ctx.overlay.take() {
+                overlay.quit();
+                info!("Overlay process stopped");
+            }
         }
         AppEffect::Quit => {
             info!("Quit requested via tray");
@@ -416,4 +478,58 @@ fn reload_transcriber(ctx: &mut EffectContext<'_>, generation: u64) {
             }
         }
     });
+}
+
+fn start_wake_word(ctx: &mut EffectContext<'_>) {
+    // Stop existing detector if running
+    if let Some(ww) = ctx.wake_word.take() {
+        ww.stop();
+    }
+
+    let wake_phrase = ctx.config.wake_word.clone();
+    let stop_phrase = ctx.config.stop_phrase.clone();
+    let tx = ctx.tx.clone();
+
+    let (event_tx, event_rx) = mpsc::channel();
+
+    // Forward wake word events to app messages
+    std::thread::spawn(move || {
+        use crate::input::wake_word::WakeWordEvent;
+        while let Ok(event) = event_rx.recv() {
+            let msg = match event {
+                WakeWordEvent::WakeWordDetected => AppMessage::WakeWordDetected,
+                WakeWordEvent::StopPhraseDetected => AppMessage::StopPhraseDetected,
+            };
+            if tx.send(msg).is_err() {
+                break;
+            }
+        }
+    });
+
+    match crate::input::wake_word::start_detector(wake_phrase, stop_phrase, event_tx) {
+        Ok(handle) => {
+            info!("Wake word detector started");
+            *ctx.wake_word = Some(handle);
+        }
+        Err(e) => {
+            error!("Failed to start wake word detector: {e}");
+        }
+    }
+}
+
+fn spawn_overlay(ctx: &mut EffectContext<'_>) {
+    // Kill existing overlay if running
+    if let Some(mut overlay) = ctx.overlay.take() {
+        overlay.quit();
+    }
+
+    match OverlayHandle::spawn() {
+        Ok(handle) => {
+            info!("Overlay process started");
+            *ctx.overlay = Some(handle);
+        }
+        Err(e) => {
+            error!("Failed to spawn overlay: {e}");
+        }
+    }
 }

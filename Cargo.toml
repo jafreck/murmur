@@ -59,6 +59,13 @@ env_logger = "0.11"
 nnnoiseless = "0.5"
 png = "0.18.1"
 
+# Transparent overlay window
+eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts"] }
+egui = "0.31"
+
+# Timestamp formatting for note filenames
+chrono = "0.4"
+
 # macOS: Cocoa event loop for system tray (already transitive deps of tray-icon)
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSRunningApplication", "NSEvent", "NSWorkspace"] }

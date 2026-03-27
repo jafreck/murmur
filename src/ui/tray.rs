@@ -1,5 +1,7 @@
 //! System tray UI.
 
+use std::time::Instant;
+
 use anyhow::Result;
 use tray_icon::menu::{
     CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
@@ -7,6 +9,20 @@ use tray_icon::menu::{
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::config::{self, Config, InputMode};
+
+/// How often (in milliseconds) the pulsing animation updates the icon.
+const PULSE_FRAME_INTERVAL_MS: u128 = 100;
+
+/// Duration of one full pulse cycle in seconds.
+const PULSE_PERIOD_SECS: f64 = 1.5;
+
+/// Minimum opacity scale during the pulse (0.0–1.0).
+const PULSE_ALPHA_MIN: f64 = 0.25;
+
+/// Whether the given state should show a pulsing animation.
+fn is_pulsing_state(state: &TrayState) -> bool {
+    matches!(state, TrayState::Loading | TrayState::Downloading)
+}
 
 /// App states the tray can display.
 #[derive(Debug, Clone, PartialEq)]
@@ -253,6 +269,10 @@ pub struct TrayController {
     transcribing_icon: Icon,
     #[allow(dead_code)]
     loading_icon: Icon,
+
+    /// When set, the icon pulses to indicate a busy/unavailable state.
+    animation_start: Option<Instant>,
+    last_animation_frame: Option<Instant>,
 }
 
 impl TrayController {
@@ -415,6 +435,8 @@ impl TrayController {
             recording_icon,
             transcribing_icon,
             loading_icon,
+            animation_start: None,
+            last_animation_frame: None,
         };
 
         if config::is_english_only_model(&config.model_size) {
@@ -440,9 +462,56 @@ impl TrayController {
             let _ = self.tray.set_icon(Some(icon));
         }
 
+        // Start or stop pulsing animation based on the new state.
+        if is_pulsing_state(&state) {
+            if self.animation_start.is_none() {
+                self.animation_start = Some(Instant::now());
+                self.last_animation_frame = None;
+            }
+        } else {
+            self.animation_start = None;
+            self.last_animation_frame = None;
+        }
+
         let _ = self.tray.set_tooltip(Some(tooltip));
         self.status_item.set_text(label);
         self.state = state;
+    }
+
+    /// Advance the pulsing animation by one frame (if active).
+    ///
+    /// Call this every iteration of the main event loop. The method
+    /// internally throttles itself to [`PULSE_FRAME_INTERVAL_MS`] so
+    /// it is cheap to call at the full loop rate.
+    pub fn tick(&mut self) {
+        let Some(start) = self.animation_start else {
+            return;
+        };
+
+        if let Some(last) = self.last_animation_frame {
+            if last.elapsed().as_millis() < PULSE_FRAME_INTERVAL_MS {
+                return;
+            }
+        }
+
+        let elapsed = start.elapsed().as_secs_f64();
+        let phase = (elapsed * std::f64::consts::TAU / PULSE_PERIOD_SECS).sin();
+        // Map sin output [-1, 1] → [PULSE_ALPHA_MIN, 1.0]
+        let scale = PULSE_ALPHA_MIN + (1.0 - PULSE_ALPHA_MIN) * (phase + 1.0) / 2.0;
+
+        let colors = StateColors::for_current_appearance();
+        let base = match &self.state {
+            TrayState::Loading => colors.loading,
+            TrayState::Downloading => colors.transcribing,
+            _ => return,
+        };
+        let a = (base.3 as f64 * scale).round().min(255.0) as u8;
+
+        if let Ok(icon) = make_icon(base.0, base.1, base.2, a) {
+            let _ = self.tray.set_icon(Some(icon));
+        }
+
+        self.last_animation_frame = Some(Instant::now());
     }
 
     pub fn set_model(&mut self, new_model: &str) {

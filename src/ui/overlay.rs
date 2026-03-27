@@ -68,7 +68,8 @@ enum FadeState {
 
 /// Fade animation speed (opacity change per second)
 const FADE_IN_SPEED: f32 = 6.0;
-const FADE_OUT_SPEED: f32 = 2.0;
+/// 3-second fade-out (1.0 / 3.0)
+const FADE_OUT_SPEED: f32 = 1.0 / 3.0;
 
 impl OverlayApp {
     fn new() -> Self {

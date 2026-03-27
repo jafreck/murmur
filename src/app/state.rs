@@ -536,8 +536,6 @@ impl AppState {
             excluded_apps: base.excluded_apps.clone(),
             dictation_mode: base.dictation_mode,
             app_mode: self.app_mode,
-            overlay_enabled: false,
-            wake_word_enabled: false,
             wake_word: base.wake_word.clone(),
             stop_phrase: base.stop_phrase.clone(),
             notes_dir: base.notes_dir.clone(),

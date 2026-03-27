@@ -207,12 +207,6 @@ pub struct Config {
     /// Application mode: `dictation` (paste at cursor) or `notes` (overlay + wake word)
     #[serde(default)]
     pub app_mode: AppMode,
-    /// Backward compat: old configs may have overlay_enabled/wake_word_enabled.
-    /// If either is true and app_mode is not explicitly set, migrate to Notes mode.
-    #[serde(default, skip_serializing)]
-    pub overlay_enabled: bool,
-    #[serde(default, skip_serializing)]
-    pub wake_word_enabled: bool,
     /// Phrase that triggers dictation when spoken (default: "murmur start dictation")
     #[serde(default = "default_wake_word")]
     pub wake_word: String,
@@ -254,8 +248,6 @@ impl Default for Config {
             excluded_apps: Vec::new(),
             dictation_mode: DictationMode::default(),
             app_mode: AppMode::default(),
-            overlay_enabled: false,
-            wake_word_enabled: false,
             wake_word: default_wake_word(),
             stop_phrase: default_stop_phrase(),
             notes_dir: None,
@@ -317,13 +309,7 @@ impl Config {
 
     pub fn parse(contents: &str, source: &std::path::Path) -> Self {
         match serde_json::from_str::<Config>(contents) {
-            Ok(mut config) => {
-                // Backward compat: migrate old overlay_enabled/wake_word_enabled to app_mode
-                if config.overlay_enabled || config.wake_word_enabled {
-                    config.app_mode = AppMode::Notes;
-                }
-                config
-            }
+            Ok(config) => config,
             Err(e) => {
                 eprintln!("Warning: unable to parse {}: {e}", source.display());
                 Self::default()

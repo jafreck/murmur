@@ -180,22 +180,24 @@ impl AppState {
         self.streaming_active = self.streaming;
         self.streaming_chars_emitted = 0;
         let path = self.recording_output_path();
-        let mut effects = vec![AppEffect::StartRecording(path)];
+        // Update the tray icon first so the user gets immediate visual
+        // feedback before any I/O from StartRecording.
+        let mut effects = vec![AppEffect::SetTrayState(TrayState::Recording)];
+        effects.push(AppEffect::StartRecording(path));
         if self.streaming {
             effects.push(AppEffect::StartStreaming);
         }
-        effects.push(AppEffect::SetTrayState(TrayState::Recording));
         effects
     }
 
     fn stop_recording_effects(&mut self) -> Vec<AppEffect> {
         self.is_pressed = false;
-        let mut effects = vec![];
+        // Update the tray icon first for immediate visual feedback.
+        let mut effects = vec![AppEffect::SetTrayState(TrayState::Transcribing)];
         if self.streaming {
             effects.push(AppEffect::StopStreaming);
         }
         effects.push(AppEffect::StopAndTranscribe);
-        effects.push(AppEffect::SetTrayState(TrayState::Transcribing));
         effects
     }
 

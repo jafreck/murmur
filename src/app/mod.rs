@@ -201,7 +201,7 @@ pub fn run() -> Result<()> {
         error!("Failed to warm microphone: {e}");
     }
     let mut state = AppState::new(&config);
-    let mut streaming_stop: Option<mpsc::Sender<()>> = None;
+    let mut streaming_stop: Option<crate::transcription::streaming::StreamingHandle> = None;
 
     println!("murmur v{VERSION}");
     println!("Hotkey: {}", config.hotkey);

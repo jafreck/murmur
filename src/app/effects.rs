@@ -21,7 +21,7 @@ pub struct EffectContext<'a> {
     pub config: &'a mut Config,
     pub state: &'a mut AppState,
     pub tx: &'a mpsc::Sender<AppMessage>,
-    pub streaming_stop: &'a mut Option<mpsc::Sender<()>>,
+    pub streaming_stop: &'a mut Option<streaming::StreamingHandle>,
     pub hotkey_config: &'a SharedHotkeyConfig,
     pub capture_flag: &'a CaptureFlag,
 }
@@ -54,9 +54,9 @@ pub fn apply_effect(
             start_streaming(ctx);
         }
         AppEffect::StopStreaming => {
-            if let Some(stop) = ctx.streaming_stop.take() {
+            if let Some(handle) = ctx.streaming_stop.take() {
                 info!("Stopping streaming transcription");
-                let _ = stop.send(());
+                handle.stop_and_join();
             }
         }
         AppEffect::InsertText(text) => {
@@ -153,9 +153,12 @@ pub fn apply_effect(
 }
 
 fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
-    // Stop streaming first (if running)
-    if let Some(stop) = ctx.streaming_stop.take() {
-        let _ = stop.send(());
+    // Stop streaming first (if running) and wait for the thread to exit.
+    // This prevents concurrent access to the shared WhisperContext between
+    // the streaming thread and the final transcription thread below.
+    if let Some(handle) = ctx.streaming_stop.take() {
+        info!("Waiting for streaming thread to finish before final transcription");
+        handle.stop_and_join();
     }
 
     let Some(transcriber) = ctx.transcriber.as_ref().map(Arc::clone) else {
@@ -255,14 +258,14 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
         }
     });
 
-    let stop = streaming::start_streaming(
+    let handle = streaming::start_streaming(
         sample_buffer,
         transcriber,
         translate,
         spoken_punct,
         streaming_tx,
     );
-    *ctx.streaming_stop = Some(stop);
+    *ctx.streaming_stop = Some(handle);
 }
 
 fn open_config_file() {

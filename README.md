@@ -208,6 +208,14 @@ irm https://github.com/jafreck/murmur/releases/latest/download/uninstall.ps1 | i
 
 Removes the binary, service/startup config, and logs. Prompts before deleting user config and downloaded models.
 
+## murmur-copilot
+
+murmur-copilot is a real-time meeting assistant built on top of murmur. It provides a transparent overlay that live-transcribes meetings, captures both your microphone and remote participants' system audio, and offers LLM-powered suggestions and summaries — all running locally.
+
+**Key features:** live dual-stream transcription, AI suggestions via Ollama, stealth mode (macOS), meeting session history with export.
+
+See [crates/murmur-copilot/README.md](crates/murmur-copilot/README.md) for build instructions, configuration, and usage.
+
 ## License
 
 MIT

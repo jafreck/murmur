@@ -543,6 +543,8 @@ impl AppState {
             stealth_mode: base.stealth_mode,
             llm_model: base.llm_model.clone(),
             ollama_url: base.ollama_url.clone(),
+            sessions_dir: base.sessions_dir.clone(),
+            auto_summary: base.auto_summary,
         }
     }
 }

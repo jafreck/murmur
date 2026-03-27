@@ -1,4 +1,5 @@
 import { TranscriptDisplay, TranscriptUpdate } from "./transcript";
+import { MeetingHistory } from "./history";
 
 declare global {
   interface Window {
@@ -42,6 +43,7 @@ export function initApp(): void {
   const btnStop = document.getElementById("btn-stop") as HTMLButtonElement;
   const btnStealth = document.getElementById("btn-stealth") as HTMLButtonElement;
   const btnSuggest = document.getElementById("btn-suggest") as HTMLButtonElement;
+  const btnHistory = document.getElementById("btn-history") as HTMLButtonElement;
   const statusEl = document.getElementById("status") as HTMLSpanElement;
   const llmStatusEl = document.getElementById("llm-status") as HTMLSpanElement;
   const transcriptEl = document.getElementById("transcript") as HTMLElement;
@@ -50,8 +52,10 @@ export function initApp(): void {
   const suggestionContent = document.getElementById("suggestion-content") as HTMLElement;
   const summaryPanel = document.getElementById("summary-panel") as HTMLElement;
   const summaryContent = document.getElementById("summary-content") as HTMLElement;
+  const historyPanel = document.getElementById("history-panel") as HTMLElement;
 
   const display = new TranscriptDisplay(transcriptEl);
+  const history = new MeetingHistory(historyPanel);
 
   // ── LLM status check ──────────────────────────────────────────────
   async function checkLlmStatus() {
@@ -161,6 +165,22 @@ export function initApp(): void {
     } catch (err) {
       statusEl.textContent = `error: ${err}`;
     }
+  });
+
+  // ── History toggle ────────────────────────────────────────────────
+  let historyVisible = false;
+  btnHistory.addEventListener("click", async () => {
+    historyVisible = !historyVisible;
+    if (historyVisible) {
+      transcriptEl.classList.add("hidden");
+      historyPanel.classList.remove("hidden");
+      await history.loadSessions();
+      history.renderSessionList();
+    } else {
+      historyPanel.classList.add("hidden");
+      transcriptEl.classList.remove("hidden");
+    }
+    btnHistory.classList.toggle("active", historyVisible);
   });
 
   // ── Real-time transcript updates ──────────────────────────────────

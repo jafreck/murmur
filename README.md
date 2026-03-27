@@ -105,6 +105,7 @@ murmur status
 
 - **Push to Talk** — hold a key to record, release to transcribe
 - **Open Mic** — toggle recording on/off with a keypress
+- **Context Aware** — detects the active application and adjusts formatting automatically
 - **Spoken Punctuation** — say "period", "comma", etc. and they're converted to symbols
 - **Streaming (preview)** — see partial transcriptions as you speak. Enable via the tray menu or `"streaming": true` in config. This feature is functional but still being refined.
 

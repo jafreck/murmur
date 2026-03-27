@@ -32,6 +32,8 @@ pub enum StreamingEvent {
     /// Replace the last `replace_chars` characters with `text`.
     /// If `replace_chars` is 0, just append.
     PartialText { text: String, replace_chars: usize },
+    /// VAD detected speech in the audio stream (heartbeat for silence timeout).
+    SpeechDetected,
 }
 
 /// Handle returned by [`start_streaming`] to control the streaming thread.
@@ -155,6 +157,9 @@ fn streaming_loop(
             std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
             continue;
         }
+
+        // Notify that speech is detected (keeps silence timeout alive)
+        let _ = tx.send(StreamingEvent::SpeechDetected);
 
         let mut full_text =
             match transcriber.streaming_transcribe(&mut whisper_state, &window, translate) {
@@ -424,6 +429,7 @@ mod tests {
                 assert_eq!(text, "hello");
                 assert_eq!(replace_chars, 3);
             }
+            StreamingEvent::SpeechDetected => panic!("unexpected variant"),
         }
     }
 

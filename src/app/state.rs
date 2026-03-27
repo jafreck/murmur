@@ -40,6 +40,8 @@ pub enum AppMessage {
     WakeWordDetected,
     /// The stop phrase was detected — stop dictation.
     StopPhraseDetected,
+    /// VAD detected speech in the audio stream (keeps silence timeout alive).
+    SpeechActivity,
 }
 
 /// Effect returned by the app state machine in response to a message.
@@ -202,6 +204,10 @@ impl AppState {
             AppMessage::TranscriberReady(_, _) => vec![AppEffect::None],
             AppMessage::WakeWordDetected => self.on_wake_word_detected(),
             AppMessage::StopPhraseDetected => self.on_stop_phrase_detected(),
+            AppMessage::SpeechActivity => {
+                self.last_speech_at = Some(std::time::Instant::now());
+                vec![AppEffect::None]
+            }
             AppMessage::StreamingPartialText {
                 text,
                 replace_chars,
@@ -270,9 +276,6 @@ impl AppState {
 
         if *replace_chars > 0 || !text.is_empty() {
             self.streaming_chars_emitted = text.chars().count();
-            if !text.is_empty() {
-                self.last_speech_at = Some(std::time::Instant::now());
-            }
             let mut effects = vec![AppEffect::StreamingReplace {
                 text: text.to_string(),
                 replace_chars: *replace_chars,

@@ -331,21 +331,32 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
     // the last (newest) event.
     std::thread::spawn(move || {
         while let Ok(event) = streaming_rx.recv() {
-            let streaming::StreamingEvent::PartialText {
-                mut text,
-                replace_chars,
-            } = event;
+            match event {
+                streaming::StreamingEvent::SpeechDetected => {
+                    let _ = tx_app.send(AppMessage::SpeechActivity);
+                }
+                streaming::StreamingEvent::PartialText {
+                    mut text,
+                    replace_chars,
+                } => {
+                    // Drain any newer events that arrived while we blocked.
+                    while let Ok(newer) = streaming_rx.try_recv() {
+                        match newer {
+                            streaming::StreamingEvent::PartialText { text: t, .. } => {
+                                text = t;
+                            }
+                            streaming::StreamingEvent::SpeechDetected => {
+                                let _ = tx_app.send(AppMessage::SpeechActivity);
+                            }
+                        }
+                    }
 
-            // Drain any newer events that arrived while we blocked.
-            while let Ok(newer) = streaming_rx.try_recv() {
-                let streaming::StreamingEvent::PartialText { text: t, .. } = newer;
-                text = t;
+                    let _ = tx_app.send(AppMessage::StreamingPartialText {
+                        text,
+                        replace_chars,
+                    });
+                }
             }
-
-            let _ = tx_app.send(AppMessage::StreamingPartialText {
-                text,
-                replace_chars,
-            });
         }
     });
 

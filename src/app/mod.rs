@@ -83,6 +83,7 @@ impl From<TrayAction> for AppMessage {
             TrayAction::SetMode(mode) => AppMessage::TraySetMode(mode),
             TrayAction::ToggleStreaming => AppMessage::TrayToggleStreaming,
             TrayAction::ToggleTranslate => AppMessage::TrayToggleTranslate,
+            TrayAction::ToggleNoiseSuppression => AppMessage::TrayToggleNoiseSuppression,
             TrayAction::OpenConfig => AppMessage::TrayOpenConfig,
             TrayAction::ReloadConfig => AppMessage::TrayReloadConfig,
             TrayAction::SetHotkey => AppMessage::TraySetHotkey,
@@ -197,7 +198,7 @@ pub fn run() -> Result<()> {
         });
     }
 
-    let mut recorder = AudioRecorder::new();
+    let mut recorder = AudioRecorder::with_noise_suppression(config.noise_suppression);
     if let Err(e) = recorder.warm() {
         error!("Failed to warm microphone: {e}");
     }

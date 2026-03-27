@@ -20,6 +20,9 @@ fn main() {
             commands::start_meeting,
             commands::stop_meeting,
             commands::get_status,
+            commands::list_audio_devices,
+            commands::set_system_audio_device,
+            commands::toggle_stealth,
         ])
         .run(tauri::generate_context!())
         .expect("error while running murmur-copilot");

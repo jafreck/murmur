@@ -539,6 +539,8 @@ impl AppState {
             wake_word: base.wake_word.clone(),
             stop_phrase: base.stop_phrase.clone(),
             notes_dir: base.notes_dir.clone(),
+            system_audio_device: base.system_audio_device.clone(),
+            stealth_mode: base.stealth_mode,
         }
     }
 }

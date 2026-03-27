@@ -1,4 +1,4 @@
-import { TranscriptDisplay } from "./transcript";
+import { TranscriptDisplay, TranscriptUpdate } from "./transcript";
 
 declare global {
   interface Window {
@@ -16,6 +16,11 @@ declare global {
   }
 }
 
+interface AudioDevice {
+  name: string;
+  is_loopback_hint: boolean;
+}
+
 function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   return window.__TAURI__!.core.invoke(cmd, args);
 }
@@ -30,11 +35,36 @@ function listen(
 export function initApp(): void {
   const btnStart = document.getElementById("btn-start") as HTMLButtonElement;
   const btnStop = document.getElementById("btn-stop") as HTMLButtonElement;
+  const btnStealth = document.getElementById("btn-stealth") as HTMLButtonElement;
   const statusEl = document.getElementById("status") as HTMLSpanElement;
   const transcriptEl = document.getElementById("transcript") as HTMLElement;
+  const deviceSelect = document.getElementById("device-select") as HTMLSelectElement;
 
   const display = new TranscriptDisplay(transcriptEl);
 
+  // ── Populate audio device selector ─────────────────────────────────
+  async function loadDevices() {
+    try {
+      const devices = (await invoke("list_audio_devices")) as AudioDevice[];
+      deviceSelect.innerHTML = '<option value="">None (mic only)</option>';
+      for (const d of devices) {
+        const opt = document.createElement("option");
+        opt.value = d.name;
+        opt.textContent = d.name + (d.is_loopback_hint ? " ★" : "");
+        deviceSelect.appendChild(opt);
+      }
+    } catch {
+      // Device listing may fail in environments without audio
+    }
+  }
+  loadDevices();
+
+  deviceSelect.addEventListener("change", async () => {
+    const value = deviceSelect.value || null;
+    await invoke("set_system_audio_device", { deviceName: value });
+  });
+
+  // ── Meeting controls ───────────────────────────────────────────────
   btnStart.addEventListener("click", async () => {
     try {
       btnStart.disabled = true;
@@ -52,11 +82,11 @@ export function initApp(): void {
     try {
       btnStop.disabled = true;
       statusEl.textContent = "stopping…";
-      const transcript = (await invoke("stop_meeting")) as string;
+      const entries = (await invoke("stop_meeting")) as { speaker: string; text: string }[];
       statusEl.textContent = "idle";
       btnStart.disabled = false;
-      if (transcript) {
-        display.setFinalTranscript(transcript);
+      if (entries && entries.length > 0) {
+        display.setFinalTranscript(entries);
       }
     } catch (err) {
       statusEl.textContent = `error: ${err}`;
@@ -64,9 +94,20 @@ export function initApp(): void {
     }
   });
 
-  // Listen for real-time transcript updates from the Tauri backend.
+  // ── Stealth toggle ─────────────────────────────────────────────────
+  btnStealth.addEventListener("click", async () => {
+    try {
+      const enabled = (await invoke("toggle_stealth")) as boolean;
+      btnStealth.textContent = enabled ? "👁 Stealth: ON" : "👁 Stealth: OFF";
+      btnStealth.classList.toggle("active", enabled);
+    } catch (err) {
+      statusEl.textContent = `error: ${err}`;
+    }
+  });
+
+  // ── Real-time transcript updates ──────────────────────────────────
   listen("transcript-update", (event) => {
-    const payload = event.payload as { text: string; replace_chars: number };
-    display.applyUpdate(payload.text, payload.replace_chars);
+    const payload = event.payload as TranscriptUpdate;
+    display.applyUpdate(payload);
   });
 }

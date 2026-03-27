@@ -250,6 +250,7 @@ mod tests {
             mode: config::InputMode::PushToTalk,
             streaming: false,
             translate_to_english: false,
+            ..config::Config::default()
         };
         let output = format_status(&cfg, false);
         assert!(output.contains("murmur v"));
@@ -272,6 +273,7 @@ mod tests {
             mode: config::InputMode::OpenMic,
             streaming: true,
             translate_to_english: false,
+            ..config::Config::default()
         };
         let output = format_status(&cfg, true);
         assert!(output.contains("Mode:         Open Mic"));
@@ -291,6 +293,7 @@ mod tests {
             mode: config::InputMode::PushToTalk,
             streaming: false,
             translate_to_english: false,
+            ..config::Config::default()
         };
         let output = format_status(&cfg, false);
         // Should fall back to code itself

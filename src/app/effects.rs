@@ -205,6 +205,7 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
                     if spoken_punctuation {
                         text = postprocess::process(&text);
                     }
+                    text = postprocess::ensure_space_after_punctuation(&text);
                     if !text.is_empty() {
                         let _ = tx.send(AppMessage::TranscriptionDone(text));
                     }
@@ -235,6 +236,7 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
                     if spoken_punctuation {
                         text = postprocess::process(&text);
                     }
+                    text = postprocess::ensure_space_after_punctuation(&text);
                     if !text.is_empty() {
                         let _ = tx.send(AppMessage::TranscriptionDone(text));
                     }

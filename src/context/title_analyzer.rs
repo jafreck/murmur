@@ -249,12 +249,10 @@ fn try_extract_filename_from_segment(segment: &str) -> Option<String> {
         .trim();
 
     // Must contain a dot for an extension
-    if let Some(dot_pos) = candidate.rfind('.') {
-        let ext = &candidate[dot_pos + 1..];
-        // Verify it's a known extension (avoids false matches like "Mr. Smith")
-        if lookup_extension(candidate).is_some()
-            || ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric())
-        {
+    if candidate.rfind('.').is_some() {
+        // Only accept files with known programming/config extensions
+        // to avoid false matches like "report.pdf" or "Mr. Smith"
+        if lookup_extension(candidate).is_some() {
             return Some(candidate.to_string());
         }
     }
@@ -433,6 +431,22 @@ mod tests {
     #[test]
     fn test_extract_filename_none_for_no_extension() {
         assert!(extract_filename("Google Chrome").is_none());
+    }
+
+    #[test]
+    fn test_extract_filename_ignores_unknown_extensions() {
+        // Should not match non-programming extensions
+        assert!(extract_filename("report.pdf - Preview").is_none());
+        assert!(extract_filename("photo.jpg — Photos").is_none());
+        assert!(extract_filename("document.docx - Word").is_none());
+    }
+
+    #[test]
+    fn test_analyze_non_editor_app() {
+        // Browser tabs, email, etc. should not produce false matches
+        let ctx = analyze_title("GitHub - Pull Request #18 - Google Chrome");
+        assert!(ctx.language.is_none());
+        assert!(ctx.suggested_mode.is_none());
     }
 
     // -- is_editor_app / is_terminal_app --

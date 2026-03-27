@@ -42,8 +42,13 @@ impl ContextProvider for AppDetector {
             }
         };
 
-        // Get window title from the accessibility API
-        let window_title = get_window_title_ax();
+        // Get window title from the accessibility API.
+        // Wrap in catch_unwind — the AX FFI calls can fail unpredictably
+        // (wrong thread, system pressure, denied permissions).
+        let window_title = std::panic::catch_unwind(get_window_title_ax).unwrap_or_else(|_| {
+            log::debug!("AppDetector: accessibility API panicked, skipping window title");
+            None
+        });
 
         log::debug!(
             "AppDetector: app_id={:?}, app_name={:?}, title={:?}",

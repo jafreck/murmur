@@ -261,14 +261,12 @@ pub struct TrayController {
     status_item: MenuItem,
     hotkey_item: MenuItem,
 
-    #[allow(dead_code)]
     idle_icon: Icon,
-    #[allow(dead_code)]
     recording_icon: Icon,
-    #[allow(dead_code)]
     transcribing_icon: Icon,
-    #[allow(dead_code)]
     loading_icon: Icon,
+
+    dark_mode_cache: DarkModeCache,
 
     /// When set, the icon pulses to indicate a busy/unavailable state.
     animation_start: Option<Instant>,
@@ -389,7 +387,7 @@ impl TrayController {
             mode_ids,
         );
 
-        let colors = StateColors::for_current_appearance();
+        let colors = StateColors::for_appearance(is_dark_mode());
         let idle_icon = make_icon(colors.idle.0, colors.idle.1, colors.idle.2, colors.idle.3)?;
         let recording_icon = make_icon(
             colors.recording.0,
@@ -435,6 +433,7 @@ impl TrayController {
             recording_icon,
             transcribing_icon,
             loading_icon,
+            dark_mode_cache: DarkModeCache::new(),
             animation_start: None,
             last_animation_frame: None,
         };
@@ -449,18 +448,19 @@ impl TrayController {
     pub fn set_state(&mut self, state: TrayState) {
         let (tooltip, label) = state_display(&state);
 
-        // Re-check appearance on every state change so icons adapt when
-        // the user switches between dark and light mode.
-        let colors = StateColors::for_current_appearance();
-        let color = match &state {
-            TrayState::Loading => colors.loading,
-            TrayState::Idle => colors.idle,
-            TrayState::Recording | TrayState::Error => colors.recording,
-            TrayState::Transcribing | TrayState::Downloading => colors.transcribing,
-        };
-        if let Ok(icon) = make_icon(color.0, color.1, color.2, color.3) {
-            let _ = self.tray.set_icon(Some(icon));
+        // Check for appearance change; rebuild icons if it flipped.
+        let (_is_dark, changed) = self.dark_mode_cache.get();
+        if changed {
+            self.rebuild_icons();
         }
+
+        let icon = match &state {
+            TrayState::Loading => &self.loading_icon,
+            TrayState::Idle => &self.idle_icon,
+            TrayState::Recording | TrayState::Error => &self.recording_icon,
+            TrayState::Transcribing | TrayState::Downloading => &self.transcribing_icon,
+        };
+        let _ = self.tray.set_icon(Some(icon.clone()));
 
         // Start or stop pulsing animation based on the new state.
         if is_pulsing_state(&state) {
@@ -499,7 +499,8 @@ impl TrayController {
         // Map sin output [-1, 1] → [PULSE_ALPHA_MIN, 1.0]
         let scale = PULSE_ALPHA_MIN + (1.0 - PULSE_ALPHA_MIN) * (phase + 1.0) / 2.0;
 
-        let colors = StateColors::for_current_appearance();
+        let (is_dark, _) = self.dark_mode_cache.get();
+        let colors = StateColors::for_appearance(is_dark);
         let base = match &self.state {
             TrayState::Loading => colors.loading,
             TrayState::Downloading => colors.transcribing,
@@ -512,6 +513,39 @@ impl TrayController {
         }
 
         self.last_animation_frame = Some(Instant::now());
+    }
+
+    /// Rebuild the cached per-state icons (e.g. after an appearance change).
+    fn rebuild_icons(&mut self) {
+        let (is_dark, _) = self.dark_mode_cache.get();
+        let colors = StateColors::for_appearance(is_dark);
+        if let Ok(icon) = make_icon(colors.idle.0, colors.idle.1, colors.idle.2, colors.idle.3) {
+            self.idle_icon = icon;
+        }
+        if let Ok(icon) = make_icon(
+            colors.recording.0,
+            colors.recording.1,
+            colors.recording.2,
+            colors.recording.3,
+        ) {
+            self.recording_icon = icon;
+        }
+        if let Ok(icon) = make_icon(
+            colors.transcribing.0,
+            colors.transcribing.1,
+            colors.transcribing.2,
+            colors.transcribing.3,
+        ) {
+            self.transcribing_icon = icon;
+        }
+        if let Ok(icon) = make_icon(
+            colors.loading.0,
+            colors.loading.1,
+            colors.loading.2,
+            colors.loading.3,
+        ) {
+            self.loading_icon = icon;
+        }
     }
 
     pub fn set_model(&mut self, new_model: &str) {
@@ -582,9 +616,41 @@ struct StateColors {
     loading: (u8, u8, u8, u8),
 }
 
+/// How long to cache the dark-mode detection result before re-checking.
+const DARK_MODE_CACHE_TTL_SECS: f64 = 5.0;
+
+/// Cached dark-mode state so we don't shell out on every `set_state()`.
+struct DarkModeCache {
+    is_dark: bool,
+    checked_at: Instant,
+}
+
+impl DarkModeCache {
+    fn new() -> Self {
+        Self {
+            is_dark: is_dark_mode(),
+            checked_at: Instant::now(),
+        }
+    }
+
+    /// Return the (possibly cached) dark-mode value, refreshing if the TTL
+    /// has expired. Returns `(is_dark, changed)`.
+    fn get(&mut self) -> (bool, bool) {
+        if self.checked_at.elapsed().as_secs_f64() >= DARK_MODE_CACHE_TTL_SECS {
+            let new_val = is_dark_mode();
+            let changed = new_val != self.is_dark;
+            self.is_dark = new_val;
+            self.checked_at = Instant::now();
+            (new_val, changed)
+        } else {
+            (self.is_dark, false)
+        }
+    }
+}
+
 impl StateColors {
-    fn for_current_appearance() -> Self {
-        if is_dark_mode() {
+    fn for_appearance(dark: bool) -> Self {
+        if dark {
             // Light icons for dark menu bar
             Self {
                 idle: (255, 255, 255, 200),

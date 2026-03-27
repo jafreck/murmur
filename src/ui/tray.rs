@@ -340,20 +340,20 @@ impl TrayController {
         );
 
         let colors = StateColors::for_current_appearance();
-        let idle_icon = make_bark_icon(colors.idle.0, colors.idle.1, colors.idle.2, colors.idle.3)?;
-        let recording_icon = make_bark_icon(
+        let idle_icon = make_icon(colors.idle.0, colors.idle.1, colors.idle.2, colors.idle.3)?;
+        let recording_icon = make_icon(
             colors.recording.0,
             colors.recording.1,
             colors.recording.2,
             colors.recording.3,
         )?;
-        let transcribing_icon = make_bark_icon(
+        let transcribing_icon = make_icon(
             colors.transcribing.0,
             colors.transcribing.1,
             colors.transcribing.2,
             colors.transcribing.3,
         )?;
-        let loading_icon = make_bark_icon(
+        let loading_icon = make_icon(
             colors.loading.0,
             colors.loading.1,
             colors.loading.2,
@@ -398,7 +398,7 @@ impl TrayController {
             TrayState::Recording | TrayState::Error => colors.recording,
             TrayState::Transcribing | TrayState::Downloading => colors.transcribing,
         };
-        if let Ok(icon) = make_bark_icon(color.0, color.1, color.2, color.3) {
+        if let Ok(icon) = make_icon(color.0, color.1, color.2, color.3) {
             let _ = self.tray.set_icon(Some(icon));
         }
 
@@ -437,11 +437,11 @@ impl TrayController {
     }
 }
 
-/// The bark icon PNG, embedded at compile time.
-const BARK_PNG: &[u8] = include_bytes!("../../assets/icons/bark.png");
+/// The murmur icon PNG, embedded at compile time.
+const ICON_PNG: &[u8] = include_bytes!("../../assets/icons/murmur.png");
 
-fn make_bark_icon(r: u8, g: u8, b: u8, a: u8) -> Result<Icon> {
-    let (rgba, width, height) = tint_png_rgba(BARK_PNG, r, g, b, a)?;
+fn make_icon(r: u8, g: u8, b: u8, a: u8) -> Result<Icon> {
+    let (rgba, width, height) = tint_png_rgba(ICON_PNG, r, g, b, a)?;
     Icon::from_rgba(rgba, width, height).map_err(|e| anyhow::anyhow!("Icon error: {e}"))
 }
 
@@ -490,9 +490,54 @@ fn is_dark_mode() -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Detect dark mode on Windows via the registry.
+#[cfg(target_os = "windows")]
 fn is_dark_mode() -> bool {
-    // Default to dark-mode palette on non-macOS (bright icons on dark taskbar).
+    use std::process::Command;
+    // AppsUseLightTheme: 0 = dark, 1 = light
+    Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            "/v",
+            "AppsUseLightTheme",
+        ])
+        .output()
+        .map(|o| {
+            let out = String::from_utf8_lossy(&o.stdout);
+            out.contains("0x0")
+        })
+        .unwrap_or(true)
+}
+
+/// Detect dark mode on Linux via common desktop environment hints.
+#[cfg(target_os = "linux")]
+fn is_dark_mode() -> bool {
+    use std::process::Command;
+    // Try GNOME color-scheme first
+    if let Ok(output) = Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+        .output()
+    {
+        let scheme = String::from_utf8_lossy(&output.stdout).to_lowercase();
+        if scheme.contains("dark") {
+            return true;
+        }
+        if scheme.contains("light") || scheme.contains("default") {
+            return false;
+        }
+    }
+    // Fall back to GTK theme name
+    if let Ok(output) = Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "gtk-theme"])
+        .output()
+    {
+        let theme = String::from_utf8_lossy(&output.stdout).to_lowercase();
+        if theme.contains("dark") {
+            return true;
+        }
+    }
+    // Default to dark (bright icons) when detection fails
     true
 }
 
@@ -904,15 +949,15 @@ mod tests {
 
     #[test]
     fn tint_png_rgba_embedded_icon() {
-        let (rgba, w, h) = tint_png_rgba(BARK_PNG, 100, 150, 255, 200).unwrap();
+        let (rgba, w, h) = tint_png_rgba(ICON_PNG, 100, 150, 255, 200).unwrap();
         assert!(w > 0 && h > 0);
         assert_eq!(rgba.len(), (w * h * 4) as usize);
     }
 
     #[test]
     fn tint_png_rgba_different_colors() {
-        let (r1, _, _) = tint_png_rgba(BARK_PNG, 255, 0, 0, 255).unwrap();
-        let (r2, _, _) = tint_png_rgba(BARK_PNG, 0, 0, 255, 255).unwrap();
+        let (r1, _, _) = tint_png_rgba(ICON_PNG, 255, 0, 0, 255).unwrap();
+        let (r2, _, _) = tint_png_rgba(ICON_PNG, 0, 0, 255, 255).unwrap();
         assert_ne!(r1, r2);
     }
 
@@ -958,7 +1003,7 @@ mod tests {
 
     #[test]
     fn embedded_icon_is_retina_resolution() {
-        let (_, w, h) = tint_png_rgba(BARK_PNG, 0, 0, 0, 255).unwrap();
+        let (_, w, h) = tint_png_rgba(ICON_PNG, 0, 0, 0, 255).unwrap();
         // Menu bar icons need ≥ 36px for 2× Retina at 18pt display size
         assert!(w >= 36, "icon width {w} too small for Retina");
         assert!(h >= 36, "icon height {h} too small for Retina");

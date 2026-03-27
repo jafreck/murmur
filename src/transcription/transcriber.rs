@@ -330,10 +330,6 @@ impl Transcriber {
         }
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        let n_threads = std::thread::available_parallelism()
-            .map(|n| n.get() as i32)
-            .unwrap_or(4);
-        params.set_n_threads(n_threads);
         params.set_language(self.language_param());
         params.set_translate(translate);
         params.set_print_special(false);
@@ -387,10 +383,6 @@ impl Transcriber {
         }
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        let n_threads = std::thread::available_parallelism()
-            .map(|n| n.get() as i32)
-            .unwrap_or(4);
-        params.set_n_threads(n_threads);
         params.set_language(self.language_param());
         params.set_translate(translate);
         params.set_print_special(false);

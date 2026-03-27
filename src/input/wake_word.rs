@@ -255,7 +255,7 @@ fn words_match(heard: &str, expected: &str) -> bool {
 
 /// Known mistranscriptions of "murmur" by Whisper tiny.
 const MURMUR_ALIASES: &[&str] = &[
-    "mama", "mamma", "mirror", "murmured", "memo", "memer", "merma",
+    "mama", "mamma", "mirror", "murmured", "memo", "memer", "merma", "mermer",
 ];
 
 /// Check if `heard` is a known alias for `expected`.

@@ -51,7 +51,24 @@ struct OverlayApp {
     visible: bool,
     cmd_rx: std::sync::mpsc::Receiver<OverlayCommand>,
     should_quit: bool,
+    /// Current opacity for fade animation (0.0 = invisible, 1.0 = fully visible)
+    opacity: f32,
+    fade_state: FadeState,
+    #[cfg(target_os = "macos")]
+    window_level_set: bool,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FadeState {
+    Hidden,
+    FadingIn,
+    Visible,
+    FadingOut,
+}
+
+/// Fade animation speed (opacity change per second)
+const FADE_IN_SPEED: f32 = 6.0;
+const FADE_OUT_SPEED: f32 = 2.0;
 
 impl OverlayApp {
     fn new() -> Self {
@@ -87,6 +104,10 @@ impl OverlayApp {
             visible: false,
             cmd_rx: rx,
             should_quit: false,
+            opacity: 0.0,
+            fade_state: FadeState::Hidden,
+            #[cfg(target_os = "macos")]
+            window_level_set: false,
         }
     }
 
@@ -95,11 +116,14 @@ impl OverlayApp {
             match cmd {
                 OverlayCommand::Show => {
                     self.visible = true;
+                    self.fade_state = FadeState::FadingIn;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
                 OverlayCommand::Hide => {
                     self.visible = false;
+                    self.opacity = 0.0;
+                    self.fade_state = FadeState::Hidden;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                 }
                 OverlayCommand::Text { content } => {
@@ -109,13 +133,34 @@ impl OverlayApp {
                     self.text.clear();
                 }
                 OverlayCommand::Done => {
-                    self.visible = false;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    self.fade_state = FadeState::FadingOut;
                 }
                 OverlayCommand::Quit => {
                     self.should_quit = true;
                 }
             }
+        }
+    }
+
+    fn update_fade(&mut self, ctx: &egui::Context, dt: f32) {
+        match self.fade_state {
+            FadeState::FadingIn => {
+                self.opacity = (self.opacity + FADE_IN_SPEED * dt).min(1.0);
+                if self.opacity >= 1.0 {
+                    self.fade_state = FadeState::Visible;
+                }
+                ctx.request_repaint();
+            }
+            FadeState::FadingOut => {
+                self.opacity = (self.opacity - FADE_OUT_SPEED * dt).max(0.0);
+                if self.opacity <= 0.0 {
+                    self.fade_state = FadeState::Hidden;
+                    self.visible = false;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                }
+                ctx.request_repaint();
+            }
+            FadeState::Visible | FadeState::Hidden => {}
         }
     }
 }
@@ -133,24 +178,45 @@ impl eframe::App for OverlayApp {
             return;
         }
 
+        // On macOS, elevate window level to appear over fullscreen apps
+        #[cfg(target_os = "macos")]
+        if !self.window_level_set {
+            set_macos_overlay_window_level();
+            self.window_level_set = true;
+        }
+
+        let dt = ctx.input(|i| i.stable_dt);
+        self.update_fade(ctx, dt);
+
         // Request periodic repaints to check for new commands
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
 
-        if !self.visible {
+        if !self.visible && self.fade_state == FadeState::Hidden {
             return;
         }
 
-        // Semi-transparent dark panel
+        let alpha = self.opacity;
+
+        // Semi-transparent dark panel with fade
         let panel_frame = egui::Frame::new()
-            .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 20, 180))
+            .fill(egui::Color32::from_rgba_unmultiplied(
+                20,
+                20,
+                20,
+                (180.0 * alpha) as u8,
+            ))
             .inner_margin(egui::Margin::same(16))
             .corner_radius(12.0);
 
         egui::CentralPanel::default()
             .frame(panel_frame)
             .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color =
-                    Some(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 230));
+                ui.visuals_mut().override_text_color = Some(egui::Color32::from_rgba_unmultiplied(
+                    255,
+                    255,
+                    255,
+                    (230.0 * alpha) as u8,
+                ));
 
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
@@ -161,7 +227,10 @@ impl eframe::App for OverlayApp {
                                     .size(18.0)
                                     .italics()
                                     .color(egui::Color32::from_rgba_unmultiplied(
-                                        180, 180, 180, 160,
+                                        180,
+                                        180,
+                                        180,
+                                        (160.0 * alpha) as u8,
                                     )),
                             );
                         } else {
@@ -169,6 +238,38 @@ impl eframe::App for OverlayApp {
                         }
                     });
             });
+    }
+}
+
+/// Set the macOS window level high enough to appear over fullscreen apps.
+#[cfg(target_os = "macos")]
+fn set_macos_overlay_window_level() {
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::MainThreadMarker;
+
+    // NSScreenSaverWindowLevel = 1000 — appears over fullscreen apps
+    const SCREEN_SAVER_WINDOW_LEVEL: isize = 1000;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        log::warn!("Overlay: not on main thread, cannot set window level");
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let windows = app.windows();
+
+    for window in windows {
+        let title = window.title();
+        if title.to_string().contains("murmur overlay") {
+            window.setLevel(SCREEN_SAVER_WINDOW_LEVEL);
+            // NSWindowCollectionBehaviorCanJoinAllSpaces (1 << 0)
+            // | NSWindowCollectionBehaviorFullScreenAuxiliary (1 << 8)
+            window.setCollectionBehavior(
+                objc2_app_kit::NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | objc2_app_kit::NSWindowCollectionBehavior::FullScreenAuxiliary,
+            );
+            log::debug!("Overlay: macOS window level set to screen-saver level");
+            break;
+        }
     }
 }
 

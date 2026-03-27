@@ -197,6 +197,9 @@ pub fn run() -> Result<()> {
     }
 
     let mut recorder = AudioRecorder::new();
+    if let Err(e) = recorder.warm() {
+        error!("Failed to warm microphone: {e}");
+    }
     let mut state = AppState::new(&config);
     let mut streaming_stop: Option<mpsc::Sender<()>> = None;
 

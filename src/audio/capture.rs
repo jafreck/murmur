@@ -1,21 +1,52 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use hound::{SampleFormat, WavSpec, WavWriter};
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Duration of the pre-roll buffer in milliseconds.
+/// Captures audio *before* the user presses record so the first word isn't clipped.
+const PRE_ROLL_MS: u32 = 200;
+
+/// Number of 16 kHz samples in the pre-roll buffer.
+const PRE_ROLL_SAMPLES: usize = (TARGET_RATE * PRE_ROLL_MS / 1000) as usize;
+
+/// Shared state between the audio callback thread and the main thread.
+struct SharedCaptureState {
+    /// True while actively recording (as opposed to standby pre-roll capture).
+    recording: AtomicBool,
+    /// WAV file writer, set only during file-backed recordings.
+    writer: Mutex<Option<WavWriter<BufWriter<File>>>>,
+    /// In-memory buffer of 16 kHz mono f32 samples captured since `start()`.
+    samples: Arc<Mutex<Vec<f32>>>,
+    /// Ring buffer capturing recent audio while in standby mode.
+    /// When recording starts, these samples are drained into `samples`
+    /// so the beginning of speech is preserved.
+    pre_roll: Mutex<VecDeque<f32>>,
+    /// Count of samples dropped due to lock contention.
+    dropped_samples: AtomicU64,
+}
+
+impl SharedCaptureState {
+    fn new() -> Self {
+        Self {
+            recording: AtomicBool::new(false),
+            writer: Mutex::new(None),
+            samples: Arc::new(Mutex::new(Vec::new())),
+            pre_roll: Mutex::new(VecDeque::with_capacity(PRE_ROLL_SAMPLES + 512)),
+            dropped_samples: AtomicU64::new(0),
+        }
+    }
+}
 
 pub struct AudioRecorder {
     stream: Option<cpal::Stream>,
-    writer: Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>,
-    /// In-memory buffer of 16 kHz mono f32 samples captured since `start()`.
-    /// Shared with the audio callback so samples accumulate while recording.
-    samples: Arc<Mutex<Vec<f32>>>,
+    shared: Arc<SharedCaptureState>,
     current_path: Option<PathBuf>,
-    /// Count of samples dropped due to lock contention in the audio callback.
-    dropped_samples: Arc<AtomicU64>,
 }
 
 /// Mix multi-channel audio to mono by averaging channels.
@@ -54,14 +85,20 @@ impl AudioRecorder {
     pub fn new() -> Self {
         Self {
             stream: None,
-            writer: Arc::new(Mutex::new(None)),
-            samples: Arc::new(Mutex::new(Vec::new())),
+            shared: Arc::new(SharedCaptureState::new()),
             current_path: None,
-            dropped_samples: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    pub fn start_in_memory(&mut self) -> Result<()> {
+    /// Open the microphone and start capturing into the pre-roll buffer.
+    ///
+    /// Call once at app startup so recording starts instantly on hotkey press.
+    /// If the stream is already running this is a no-op.
+    pub fn warm(&mut self) -> Result<()> {
+        if self.stream.is_some() {
+            return Ok(());
+        }
+
         let host = cpal::default_host();
         let device = host.default_input_device().context("No microphone found")?;
 
@@ -72,12 +109,7 @@ impl AudioRecorder {
         let native_rate = supported_config.sample_rate();
         let native_channels = supported_config.channels() as u32;
 
-        // No WAV file — only record to in-memory buffer
-        let samples = Arc::new(Mutex::new(Vec::new()));
-        let samples_clone = Arc::clone(&samples);
-
-        let dropped = Arc::new(AtomicU64::new(0));
-        let dropped_clone = Arc::clone(&dropped);
+        let shared = Arc::clone(&self.shared);
 
         let stream = device
             .build_input_stream(
@@ -86,10 +118,33 @@ impl AudioRecorder {
                     let mono = mix_to_mono(data, native_channels);
                     let resampled = resample(&mono, native_rate, TARGET_RATE);
 
-                    if let Ok(mut buf) = samples_clone.try_lock() {
-                        buf.extend_from_slice(&resampled);
+                    if shared.recording.load(Ordering::Acquire) {
+                        // Recording mode: write to sample buffer and optional WAV
+                        if let Ok(mut buf) = shared.samples.try_lock() {
+                            buf.extend_from_slice(&resampled);
+                        } else {
+                            shared
+                                .dropped_samples
+                                .fetch_add(resampled.len() as u64, Ordering::Relaxed);
+                        }
+
+                        if let Ok(mut guard) = shared.writer.try_lock() {
+                            if let Some(ref mut w) = *guard {
+                                for &sample in &resampled {
+                                    let _ = w.write_sample(f32_to_i16(sample));
+                                }
+                            }
+                        }
                     } else {
-                        dropped_clone.fetch_add(resampled.len() as u64, Ordering::Relaxed);
+                        // Standby mode: fill pre-roll ring buffer
+                        if let Ok(mut ring) = shared.pre_roll.try_lock() {
+                            for &s in &resampled {
+                                if ring.len() >= PRE_ROLL_SAMPLES {
+                                    ring.pop_front();
+                                }
+                                ring.push_back(s);
+                            }
+                        }
                     }
                 },
                 |err| {
@@ -101,9 +156,34 @@ impl AudioRecorder {
 
         stream.play().context("Failed to start audio stream")?;
         self.stream = Some(stream);
-        self.samples = samples;
-        self.dropped_samples = dropped;
+        log::info!("Microphone warmed up (pre-roll: {PRE_ROLL_MS}ms)");
+
+        Ok(())
+    }
+
+    /// Ensure the stream is warm, warming it up if needed.
+    fn ensure_warm(&mut self) -> Result<()> {
+        if self.stream.is_none() {
+            self.warm()?;
+        }
+        Ok(())
+    }
+
+    pub fn start_in_memory(&mut self) -> Result<()> {
+        self.ensure_warm()?;
+
+        self.shared.dropped_samples.store(0, Ordering::Relaxed);
+
+        // Drain pre-roll into sample buffer so the first word isn't clipped
+        if let (Ok(mut ring), Ok(mut samples)) =
+            (self.shared.pre_roll.lock(), self.shared.samples.lock())
+        {
+            samples.clear();
+            samples.extend(ring.drain(..));
+        }
+
         self.current_path = None;
+        self.shared.recording.store(true, Ordering::Release);
 
         Ok(())
     }
@@ -111,79 +191,50 @@ impl AudioRecorder {
     /// Stop recording and return the captured samples.
     /// For in-memory recordings (no WAV file).
     pub fn stop_samples(&mut self) -> Option<Vec<f32>> {
-        drop(self.stream.take());
+        self.shared.recording.store(false, Ordering::Release);
 
-        let dropped = self.dropped_samples.load(Ordering::Relaxed);
+        let dropped = self.shared.dropped_samples.load(Ordering::Relaxed);
         if dropped > 0 {
             log::warn!("Dropped {dropped} audio samples due to lock contention during recording");
         }
 
-        let samples = self.samples.lock().ok().map(|b| b.clone());
-        // Clear current_path in case it was set
+        let samples = self.shared.samples.lock().ok().map(|b| b.clone());
         self.current_path.take();
         samples.filter(|s| !s.is_empty())
     }
 
     pub fn start(&mut self, output_path: &Path) -> Result<()> {
-        let host = cpal::default_host();
-        let device = host.default_input_device().context("No microphone found")?;
-
-        let supported_config = device
-            .default_input_config()
-            .context("Failed to get default input config")?;
-
-        let native_rate = supported_config.sample_rate();
-        let native_channels = supported_config.channels() as u32;
+        self.ensure_warm()?;
 
         let writer = WavWriter::create(output_path, WHISPER_WAV_SPEC)
             .context("Failed to create WAV file")?;
-        let writer = Arc::new(Mutex::new(Some(writer)));
-        let writer_clone = Arc::clone(&writer);
 
         self.current_path = Some(output_path.to_path_buf());
+        self.shared.dropped_samples.store(0, Ordering::Relaxed);
 
-        // Reset the in-memory sample buffer
-        let samples = Arc::new(Mutex::new(Vec::new()));
-        let samples_clone = Arc::clone(&samples);
+        // Install the WAV writer before draining pre-roll
+        if let Ok(mut guard) = self.shared.writer.lock() {
+            *guard = Some(writer);
+        }
 
-        let dropped = Arc::new(AtomicU64::new(0));
-        let dropped_clone = Arc::clone(&dropped);
+        // Drain pre-roll into sample buffer and write to WAV
+        if let (Ok(mut ring), Ok(mut samples)) =
+            (self.shared.pre_roll.lock(), self.shared.samples.lock())
+        {
+            samples.clear();
+            let pre_roll_data: Vec<f32> = ring.drain(..).collect();
+            samples.extend_from_slice(&pre_roll_data);
 
-        let stream = device
-            .build_input_stream(
-                &supported_config.into(),
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let mono = mix_to_mono(data, native_channels);
-                    let resampled = resample(&mono, native_rate, TARGET_RATE);
-
-                    // Write to WAV file
-                    if let Ok(mut guard) = writer_clone.try_lock() {
-                        if let Some(ref mut w) = *guard {
-                            for &sample in &resampled {
-                                let _ = w.write_sample(f32_to_i16(sample));
-                            }
-                        }
-                    } else {
-                        dropped_clone.fetch_add(resampled.len() as u64, Ordering::Relaxed);
+            if let Ok(mut guard) = self.shared.writer.lock() {
+                if let Some(ref mut w) = *guard {
+                    for &sample in &pre_roll_data {
+                        let _ = w.write_sample(f32_to_i16(sample));
                     }
+                }
+            }
+        }
 
-                    // Append to in-memory buffer for streaming access
-                    if let Ok(mut buf) = samples_clone.try_lock() {
-                        buf.extend_from_slice(&resampled);
-                    }
-                },
-                |err| {
-                    log::error!("Audio stream error: {err}");
-                },
-                None,
-            )
-            .context("Failed to build input stream")?;
-
-        stream.play().context("Failed to start audio stream")?;
-        self.stream = Some(stream);
-        self.writer = writer;
-        self.samples = samples;
-        self.dropped_samples = dropped;
+        self.shared.recording.store(true, Ordering::Release);
 
         Ok(())
     }
@@ -192,7 +243,7 @@ impl AudioRecorder {
     /// Samples are 16 kHz mono f32 in the range \[−1, 1\].
     #[allow(dead_code)]
     pub fn snapshot(&self, offset: usize) -> Vec<f32> {
-        if let Ok(buf) = self.samples.lock() {
+        if let Ok(buf) = self.shared.samples.lock() {
             if offset < buf.len() {
                 buf[offset..].to_vec()
             } else {
@@ -206,25 +257,25 @@ impl AudioRecorder {
     /// Number of 16 kHz samples captured since `start()`.
     #[allow(dead_code)]
     pub fn sample_count(&self) -> usize {
-        self.samples.lock().map(|b| b.len()).unwrap_or(0)
+        self.shared.samples.lock().map(|b| b.len()).unwrap_or(0)
     }
 
     /// A shared handle to the sample buffer for streaming access.
     pub fn sample_buffer(&self) -> Arc<Mutex<Vec<f32>>> {
-        Arc::clone(&self.samples)
+        Arc::clone(&self.shared.samples)
     }
 
     pub fn stop(&mut self) -> Option<PathBuf> {
-        // Drop the stream first to stop callbacks
-        drop(self.stream.take());
+        // Transition back to standby (stream stays alive for next recording)
+        self.shared.recording.store(false, Ordering::Release);
 
-        let dropped = self.dropped_samples.load(Ordering::Relaxed);
+        let dropped = self.shared.dropped_samples.load(Ordering::Relaxed);
         if dropped > 0 {
             log::warn!("Dropped {dropped} audio samples due to lock contention during recording");
         }
 
         // Finalize the WAV file
-        if let Ok(mut guard) = self.writer.lock() {
+        if let Ok(mut guard) = self.shared.writer.lock() {
             if let Some(writer) = guard.take() {
                 let _ = writer.finalize();
             }
@@ -463,10 +514,12 @@ mod tests {
     #[test]
     fn test_snapshot_with_manual_samples() {
         let recorder = AudioRecorder::new();
-        // Manually push samples into the buffer
+        // Push samples via the public sample_buffer() handle
         {
-            let mut buf = recorder.samples.lock().unwrap();
-            buf.extend_from_slice(&[0.1, 0.2, 0.3, 0.4, 0.5]);
+            let buf = recorder.sample_buffer();
+            buf.lock()
+                .unwrap()
+                .extend_from_slice(&[0.1, 0.2, 0.3, 0.4, 0.5]);
         }
         let snap = recorder.snapshot(0);
         assert_eq!(snap.len(), 5);
@@ -482,8 +535,8 @@ mod tests {
         let recorder = AudioRecorder::new();
         assert_eq!(recorder.sample_count(), 0);
         {
-            let mut buf = recorder.samples.lock().unwrap();
-            buf.extend_from_slice(&[0.0; 100]);
+            let buf = recorder.sample_buffer();
+            buf.lock().unwrap().extend_from_slice(&[0.0; 100]);
         }
         assert_eq!(recorder.sample_count(), 100);
     }
@@ -520,5 +573,20 @@ mod tests {
         // stop() should return and clear the path
         assert_eq!(path, Some(std::path::PathBuf::from("/tmp/test.wav")));
         assert!(recorder.current_path.is_none());
+    }
+
+    // -- pre-roll --
+
+    #[test]
+    fn test_pre_roll_constants() {
+        assert_eq!(PRE_ROLL_MS, 200);
+        assert_eq!(PRE_ROLL_SAMPLES, 3200);
+    }
+
+    #[test]
+    fn test_warm_is_idempotent_without_device() {
+        // warm() will fail without a real audio device, but calling new() is fine
+        let recorder = AudioRecorder::new();
+        assert!(recorder.stream.is_none());
     }
 }

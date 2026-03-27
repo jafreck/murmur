@@ -417,10 +417,7 @@ fn effective_vocabulary_deduplicates() {
 #[test]
 fn app_exclusion_integration() {
     let cfg = Config {
-        excluded_apps: vec![
-            "com.1password".to_string(),
-            "com.chase.mobile".to_string(),
-        ],
+        excluded_apps: vec!["com.1password".to_string(), "com.chase.mobile".to_string()],
         ..Config::default()
     };
 

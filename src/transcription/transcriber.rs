@@ -113,7 +113,10 @@ pub fn build_initial_prompt(ctx: &TranscriptionContext) -> Option<String> {
     if prompt.len() > MAX_PROMPT_CHARS {
         let start = prompt.len() - MAX_PROMPT_CHARS;
         // Try to break at a word boundary
-        let adjusted_start = prompt[start..].find(' ').map(|i| start + i + 1).unwrap_or(start);
+        let adjusted_start = prompt[start..]
+            .find(' ')
+            .map(|i| start + i + 1)
+            .unwrap_or(start);
         Some(prompt[adjusted_start..].to_string())
     } else {
         Some(prompt)
@@ -600,7 +603,11 @@ mod tests {
     #[test]
     fn test_build_prompt_vocabulary_only() {
         let ctx = TranscriptionContext {
-            vocabulary: vec!["useState".to_string(), "async".to_string(), "impl".to_string()],
+            vocabulary: vec![
+                "useState".to_string(),
+                "async".to_string(),
+                "impl".to_string(),
+            ],
             ..Default::default()
         };
         let prompt = build_initial_prompt(&ctx).unwrap();

@@ -87,11 +87,7 @@ mod macos {
             attribute: CFStringRef,
             value: *mut CFTypeRef,
         ) -> AXError;
-        fn AXValueGetValue(
-            value: AXValueRef,
-            value_type: u32,
-            value_ptr: *mut c_void,
-        ) -> bool;
+        fn AXValueGetValue(value: AXValueRef, value_type: u32, value_ptr: *mut c_void) -> bool;
     }
 
     #[link(name = "CoreFoundation", kind = "framework")]

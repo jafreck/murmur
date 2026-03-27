@@ -212,10 +212,22 @@ mod tests {
 
     #[test]
     fn dictation_mode_serde_snake_case() {
-        assert_eq!(serde_json::to_string(&DictationMode::Prose).unwrap(), "\"prose\"");
-        assert_eq!(serde_json::to_string(&DictationMode::Code).unwrap(), "\"code\"");
-        assert_eq!(serde_json::to_string(&DictationMode::Command).unwrap(), "\"command\"");
-        assert_eq!(serde_json::to_string(&DictationMode::List).unwrap(), "\"list\"");
+        assert_eq!(
+            serde_json::to_string(&DictationMode::Prose).unwrap(),
+            "\"prose\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DictationMode::Code).unwrap(),
+            "\"code\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DictationMode::Command).unwrap(),
+            "\"command\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DictationMode::List).unwrap(),
+            "\"list\""
+        );
     }
 
     #[test]

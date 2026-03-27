@@ -276,7 +276,11 @@ impl Config {
     }
 
     /// Collect all effective vocabulary: global config + app-specific + vocab file.
-    pub fn effective_vocabulary(&self, app_id: Option<&str>, project_dir: Option<&std::path::Path>) -> Vec<String> {
+    pub fn effective_vocabulary(
+        &self,
+        app_id: Option<&str>,
+        project_dir: Option<&std::path::Path>,
+    ) -> Vec<String> {
         let mut vocab: Vec<String> = self.vocabulary.clone();
 
         if let Some(id) = app_id {
@@ -657,10 +661,13 @@ mod tests {
     #[test]
     fn test_effective_vocabulary_with_app() {
         let mut app_contexts = std::collections::HashMap::new();
-        app_contexts.insert("com.editor.code".to_string(), AppContextConfig {
-            vocabulary: vec!["rustfmt".to_string()],
-            mode: None,
-        });
+        app_contexts.insert(
+            "com.editor.code".to_string(),
+            AppContextConfig {
+                vocabulary: vec!["rustfmt".to_string()],
+                mode: None,
+            },
+        );
         let cfg = Config {
             vocabulary: vec!["global".to_string()],
             app_contexts,
@@ -673,10 +680,13 @@ mod tests {
     #[test]
     fn test_effective_vocabulary_dedup() {
         let mut app_contexts = std::collections::HashMap::new();
-        app_contexts.insert("app".to_string(), AppContextConfig {
-            vocabulary: vec!["dup".to_string(), "unique".to_string()],
-            mode: None,
-        });
+        app_contexts.insert(
+            "app".to_string(),
+            AppContextConfig {
+                vocabulary: vec!["dup".to_string(), "unique".to_string()],
+                mode: None,
+            },
+        );
         let cfg = Config {
             vocabulary: vec!["dup".to_string(), "other".to_string()],
             app_contexts,
@@ -734,30 +744,42 @@ mod tests {
     #[test]
     fn test_effective_dictation_mode_app_override() {
         let mut app_contexts = std::collections::HashMap::new();
-        app_contexts.insert("com.terminal".to_string(), AppContextConfig {
-            vocabulary: Vec::new(),
-            mode: Some(DictationMode::Command),
-        });
+        app_contexts.insert(
+            "com.terminal".to_string(),
+            AppContextConfig {
+                vocabulary: Vec::new(),
+                mode: Some(DictationMode::Command),
+            },
+        );
         let cfg = Config {
             app_contexts,
             ..Config::default()
         };
-        assert_eq!(cfg.effective_dictation_mode(Some("com.terminal")), DictationMode::Command);
+        assert_eq!(
+            cfg.effective_dictation_mode(Some("com.terminal")),
+            DictationMode::Command
+        );
     }
 
     #[test]
     fn test_effective_dictation_mode_app_without_mode() {
         let mut app_contexts = std::collections::HashMap::new();
-        app_contexts.insert("com.notes".to_string(), AppContextConfig {
-            vocabulary: vec!["note".to_string()],
-            mode: None,
-        });
+        app_contexts.insert(
+            "com.notes".to_string(),
+            AppContextConfig {
+                vocabulary: vec!["note".to_string()],
+                mode: None,
+            },
+        );
         let cfg = Config {
             dictation_mode: DictationMode::List,
             app_contexts,
             ..Config::default()
         };
-        assert_eq!(cfg.effective_dictation_mode(Some("com.notes")), DictationMode::List);
+        assert_eq!(
+            cfg.effective_dictation_mode(Some("com.notes")),
+            DictationMode::List
+        );
     }
 
     #[test]
@@ -766,10 +788,13 @@ mod tests {
         let path = tmp.path().join("config.json");
 
         let mut app_contexts = std::collections::HashMap::new();
-        app_contexts.insert("com.vscode".to_string(), AppContextConfig {
-            vocabulary: vec!["rustfmt".to_string(), "clippy".to_string()],
-            mode: Some(DictationMode::Code),
-        });
+        app_contexts.insert(
+            "com.vscode".to_string(),
+            AppContextConfig {
+                vocabulary: vec!["rustfmt".to_string(), "clippy".to_string()],
+                mode: Some(DictationMode::Code),
+            },
+        );
 
         let cfg = Config {
             vocabulary: vec!["murmur".to_string()],

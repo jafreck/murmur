@@ -31,10 +31,8 @@ impl ContextProvider for AppDetector {
 
         let (app_id, app_name) = match front_app {
             Some(app) => {
-                let bundle_id = app.bundleIdentifier()
-                    .map(|id| id.to_string());
-                let name = app.localizedName()
-                    .map(|n| n.to_string());
+                let bundle_id = app.bundleIdentifier().map(|id| id.to_string());
+                let name = app.localizedName().map(|n| n.to_string());
                 (bundle_id, name)
             }
             None => {
@@ -47,11 +45,7 @@ impl ContextProvider for AppDetector {
         // which will be implemented as part of the cursor-context feature.
         let window_title = None;
 
-        log::debug!(
-            "AppDetector: app_id={:?}, app_name={:?}",
-            app_id,
-            app_name
-        );
+        log::debug!("AppDetector: app_id={:?}, app_name={:?}", app_id, app_name);
 
         Context {
             app_id,

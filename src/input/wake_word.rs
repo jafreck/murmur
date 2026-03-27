@@ -260,8 +260,10 @@ const MURMUR_ALIASES: &[&str] = &[
 
 /// Check if `heard` is a known alias for `expected`.
 fn is_known_alias(heard: &str, expected: &str) -> bool {
-    if expected == "murmur" {
-        return MURMUR_ALIASES.contains(&heard);
+    if expected.eq_ignore_ascii_case("murmur") {
+        return MURMUR_ALIASES
+            .iter()
+            .any(|alias| alias.eq_ignore_ascii_case(heard));
     }
     false
 }

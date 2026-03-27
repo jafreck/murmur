@@ -76,6 +76,9 @@ fn detect_speech(samples: &[f32]) -> Result<bool, voice_activity_detector::Error
         return Ok(false);
     }
 
+    // Pre-compute the threshold so we can exit early once enough
+    // speech chunks are found, avoiding redundant ONNX inference.
+    let required_speech_chunks = (MIN_SPEECH_RATIO * total_chunks as f32).ceil() as usize;
     let mut speech_chunks: usize = 0;
 
     for chunk_start in (0..samples.len()).step_by(CHUNK_SIZE) {
@@ -85,6 +88,12 @@ fn detect_speech(samples: &[f32]) -> Result<bool, voice_activity_detector::Error
         let probability = vad.predict(chunk.iter().copied());
         if probability >= SPEECH_THRESHOLD {
             speech_chunks += 1;
+            if speech_chunks >= required_speech_chunks {
+                log::debug!(
+                    "VAD: early exit — {speech_chunks}/{total_chunks} chunks contain speech"
+                );
+                return Ok(true);
+            }
         }
     }
 

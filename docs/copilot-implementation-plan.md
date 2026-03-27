@@ -42,7 +42,7 @@ members = [
 
 [workspace.package]
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/jacobfreck/murmur"
 
 [workspace.dependencies]
@@ -237,14 +237,28 @@ tempfile = { workspace = true }
 | `tests/integration.rs`            | `crates/murmur/tests/`        | `use murmur::` |
 | `tests/helpers/`                  | Duplicate into both if shared  | — |
 
-### 0.5 — CI & workflow updates
+### 0.5 — License migration (MIT → GPL-3.0)
+
+The entire project switches from MIT to GPL-3.0-or-later with the workspace
+restructuring. This is a clean point to make the change since it's a major
+structural overhaul.
+
+- Replace `LICENSE` at the workspace root with the GPL-3.0 text
+- Update the `license` field in `[workspace.package]` (already set above)
+- Add SPDX headers to new source files going forward
+- Update `README.md` license badge and section
+- As sole copyright holder, no external consent is needed for existing code
+- Add a CLA (or DCO sign-off requirement) before accepting external
+  contributions, to preserve the ability to relicense in the future
+
+### 0.6 — CI & workflow updates
 
 - **`.github/workflows/ci.yml`**: Change `cargo build/test/clippy` to workspace-level commands.
   The binary name stays `murmur`, so install scripts (`scripts/install.sh`) should still work.
 - **`Cargo.lock`**: Regenerate after workspace restructuring.
 - **`assets/`**: Move to workspace root (shared) or `crates/murmur/assets/` (dictation-only).
 
-### 0.6 — Acceptance criteria
+### 0.7 — Acceptance criteria
 
 - [ ] `cargo build --workspace` succeeds
 - [ ] `cargo test --workspace` — all existing tests pass
@@ -948,3 +962,4 @@ Within each phase, tasks are ordered by dependency (earlier tasks first).
 | Config split introduces breaking changes for existing murmur users | High | Medium | Phase 0 migration: detect old config location, auto-migrate |
 | llama.cpp build complexity on CI | Medium | Medium | Use pre-built binaries or `llama-cpp-2` crate with vendored build |
 | Legal risk from recording system audio | Medium | Low | Require explicit user consent; document legal considerations; do not auto-start |
+| GPL-3.0 license deters corporate contributors | Low | Medium | CLA preserves relicense option; GPL aligns with privacy-first brand; can dual-license later |

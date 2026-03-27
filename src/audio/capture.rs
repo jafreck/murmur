@@ -178,8 +178,10 @@ pub fn mix_to_mono(data: &[f32], channels: u32) -> Vec<f32> {
 }
 
 /// Convert f32 sample to 16-bit PCM i16, clamping to [-1.0, 1.0].
+/// Uses the standard 32768.0 scale factor for symmetric dynamic range.
 pub fn f32_to_i16(sample: f32) -> i16 {
-    (sample.clamp(-1.0, 1.0) * 32767.0) as i16
+    let scaled = (sample.clamp(-1.0, 1.0) * 32768.0) as i32;
+    scaled.clamp(i16::MIN as i32, i16::MAX as i32) as i16
 }
 
 /// The WAV spec Whisper expects: 16kHz, 16-bit, mono PCM.
@@ -353,16 +355,19 @@ impl AudioRecorder {
             d.reset();
         }
 
-        // Drain pre-roll into sample buffer so the first word isn't clipped
-        if let (Ok(mut ring), Ok(mut samples)) =
-            (self.shared.pre_roll.lock(), self.shared.samples.lock())
-        {
-            samples.clear();
-            samples.extend(ring.drain(..));
+        // Hold pre_roll lock across the transition to prevent audio samples
+        // from going into pre_roll between the drain and recording=true.
+        if let Ok(mut ring) = self.shared.pre_roll.lock() {
+            if let Ok(mut samples) = self.shared.samples.lock() {
+                samples.clear();
+                samples.extend(ring.drain(..));
+            }
+            // Set recording while still holding pre_roll lock so the audio
+            // callback immediately writes to samples instead of pre_roll.
+            self.shared.recording.store(true, Ordering::Release);
         }
 
         self.current_path = None;
-        self.shared.recording.store(true, Ordering::Release);
 
         Ok(())
     }
@@ -399,24 +404,26 @@ impl AudioRecorder {
             *guard = Some(writer);
         }
 
-        // Drain pre-roll into sample buffer and write to WAV
-        if let (Ok(mut ring), Ok(mut samples)) =
-            (self.shared.pre_roll.lock(), self.shared.samples.lock())
-        {
-            samples.clear();
-            let pre_roll_data: Vec<f32> = ring.drain(..).collect();
-            samples.extend_from_slice(&pre_roll_data);
+        // Hold pre_roll lock across the drain and recording flag transition
+        // to prevent audio samples from going into pre_roll during the gap.
+        if let Ok(mut ring) = self.shared.pre_roll.lock() {
+            if let Ok(mut samples) = self.shared.samples.lock() {
+                samples.clear();
+                let pre_roll_data: Vec<f32> = ring.drain(..).collect();
+                samples.extend_from_slice(&pre_roll_data);
 
-            if let Ok(mut guard) = self.shared.writer.lock() {
-                if let Some(ref mut w) = *guard {
-                    for &sample in &pre_roll_data {
-                        let _ = w.write_sample(f32_to_i16(sample));
+                if let Ok(mut guard) = self.shared.writer.lock() {
+                    if let Some(ref mut w) = *guard {
+                        for &sample in &pre_roll_data {
+                            let _ = w.write_sample(f32_to_i16(sample));
+                        }
                     }
                 }
             }
+            // Set recording while still holding pre_roll lock so the audio
+            // callback immediately writes to samples instead of pre_roll.
+            self.shared.recording.store(true, Ordering::Release);
         }
-
-        self.shared.recording.store(true, Ordering::Release);
 
         Ok(())
     }
@@ -634,7 +641,7 @@ mod tests {
 
     #[test]
     fn test_f32_to_i16_min() {
-        assert_eq!(f32_to_i16(-1.0), -32767);
+        assert_eq!(f32_to_i16(-1.0), -32768);
     }
 
     #[test]
@@ -644,7 +651,7 @@ mod tests {
 
     #[test]
     fn test_f32_to_i16_clamps_under() {
-        assert_eq!(f32_to_i16(-2.0), -32767);
+        assert_eq!(f32_to_i16(-2.0), -32768);
     }
 
     #[test]

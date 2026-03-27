@@ -345,6 +345,10 @@ fn reload_config(ctx: &mut EffectContext<'_>) -> Result<(bool, Vec<AppEffect>)> 
     }
 
     *ctx.config = new_config;
+
+    // Sync all tray UI elements to the newly loaded config
+    ctx.tray.sync_config(ctx.config);
+
     // If model or language changed, reload the transcriber
     if ctx.state.model_size != old_model || ctx.state.language != old_lang {
         ctx.state.reload_generation += 1;

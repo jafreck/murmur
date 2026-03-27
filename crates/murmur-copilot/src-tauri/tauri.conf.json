@@ -5,8 +5,9 @@
   "identifier": "com.murmur.copilot",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "frontendDist": "../src",
-    "devUrl": "http://localhost:1420"
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
   },
   "app": {
     "macOSPrivateApi": true,

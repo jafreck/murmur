@@ -10,7 +10,7 @@
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#platform-notes)
 
 Worry free speech to text.
-No cloud, no API keys, no data collection. Powered by [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
+No cloud, no API keys, no data collection.
 
 </div>
 

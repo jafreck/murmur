@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 /// Maximum number of clipboard characters to capture as context.
@@ -34,8 +35,8 @@ impl ClipboardWatcher {
             Ok(mut cb) => match cb.get_text() {
                 Ok(text) if !text.trim().is_empty() => {
                     let trimmed = text.trim();
-                    if trimmed.len() > MAX_CLIPBOARD_CHARS {
-                        Some(trimmed[..MAX_CLIPBOARD_CHARS].to_string())
+                    if trimmed.chars().count() > MAX_CLIPBOARD_CHARS {
+                        Some(trimmed.chars().take(MAX_CLIPBOARD_CHARS).collect())
                     } else {
                         Some(trimmed.to_string())
                     }
@@ -61,7 +62,7 @@ pub struct RecentTextTracker {
 
 struct RecentTextBuffer {
     /// Recent text entries, newest last
-    entries: Vec<String>,
+    entries: VecDeque<String>,
     /// Maximum total characters to retain
     max_chars: usize,
 }
@@ -76,7 +77,7 @@ impl RecentTextTracker {
     pub fn new() -> Self {
         Self {
             buffer: Arc::new(Mutex::new(RecentTextBuffer {
-                entries: Vec::new(),
+                entries: VecDeque::new(),
                 max_chars: DEFAULT_MAX_RECENT_CHARS,
             })),
         }
@@ -89,16 +90,15 @@ impl RecentTextTracker {
             return;
         }
         if let Ok(mut buf) = self.buffer.lock() {
-            buf.entries.push(trimmed.to_string());
-            // Trim entries if too many
+            buf.entries.push_back(trimmed.to_string());
             while buf.entries.len() > MAX_ENTRIES {
-                buf.entries.remove(0);
+                buf.entries.pop_front();
             }
-            // Trim total character count
             let mut total_chars: usize = buf.entries.iter().map(|e| e.len()).sum();
             while total_chars > buf.max_chars && !buf.entries.is_empty() {
-                total_chars -= buf.entries[0].len();
-                buf.entries.remove(0);
+                if let Some(front) = buf.entries.pop_front() {
+                    total_chars -= front.len();
+                }
             }
         }
     }
@@ -110,7 +110,7 @@ impl RecentTextTracker {
             if buf.entries.is_empty() {
                 return None;
             }
-            Some(buf.entries.join(" "))
+            Some(buf.entries.iter().cloned().collect::<Vec<_>>().join(" "))
         } else {
             None
         }

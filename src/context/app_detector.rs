@@ -102,21 +102,24 @@ impl ContextProvider for AppDetector {
         let workspace = NSWorkspace::sharedWorkspace();
         let front_app = workspace.frontmostApplication();
 
-        let (app_id, app_name) = match front_app {
+        let (app_id, app_name, pid) = match front_app {
             Some(app) => {
                 let bundle_id = app.bundleIdentifier().map(|id| id.to_string());
                 let name = app.localizedName().map(|n| n.to_string());
-                (bundle_id, name)
+                let pid = app.processIdentifier();
+                (bundle_id, name, Some(pid))
             }
             None => {
                 log::debug!("AppDetector: no frontmost application found");
-                (None, None)
+                (None, None, None)
             }
         };
 
-        let window_title = std::panic::catch_unwind(get_window_title_ax).unwrap_or_else(|_| {
-            log::debug!("AppDetector: accessibility API panicked, skipping window title");
-            None
+        let window_title = pid.and_then(|p| {
+            std::panic::catch_unwind(|| get_window_title_ax(p)).unwrap_or_else(|_| {
+                log::debug!("AppDetector: accessibility API panicked, skipping window title");
+                None
+            })
         });
 
         build_context(app_id, app_name, window_title)
@@ -125,7 +128,7 @@ impl ContextProvider for AppDetector {
 
 /// Read the focused window's title via the Accessibility API.
 #[cfg(target_os = "macos")]
-fn get_window_title_ax() -> Option<String> {
+fn get_window_title_ax(pid: i32) -> Option<String> {
     use std::ffi::c_void;
     use std::ptr;
 
@@ -157,12 +160,6 @@ fn get_window_title_ax() -> Option<String> {
     }
 
     unsafe {
-        // Get the PID of the frontmost app
-        use objc2_app_kit::NSWorkspace;
-        let workspace = NSWorkspace::sharedWorkspace();
-        let front_app = workspace.frontmostApplication()?;
-        let pid = front_app.processIdentifier();
-
         // Create an AXUIElement for the app
         let app_element = AXUIElementCreateApplication(pid);
         if app_element.is_null() {
@@ -242,7 +239,7 @@ impl ContextProvider for AppDetector {
 
     fn get_context(&self) -> Context {
         let (app_name, window_title) = linux::detect();
-        build_context(app_name.clone(), app_name, window_title)
+        build_context(None, app_name, window_title)
     }
 }
 
@@ -308,7 +305,7 @@ impl ContextProvider for AppDetector {
 
     fn get_context(&self) -> Context {
         let (app_name, window_title) = windows::detect();
-        build_context(app_name.clone(), app_name, window_title)
+        build_context(None, app_name, window_title)
     }
 }
 

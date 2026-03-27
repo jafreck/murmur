@@ -46,9 +46,7 @@ fn custom_config_round_trip() {
         streaming: true,
         translate_to_english: true,
         vocabulary: vec!["test".to_string()],
-        app_contexts: std::collections::HashMap::new(),
-        excluded_apps: Vec::new(),
-        dictation_mode: DictationMode::default(),
+        ..Config::default()
     };
     config.save_to(&path).unwrap();
 
@@ -195,10 +193,7 @@ fn config_to_state_and_back() {
         mode: InputMode::OpenMic,
         streaming: true,
         translate_to_english: true,
-        vocabulary: Vec::new(),
-        app_contexts: std::collections::HashMap::new(),
-        excluded_apps: Vec::new(),
-        dictation_mode: DictationMode::default(),
+        ..Config::default()
     };
 
     let state = AppState::new(&original);
@@ -231,10 +226,7 @@ fn config_save_load_then_state_round_trip() {
         mode: InputMode::PushToTalk,
         streaming: false,
         translate_to_english: false,
-        vocabulary: Vec::new(),
-        app_contexts: std::collections::HashMap::new(),
-        excluded_apps: Vec::new(),
-        dictation_mode: DictationMode::default(),
+        ..Config::default()
     };
 
     original.save_to(&path).unwrap();

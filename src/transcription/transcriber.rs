@@ -345,7 +345,9 @@ impl Transcriber {
         params.set_print_timestamps(false);
         params.set_suppress_nst(true);
 
-        // Apply context-based initial_prompt with smart vocabulary ranking
+        // Apply context-based initial_prompt with smart vocabulary ranking.
+        // `prompt_string` is declared here so it outlives the `params` borrow
+        // in `set_initial_prompt()` below.
         let prompt_string;
         if let Some(ctx) = context {
             // Rank vocabulary terms by novelty if any are provided

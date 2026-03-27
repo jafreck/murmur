@@ -123,29 +123,6 @@ const EXTENSION_MAP: &[(&str, &str, &str)] = &[
     ("cr", "Crystal", "Crystal programming"),
 ];
 
-/// Apps whose window titles typically contain filenames.
-const EDITOR_APP_IDS: &[&str] = &[
-    "com.microsoft.VSCode",
-    "com.microsoft.VSCodeInsiders",
-    "dev.zed.Zed",
-    "com.sublimetext.4",
-    "com.sublimetext.3",
-    "com.jetbrains.intellij",
-    "com.jetbrains.pycharm",
-    "com.jetbrains.WebStorm",
-    "com.jetbrains.goland",
-    "com.jetbrains.CLion",
-    "com.jetbrains.rustrover",
-    "com.jetbrains.rider",
-    "com.jetbrains.datagrip",
-    "com.googlecode.iterm2",
-    "com.apple.Terminal",
-    "org.alacritty",
-    "io.warp.warpterm",
-    "net.kovidgoyal.kitty",
-    "com.github.wez.wezterm",
-];
-
 /// Terminal app bundle IDs — suggest command mode for these.
 const TERMINAL_APP_IDS: &[&str] = &[
     "com.googlecode.iterm2",
@@ -184,11 +161,6 @@ pub fn analyze_title(title: &str) -> TitleContext {
         prompt_prefix: None,
         suggested_mode: None,
     }
-}
-
-/// Check if an app is a known editor/IDE based on bundle ID.
-pub fn is_editor_app(app_id: &str) -> bool {
-    EDITOR_APP_IDS.contains(&app_id)
 }
 
 /// Check if an app is a terminal emulator.
@@ -449,14 +421,7 @@ mod tests {
         assert!(ctx.suggested_mode.is_none());
     }
 
-    // -- is_editor_app / is_terminal_app --
-
-    #[test]
-    fn test_is_editor_app() {
-        assert!(is_editor_app("com.microsoft.VSCode"));
-        assert!(is_editor_app("dev.zed.Zed"));
-        assert!(!is_editor_app("com.apple.Safari"));
-    }
+    // -- is_terminal_app --
 
     #[test]
     fn test_is_terminal_app() {

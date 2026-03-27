@@ -215,6 +215,7 @@ mod tests {
         assert!(validate_model("medium.en").is_ok());
         assert!(validate_model("large-v3-turbo").is_ok());
         assert!(validate_model("large").is_ok());
+        assert!(validate_model("distil-large-v3").is_ok());
     }
 
     #[test]

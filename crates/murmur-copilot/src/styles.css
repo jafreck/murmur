@@ -1,0 +1,92 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  background: rgba(18, 18, 24, 0.88);
+  color: #e0e0e0;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 14px;
+  overflow: hidden;
+  /* Allow dragging the overlay window from anywhere. */
+  -webkit-app-region: drag;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px;
+}
+
+/* ── Controls ─────────────────────────────────────────── */
+
+.controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  -webkit-app-region: no-drag;
+}
+
+.btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.btn-start {
+  background: #22c55e;
+  color: #0a0a0a;
+}
+
+.btn-stop {
+  background: #ef4444;
+  color: #fff;
+}
+
+.status {
+  margin-left: auto;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.6;
+}
+
+/* ── Transcript ───────────────────────────────────────── */
+
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  -webkit-app-region: no-drag;
+}
+
+/* Scrollbar styling */
+.transcript::-webkit-scrollbar {
+  width: 4px;
+}
+
+.transcript::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.transcript::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}

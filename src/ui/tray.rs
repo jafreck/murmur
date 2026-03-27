@@ -451,8 +451,11 @@ pub fn tint_pixels(src: &[u8], stride: usize, r: u8, g: u8, b: u8, a: u8) -> Vec
     let mut rgba = Vec::with_capacity(pixel_count * 4);
 
     for pixel in src.chunks_exact(stride) {
+        // For RGBA the icon is an alpha mask: replace RGB with the tint
+        // colour and combine the source alpha with the tint alpha.
+        // For greyscale formats the luminance modulates the tint intensity.
         let (lum, pa) = match stride {
-            4 => (pixel[0] as u16, pixel[3]),
+            4 => (255u16, pixel[3]),
             3 => (pixel[0] as u16, 255),
             2 => (pixel[0] as u16, pixel[1]),
             1 => (pixel[0] as u16, 255),
@@ -768,9 +771,11 @@ mod tests {
 
     #[test]
     fn tint_pixels_rgba_half_lum() {
+        // RGBA stride treats the icon as an alpha mask: source RGB is
+        // ignored and replaced by the tint colour.
         let src = [128u8, 0, 0, 255];
         let result = tint_pixels(&src, 4, 255, 255, 255, 255);
-        assert!(result[0] >= 127 && result[0] <= 129);
+        assert_eq!(result, vec![255, 255, 255, 255]);
     }
 
     #[test]
@@ -805,9 +810,11 @@ mod tests {
 
     #[test]
     fn tint_pixels_black_input() {
+        // RGBA alpha-mask: even black source pixels get replaced with the
+        // tint colour (alpha is preserved).
         let src = [0u8, 0, 0, 255];
         let result = tint_pixels(&src, 4, 255, 255, 255, 255);
-        assert_eq!(result[0..3], [0, 0, 0]);
+        assert_eq!(result[0..3], [255, 255, 255]);
     }
 
     #[test]

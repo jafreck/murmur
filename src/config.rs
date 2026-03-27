@@ -162,6 +162,9 @@ pub struct Config {
     pub streaming: bool,
     #[serde(default)]
     pub translate_to_english: bool,
+    /// Enable noise suppression via nnnoiseless (default: true)
+    #[serde(default = "default_true")]
+    pub noise_suppression: bool,
     /// Global vocabulary terms to bias Whisper toward
     #[serde(default)]
     pub vocabulary: Vec<String>,
@@ -176,6 +179,10 @@ pub struct Config {
     pub dictation_mode: DictationMode,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -188,6 +195,7 @@ impl Default for Config {
             mode: InputMode::PushToTalk,
             streaming: false,
             translate_to_english: false,
+            noise_suppression: true,
             vocabulary: Vec::new(),
             app_contexts: std::collections::HashMap::new(),
             excluded_apps: Vec::new(),
@@ -378,6 +386,7 @@ mod tests {
             app_contexts: std::collections::HashMap::new(),
             excluded_apps: Vec::new(),
             dictation_mode: DictationMode::Code,
+            noise_suppression: true,
         };
 
         let json = serde_json::to_string(&cfg).unwrap();
@@ -425,6 +434,7 @@ mod tests {
             app_contexts: std::collections::HashMap::new(),
             excluded_apps: vec!["com.bank.app".to_string()],
             dictation_mode: DictationMode::Prose,
+            noise_suppression: true,
         };
         cfg.save_to(&path).unwrap();
 
@@ -572,6 +582,7 @@ mod tests {
             app_contexts: std::collections::HashMap::new(),
             excluded_apps: Vec::new(),
             dictation_mode: DictationMode::Command,
+            noise_suppression: true,
         };
         let json = serde_json::to_string_pretty(&cfg).unwrap();
         assert!(json.contains("\"hotkey\": \"f5\""));

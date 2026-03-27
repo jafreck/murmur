@@ -7,7 +7,7 @@ use crate::transcription::vad;
 
 /// Minimum audio duration in samples at 16 kHz.
 /// Clips shorter than this tend to produce hallucinated output.
-const MIN_AUDIO_SAMPLES: usize = 8_000; // 0.5 seconds
+const MIN_AUDIO_SAMPLES: usize = 4_000; // 0.25 seconds
 
 /// Phrases commonly hallucinated by Whisper on silence or near-silence.
 const HALLUCINATED_PHRASES: &[&str] = &[

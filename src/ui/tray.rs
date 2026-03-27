@@ -32,6 +32,7 @@ pub enum TrayAction {
     SetMode(InputMode),
     ToggleStreaming,
     ToggleTranslate,
+    ToggleNoiseSuppression,
     SetHotkey,
     OpenConfig,
     ReloadConfig,
@@ -75,6 +76,7 @@ pub struct MenuActionIds {
     pub filler_removal: MenuId,
     pub streaming: MenuId,
     pub translate: MenuId,
+    pub noise_suppression: MenuId,
     pub set_hotkey: MenuId,
 }
 
@@ -88,6 +90,7 @@ pub struct MenuActionMap {
     filler_removal_id: MenuId,
     streaming_id: MenuId,
     translate_id: MenuId,
+    noise_suppression_id: MenuId,
     set_hotkey_id: MenuId,
     model_ids: Vec<(MenuId, String)>,
     language_ids: Vec<(MenuId, String)>,
@@ -110,6 +113,7 @@ impl MenuActionMap {
             filler_removal_id: ids.filler_removal,
             streaming_id: ids.streaming,
             translate_id: ids.translate,
+            noise_suppression_id: ids.noise_suppression,
             set_hotkey_id: ids.set_hotkey,
             model_ids,
             language_ids,
@@ -141,6 +145,9 @@ impl MenuActionMap {
         }
         if event_id == &self.translate_id {
             return Some(TrayAction::ToggleTranslate);
+        }
+        if event_id == &self.noise_suppression_id {
+            return Some(TrayAction::ToggleNoiseSuppression);
         }
         if event_id == &self.set_hotkey_id {
             return Some(TrayAction::SetHotkey);
@@ -232,6 +239,8 @@ pub struct TrayController {
     filler_removal_item: CheckMenuItem,
     streaming_item: CheckMenuItem,
     translate_item: CheckMenuItem,
+    #[allow(dead_code)]
+    noise_suppression_item: CheckMenuItem,
 
     status_item: MenuItem,
     hotkey_item: MenuItem,
@@ -308,6 +317,10 @@ impl TrayController {
         );
         let translate_id = translate_item.id().clone();
 
+        let noise_suppression_item =
+            CheckMenuItem::new("Noise Suppression", true, config.noise_suppression, None);
+        let noise_suppression_id = noise_suppression_item.id().clone();
+
         let open_config = MenuItem::new("Open Config…", true, None);
         let open_config_id = open_config.id().clone();
         let reload_config = MenuItem::new("Reload Config", true, None);
@@ -331,6 +344,7 @@ impl TrayController {
         menu.append(&mode_submenu)?;
         menu.append(&streaming_item)?;
         menu.append(&translate_item)?;
+        menu.append(&noise_suppression_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&open_config)?;
         menu.append(&reload_config)?;
@@ -347,6 +361,7 @@ impl TrayController {
                 filler_removal: filler_removal_id,
                 streaming: streaming_id,
                 translate: translate_id,
+                noise_suppression: noise_suppression_id,
                 set_hotkey: set_hotkey_id,
             },
             model_ids,
@@ -393,6 +408,7 @@ impl TrayController {
             filler_removal_item,
             streaming_item,
             translate_item,
+            noise_suppression_item,
             status_item,
             hotkey_item,
             idle_icon,
@@ -707,6 +723,7 @@ mod tests {
             filler_removal: MenuId::new("fr"),
             streaming: MenuId::new("st"),
             translate: MenuId::new("tr"),
+            noise_suppression: MenuId::new("ns"),
             set_hotkey: MenuId::new("sh"),
         }
     }

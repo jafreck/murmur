@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use hound::{SampleFormat, WavSpec, WavWriter};
+use nnnoiseless::DenoiseState;
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::BufWriter;
@@ -43,10 +44,127 @@ impl SharedCaptureState {
     }
 }
 
+/// nnnoiseless operates on 480-sample frames at 48 kHz.
+const DENOISE_FRAME_SIZE: usize = DenoiseState::FRAME_SIZE;
+
+/// nnnoiseless native sample rate.
+const DENOISE_RATE: u32 = 48_000;
+
+/// Holds the denoiser state and an accumulation buffer for incomplete frames.
+/// Created once per recording session and shared with the audio callback via Arc<Mutex>.
+struct Denoiser {
+    state: Box<DenoiseState<'static>>,
+    /// Accumulates 16 kHz samples until we have enough to fill a 48 kHz frame.
+    pending_16k: Vec<f32>,
+    /// Collects denoised 16 kHz output samples ready for the consumer.
+    output_16k: Vec<f32>,
+    /// Whether to skip the very first output frame (fade-in artifact).
+    first_frame: bool,
+    // Pre-allocated scratch buffers to avoid per-callback heap allocations.
+    chunk_buf: Vec<f32>,
+    upsampled_buf: Vec<f32>,
+    denoised_48k_buf: Vec<f32>,
+    downsampled_buf: Vec<f32>,
+}
+
+impl Denoiser {
+    fn new() -> Self {
+        let frame_16k = DENOISE_FRAME_SIZE / 3; // 160
+        Self {
+            state: DenoiseState::new(),
+            pending_16k: Vec::with_capacity(frame_16k + 16),
+            output_16k: Vec::new(),
+            first_frame: true,
+            chunk_buf: Vec::with_capacity(frame_16k),
+            upsampled_buf: Vec::with_capacity(DENOISE_FRAME_SIZE),
+            denoised_48k_buf: Vec::with_capacity(DENOISE_FRAME_SIZE),
+            downsampled_buf: Vec::with_capacity(frame_16k),
+        }
+    }
+
+    /// Reset all state so the denoiser is clean for a new recording session.
+    fn reset(&mut self) {
+        self.pending_16k.clear();
+        self.output_16k.clear();
+        self.first_frame = true;
+        self.state = DenoiseState::new();
+        // Scratch buffers keep their allocations; just clear contents.
+        self.chunk_buf.clear();
+        self.upsampled_buf.clear();
+        self.denoised_48k_buf.clear();
+        self.downsampled_buf.clear();
+    }
+
+    /// Feed 16 kHz samples and return denoised 16 kHz samples.
+    ///
+    /// Internally upsamples to 48 kHz, runs nnnoiseless frame-by-frame,
+    /// then downsamples back to 16 kHz.
+    fn process(&mut self, samples_16k: &[f32]) -> &[f32] {
+        self.output_16k.clear();
+        self.pending_16k.extend_from_slice(samples_16k);
+
+        // Each 48 kHz frame of 480 samples corresponds to 160 samples at 16 kHz.
+        let frame_16k = DENOISE_FRAME_SIZE / 3; // 160
+
+        while self.pending_16k.len() >= frame_16k {
+            self.chunk_buf.clear();
+            self.chunk_buf.extend(self.pending_16k.drain(..frame_16k));
+
+            resample_into(
+                &self.chunk_buf,
+                TARGET_RATE,
+                DENOISE_RATE,
+                &mut self.upsampled_buf,
+            );
+
+            // nnnoiseless expects f32 in i16 range
+            let mut input_frame = [0.0f32; DENOISE_FRAME_SIZE];
+            for (i, &s) in self
+                .upsampled_buf
+                .iter()
+                .take(DENOISE_FRAME_SIZE)
+                .enumerate()
+            {
+                input_frame[i] = s * 32767.0;
+            }
+
+            let mut output_frame = [0.0f32; DENOISE_FRAME_SIZE];
+            self.state.process_frame(&mut output_frame, &input_frame);
+
+            if self.first_frame {
+                self.first_frame = false;
+                continue;
+            }
+
+            // Convert back from i16 range to [-1, 1]
+            self.denoised_48k_buf.clear();
+            self.denoised_48k_buf.extend(
+                output_frame
+                    .iter()
+                    .map(|&s| (s / 32767.0_f32).clamp(-1.0, 1.0)),
+            );
+
+            resample_into(
+                &self.denoised_48k_buf,
+                DENOISE_RATE,
+                TARGET_RATE,
+                &mut self.downsampled_buf,
+            );
+            self.output_16k.extend_from_slice(&self.downsampled_buf);
+        }
+
+        &self.output_16k
+    }
+}
+
 pub struct AudioRecorder {
     stream: Option<cpal::Stream>,
     shared: Arc<SharedCaptureState>,
     current_path: Option<PathBuf>,
+    /// Runtime toggle for noise suppression.
+    noise_suppression: Arc<AtomicBool>,
+    /// Shared denoiser state (created once, reused across callbacks).
+    denoiser: Arc<Mutex<Denoiser>>,
 }
 
 /// Mix multi-channel audio to mono by averaging channels.
@@ -89,7 +207,22 @@ impl AudioRecorder {
             stream: None,
             shared: Arc::new(SharedCaptureState::new()),
             current_path: None,
+            noise_suppression: Arc::new(AtomicBool::new(true)),
+            denoiser: Arc::new(Mutex::new(Denoiser::new())),
         }
+    }
+
+    /// Create a recorder with an explicit noise suppression setting.
+    pub fn with_noise_suppression(enabled: bool) -> Self {
+        Self {
+            noise_suppression: Arc::new(AtomicBool::new(enabled)),
+            ..Self::new()
+        }
+    }
+
+    /// Update the noise suppression toggle at runtime.
+    pub fn set_noise_suppression(&self, enabled: bool) {
+        self.noise_suppression.store(enabled, Ordering::Relaxed);
     }
 
     /// Open the microphone and start capturing into the pre-roll buffer.
@@ -112,6 +245,8 @@ impl AudioRecorder {
         let native_channels = supported_config.channels() as u32;
 
         let shared = Arc::clone(&self.shared);
+        let ns_flag = Arc::clone(&self.noise_suppression);
+        let denoiser = Arc::clone(&self.denoiser);
 
         let stream = device
             .build_input_stream(
@@ -120,19 +255,60 @@ impl AudioRecorder {
                     let mono = mix_to_mono(data, native_channels);
                     let resampled = resample(&mono, native_rate, TARGET_RATE);
 
+                    // Apply noise suppression if enabled
+                    let samples: &[f32] = if ns_flag.load(Ordering::Relaxed) {
+                        if let Ok(mut d) = denoiser.try_lock() {
+                            let denoised = d.process(&resampled);
+                            // SAFETY: denoised borrows d which we hold;
+                            // we only use it within this scope while the lock is held.
+                            // Copy out to avoid holding the lock across buffer writes.
+                            let owned: Vec<f32> = denoised.to_vec();
+                            drop(d);
+                            // Use a block to handle the owned data
+                            if shared.recording.load(Ordering::Acquire) {
+                                if let Ok(mut buf) = shared.samples.try_lock() {
+                                    buf.extend_from_slice(&owned);
+                                } else {
+                                    shared
+                                        .dropped_samples
+                                        .fetch_add(owned.len() as u64, Ordering::Relaxed);
+                                }
+                                if let Ok(mut guard) = shared.writer.try_lock() {
+                                    if let Some(ref mut w) = *guard {
+                                        for &sample in &owned {
+                                            let _ = w.write_sample(f32_to_i16(sample));
+                                        }
+                                    }
+                                }
+                            } else if let Ok(mut ring) = shared.pre_roll.try_lock() {
+                                for &s in &owned {
+                                    if ring.len() >= PRE_ROLL_SAMPLES {
+                                        ring.pop_front();
+                                    }
+                                    ring.push_back(s);
+                                }
+                            }
+                            return;
+                        }
+                        // Denoiser lock contention — fall through to raw samples
+                        &resampled
+                    } else {
+                        &resampled
+                    };
+
                     if shared.recording.load(Ordering::Acquire) {
                         // Recording mode: write to sample buffer and optional WAV
                         if let Ok(mut buf) = shared.samples.try_lock() {
-                            buf.extend_from_slice(&resampled);
+                            buf.extend_from_slice(samples);
                         } else {
                             shared
                                 .dropped_samples
-                                .fetch_add(resampled.len() as u64, Ordering::Relaxed);
+                                .fetch_add(samples.len() as u64, Ordering::Relaxed);
                         }
 
                         if let Ok(mut guard) = shared.writer.try_lock() {
                             if let Some(ref mut w) = *guard {
-                                for &sample in &resampled {
+                                for &sample in samples {
                                     let _ = w.write_sample(f32_to_i16(sample));
                                 }
                             }
@@ -140,7 +316,7 @@ impl AudioRecorder {
                     } else {
                         // Standby mode: fill pre-roll ring buffer
                         if let Ok(mut ring) = shared.pre_roll.try_lock() {
-                            for &s in &resampled {
+                            for &s in samples {
                                 if ring.len() >= PRE_ROLL_SAMPLES {
                                     ring.pop_front();
                                 }
@@ -175,6 +351,9 @@ impl AudioRecorder {
         self.ensure_warm()?;
 
         self.shared.dropped_samples.store(0, Ordering::Relaxed);
+        if let Ok(mut d) = self.denoiser.lock() {
+            d.reset();
+        }
 
         // Hold pre_roll lock across the transition to prevent audio samples
         // from going into pre_roll between the drain and recording=true.
@@ -216,6 +395,9 @@ impl AudioRecorder {
 
         self.current_path = Some(output_path.to_path_buf());
         self.shared.dropped_samples.store(0, Ordering::Relaxed);
+        if let Ok(mut d) = self.denoiser.lock() {
+            d.reset();
+        }
 
         // Install the WAV writer before draining pre-roll
         if let Ok(mut guard) = self.shared.writer.lock() {
@@ -320,6 +502,34 @@ fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     }
 
     output
+}
+
+/// Allocation-free variant of [`resample`] that writes into a caller-supplied buffer.
+fn resample_into(input: &[f32], from_rate: u32, to_rate: u32, output: &mut Vec<f32>) {
+    output.clear();
+    if from_rate == to_rate {
+        output.extend_from_slice(input);
+        return;
+    }
+
+    let ratio = from_rate as f64 / to_rate as f64;
+    let output_len = (input.len() as f64 / ratio) as usize;
+
+    for i in 0..output_len {
+        let src_idx = i as f64 * ratio;
+        let idx = src_idx as usize;
+        let frac = src_idx - idx as f64;
+
+        let sample = if idx + 1 < input.len() {
+            input[idx] as f64 * (1.0 - frac) + input[idx + 1] as f64 * frac
+        } else if idx < input.len() {
+            input[idx] as f64
+        } else {
+            0.0
+        };
+
+        output.push(sample as f32);
+    }
 }
 
 #[cfg(test)]

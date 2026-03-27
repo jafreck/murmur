@@ -61,6 +61,7 @@ pub const SUPPORTED_MODELS: &[&str] = &[
     "medium",
     "large-v3-turbo",
     "large",
+    "distil-large-v3",
 ];
 
 pub const SUPPORTED_LANGUAGES: &[(&str, &str)] = &[
@@ -483,6 +484,7 @@ mod tests {
         assert!(SUPPORTED_MODELS.contains(&"medium.en"));
         assert!(SUPPORTED_MODELS.contains(&"large-v3-turbo"));
         assert!(SUPPORTED_MODELS.contains(&"large"));
+        assert!(SUPPORTED_MODELS.contains(&"distil-large-v3"));
         assert!(!SUPPORTED_MODELS.contains(&"nonexistent"));
     }
 

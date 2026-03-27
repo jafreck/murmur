@@ -130,3 +130,72 @@ html, body {
   background: rgba(255, 255, 255, 0.15);
   border-radius: 2px;
 }
+
+/* ── LLM Status ──────────────────────────────────────── */
+
+.llm-status {
+  font-size: 10px;
+  cursor: default;
+}
+
+/* ── Suggestion Panel ────────────────────────────────── */
+
+.suggestion-panel {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px 0;
+  -webkit-app-region: no-drag;
+}
+
+.suggestion-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  opacity: 0.8;
+  margin-bottom: 6px;
+}
+
+.btn-suggest {
+  background: #f59e0b;
+  color: #0a0a0a;
+  font-size: 11px;
+  padding: 3px 10px;
+}
+
+.suggestion-content {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow-y: auto;
+  opacity: 0.85;
+}
+
+/* ── Summary Panel ───────────────────────────────────── */
+
+.summary-panel {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px 0;
+  -webkit-app-region: no-drag;
+}
+
+.summary-header {
+  font-size: 12px;
+  opacity: 0.8;
+  margin-bottom: 6px;
+}
+
+.summary-content {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
+  opacity: 0.85;
+}
+
+/* ── Utility ─────────────────────────────────────────── */
+
+.hidden {
+  display: none;
+}

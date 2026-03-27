@@ -1,8 +1,9 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use log::info;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::llm::LlmManager;
 use crate::meeting::{MeetingSession, SessionState, TranscriptEntry};
 use crate::overlay;
 
@@ -10,6 +11,7 @@ use crate::overlay;
 pub struct AppState {
     pub session: Mutex<Option<MeetingSession>>,
     pub stealth_enabled: Mutex<bool>,
+    pub llm: Arc<Mutex<LlmManager>>,
 }
 
 #[tauri::command]
@@ -103,4 +105,92 @@ pub fn toggle_stealth(state: State<'_, AppState>, app: AppHandle) -> Result<bool
 
     info!("stealth mode toggled to {new_state}");
     Ok(new_state)
+}
+
+/// Get an AI-generated suggestion based on the current meeting transcript.
+#[tauri::command]
+pub async fn get_suggestion(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let transcript_text = {
+        let session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        match session_guard.as_ref() {
+            Some(session) => session.transcript_text(),
+            None => return Err("no active meeting".into()),
+        }
+    };
+
+    if transcript_text.is_empty() {
+        return Ok(None);
+    }
+
+    let llm = state.llm.clone();
+    tokio::task::spawn_blocking(move || {
+        let llm = llm.lock().map_err(|e| e.to_string())?;
+        Ok(llm.suggest(&transcript_text))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Generate a full meeting summary from the transcript.
+#[tauri::command]
+pub async fn generate_summary(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let transcript_text = {
+        let session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        match session_guard.as_ref() {
+            Some(session) => session.transcript_text(),
+            None => return Err("no meeting session available".into()),
+        }
+    };
+
+    if transcript_text.is_empty() {
+        return Ok(None);
+    }
+
+    let llm = state.llm.clone();
+    tokio::task::spawn_blocking(move || {
+        let llm = llm.lock().map_err(|e| e.to_string())?;
+        Ok(llm.summarize(&transcript_text))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Check if the LLM backend is available and return model info.
+#[tauri::command]
+pub fn get_llm_status(state: State<'_, AppState>) -> Result<LlmStatus, String> {
+    let llm = state.llm.lock().map_err(|e| e.to_string())?;
+    Ok(LlmStatus {
+        available: llm.is_available(),
+        model: llm.model_name().map(String::from),
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct LlmStatus {
+    pub available: bool,
+    pub model: Option<String>,
+}
+
+/// Extract action items from the meeting transcript.
+#[tauri::command]
+pub async fn extract_action_items(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let transcript_text = {
+        let session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        match session_guard.as_ref() {
+            Some(session) => session.transcript_text(),
+            None => return Err("no meeting session available".into()),
+        }
+    };
+
+    if transcript_text.is_empty() {
+        return Ok(None);
+    }
+
+    let llm = state.llm.clone();
+    tokio::task::spawn_blocking(move || {
+        let llm = llm.lock().map_err(|e| e.to_string())?;
+        Ok(llm.action_items(&transcript_text))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

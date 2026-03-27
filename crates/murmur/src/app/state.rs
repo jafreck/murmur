@@ -541,6 +541,8 @@ impl AppState {
             notes_dir: base.notes_dir.clone(),
             system_audio_device: base.system_audio_device.clone(),
             stealth_mode: base.stealth_mode,
+            llm_model: base.llm_model.clone(),
+            ollama_url: base.ollama_url.clone(),
         }
     }
 }

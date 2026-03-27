@@ -223,6 +223,12 @@ pub struct Config {
     /// Hide the overlay window from screen capture and screen sharing.
     #[serde(default)]
     pub stealth_mode: bool,
+    /// LLM model name for Ollama (default: "phi3")
+    #[serde(default = "default_llm_model")]
+    pub llm_model: String,
+    /// Ollama API base URL
+    #[serde(default = "default_ollama_url")]
+    pub ollama_url: String,
 }
 
 fn default_true() -> bool {
@@ -235,6 +241,14 @@ fn default_wake_word() -> String {
 
 fn default_stop_phrase() -> String {
     "murmur stop dictation".to_string()
+}
+
+fn default_llm_model() -> String {
+    "phi3".to_string()
+}
+
+fn default_ollama_url() -> String {
+    "http://localhost:11434".to_string()
 }
 
 impl Default for Config {
@@ -260,6 +274,8 @@ impl Default for Config {
             notes_dir: None,
             system_audio_device: None,
             stealth_mode: false,
+            llm_model: default_llm_model(),
+            ollama_url: default_ollama_url(),
         }
     }
 }

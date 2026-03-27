@@ -103,6 +103,22 @@ impl MeetingSession {
         self.state
     }
 
+    /// Returns the current transcript as a single formatted string.
+    pub fn transcript_text(&self) -> String {
+        let entries = self.transcript.lock().unwrap();
+        entries
+            .iter()
+            .map(|e| {
+                let label = match e.speaker {
+                    Speaker::User => "You",
+                    Speaker::Remote => "Remote",
+                };
+                format!("{label}: {}", e.text)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// Configure (or clear) the system audio device at runtime.
     pub fn set_system_audio_device(&mut self, device_name: Option<&str>) {
         // Stop any existing system capture.

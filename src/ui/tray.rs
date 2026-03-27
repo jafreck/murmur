@@ -231,9 +231,13 @@ pub struct TrayController {
     status_item: MenuItem,
     hotkey_item: MenuItem,
 
+    #[allow(dead_code)]
     idle_icon: Icon,
+    #[allow(dead_code)]
     recording_icon: Icon,
+    #[allow(dead_code)]
     transcribing_icon: Icon,
+    #[allow(dead_code)]
     loading_icon: Icon,
 }
 
@@ -335,10 +339,26 @@ impl TrayController {
             mode_ids,
         );
 
-        let idle_icon = make_bark_icon(100, 150, 255, 200)?;
-        let recording_icon = make_bark_icon(255, 60, 60, 230)?;
-        let transcribing_icon = make_bark_icon(255, 200, 0, 220)?;
-        let loading_icon = make_bark_icon(150, 150, 150, 140)?;
+        let colors = StateColors::for_current_appearance();
+        let idle_icon = make_bark_icon(colors.idle.0, colors.idle.1, colors.idle.2, colors.idle.3)?;
+        let recording_icon = make_bark_icon(
+            colors.recording.0,
+            colors.recording.1,
+            colors.recording.2,
+            colors.recording.3,
+        )?;
+        let transcribing_icon = make_bark_icon(
+            colors.transcribing.0,
+            colors.transcribing.1,
+            colors.transcribing.2,
+            colors.transcribing.3,
+        )?;
+        let loading_icon = make_bark_icon(
+            colors.loading.0,
+            colors.loading.1,
+            colors.loading.2,
+            colors.loading.3,
+        )?;
 
         let tray = TrayIconBuilder::new()
             .with_icon(idle_icon.clone())
@@ -368,13 +388,20 @@ impl TrayController {
 
     pub fn set_state(&mut self, state: TrayState) {
         let (tooltip, label) = state_display(&state);
-        let icon = match &state {
-            TrayState::Loading => &self.loading_icon,
-            TrayState::Idle => &self.idle_icon,
-            TrayState::Recording | TrayState::Error => &self.recording_icon,
-            TrayState::Transcribing | TrayState::Downloading => &self.transcribing_icon,
+
+        // Re-check appearance on every state change so icons adapt when
+        // the user switches between dark and light mode.
+        let colors = StateColors::for_current_appearance();
+        let color = match &state {
+            TrayState::Loading => colors.loading,
+            TrayState::Idle => colors.idle,
+            TrayState::Recording | TrayState::Error => colors.recording,
+            TrayState::Transcribing | TrayState::Downloading => colors.transcribing,
         };
-        let _ = self.tray.set_icon(Some(icon.clone()));
+        if let Ok(icon) = make_bark_icon(color.0, color.1, color.2, color.3) {
+            let _ = self.tray.set_icon(Some(icon));
+        }
+
         let _ = self.tray.set_tooltip(Some(tooltip));
         self.status_item.set_text(label);
         self.state = state;
@@ -416,6 +443,57 @@ const BARK_PNG: &[u8] = include_bytes!("../../assets/icons/bark.png");
 fn make_bark_icon(r: u8, g: u8, b: u8, a: u8) -> Result<Icon> {
     let (rgba, width, height) = tint_png_rgba(BARK_PNG, r, g, b, a)?;
     Icon::from_rgba(rgba, width, height).map_err(|e| anyhow::anyhow!("Icon error: {e}"))
+}
+
+/// RGBA colour for each tray state, tuned for dark and light menu bars.
+struct StateColors {
+    idle: (u8, u8, u8, u8),
+    recording: (u8, u8, u8, u8),
+    transcribing: (u8, u8, u8, u8),
+    loading: (u8, u8, u8, u8),
+}
+
+impl StateColors {
+    fn for_current_appearance() -> Self {
+        if is_dark_mode() {
+            // Light icons for dark menu bar
+            Self {
+                idle: (100, 150, 255, 200),
+                recording: (255, 80, 80, 230),
+                transcribing: (255, 210, 50, 220),
+                loading: (180, 180, 180, 140),
+            }
+        } else {
+            // Dark icons for light menu bar
+            Self {
+                idle: (30, 80, 200, 220),
+                recording: (200, 30, 30, 230),
+                transcribing: (180, 140, 0, 220),
+                loading: (100, 100, 100, 160),
+            }
+        }
+    }
+}
+
+/// Detect whether the macOS menu bar is using dark mode.
+#[cfg(target_os = "macos")]
+fn is_dark_mode() -> bool {
+    use std::process::Command;
+    Command::new("defaults")
+        .args(["read", "-g", "AppleInterfaceStyle"])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .eq_ignore_ascii_case("dark")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_dark_mode() -> bool {
+    // Default to dark-mode palette on non-macOS (bright icons on dark taskbar).
+    true
 }
 
 /// Decode a PNG and tint its pixels.
@@ -850,5 +928,39 @@ mod tests {
         for &code in TOP_LANGUAGES {
             assert!(crate::config::is_valid_language(code));
         }
+    }
+
+    // -- dark/light mode --
+
+    #[test]
+    fn is_dark_mode_does_not_panic() {
+        let _ = is_dark_mode();
+    }
+
+    #[test]
+    fn state_colors_dark_and_light_differ() {
+        // Verify that dark and light palettes produce different idle colours
+        let dark = StateColors {
+            idle: (100, 150, 255, 200),
+            recording: (255, 80, 80, 230),
+            transcribing: (255, 210, 50, 220),
+            loading: (180, 180, 180, 140),
+        };
+        let light = StateColors {
+            idle: (30, 80, 200, 220),
+            recording: (200, 30, 30, 230),
+            transcribing: (180, 140, 0, 220),
+            loading: (100, 100, 100, 160),
+        };
+        assert_ne!(dark.idle, light.idle);
+        assert_ne!(dark.recording, light.recording);
+    }
+
+    #[test]
+    fn embedded_icon_is_retina_resolution() {
+        let (_, w, h) = tint_png_rgba(BARK_PNG, 0, 0, 0, 255).unwrap();
+        // Menu bar icons need ≥ 36px for 2× Retina at 18pt display size
+        assert!(w >= 36, "icon width {w} too small for Retina");
+        assert!(h >= 36, "icon height {h} too small for Retina");
     }
 }

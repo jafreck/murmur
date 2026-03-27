@@ -93,8 +93,12 @@ impl From<TrayAction> for AppMessage {
     }
 }
 
-pub fn run() -> Result<()> {
+pub fn run(overlay: bool) -> Result<()> {
     let mut config = Config::load();
+
+    if overlay {
+        config.overlay_enabled = true;
+    }
 
     info!("Hotkey: {}", config.hotkey);
     info!("Model: {}", config.model_size);

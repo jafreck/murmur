@@ -1,11 +1,22 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
 };
 
 use crate::config::Config;
 use crate::transcription::vad;
+
+/// Compute thread count: use 75% of available cores, clamped to [4, 8].
+/// This balances throughput against CPU pressure (avoids pegging all cores).
+fn inference_thread_count() -> i32 {
+    let n = std::thread::available_parallelism()
+        .map(|n| n.get() as i32)
+        .unwrap_or(4);
+    (n * 3 / 4).clamp(4, 8)
+}
 
 /// Minimum audio duration in samples at 16 kHz.
 /// Clips shorter than this tend to produce hallucinated output.
@@ -319,17 +330,22 @@ impl Transcriber {
     /// - skips VAD and min-length checks (the streaming loop handles those),
     /// - enables `single_segment` mode (skips segment-boundary detection),
     /// - enables `no_context` (each pass re-transcribes the full window).
+    ///
+    /// If `abort_flag` is set to `true` mid-inference, whisper will abort
+    /// early and an empty string is returned.
     pub fn streaming_transcribe(
         &self,
         state: &mut WhisperState,
         samples: &[f32],
         translate: bool,
+        abort_flag: &Arc<AtomicBool>,
     ) -> Result<String> {
         if samples.is_empty() {
             return Ok(String::new());
         }
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        params.set_n_threads(inference_thread_count());
         params.set_language(self.language_param());
         params.set_translate(translate);
         params.set_print_special(false);
@@ -340,9 +356,16 @@ impl Transcriber {
         params.set_single_segment(true);
         params.set_no_context(true);
 
+        let flag = Arc::clone(abort_flag);
+        params.set_abort_callback_safe(move || flag.load(Ordering::Relaxed));
+
         state
             .full(params, samples)
             .map_err(|e| anyhow::anyhow!("Transcription failed: {e}"))?;
+
+        if abort_flag.load(Ordering::Relaxed) {
+            return Ok(String::new());
+        }
 
         let text = self.extract_text(state);
 
@@ -383,6 +406,7 @@ impl Transcriber {
         }
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        params.set_n_threads(inference_thread_count());
         params.set_language(self.language_param());
         params.set_translate(translate);
         params.set_print_special(false);

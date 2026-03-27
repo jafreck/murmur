@@ -215,7 +215,7 @@ MIT
 ## Contributing
 
 ```bash
-git config core.hooksPath hooks
+git config core.hooksPath .githooks
 ```
 
 This enables the pre-push hook which runs `cargo fmt --check` and `cargo clippy` before each push.

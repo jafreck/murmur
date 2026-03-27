@@ -169,6 +169,7 @@ fn streaming_loop(
         if spoken_punctuation {
             full_text = super::postprocess::process(&full_text);
         }
+        full_text = super::postprocess::ensure_space_after_punctuation(&full_text);
 
         // If the transcription changed at all, replace everything.
         // Backspace the entire emitted text and retype Whisper's latest.

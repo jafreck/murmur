@@ -93,7 +93,7 @@ fn fix_spacing_around_punctuation(text: &str) -> String {
 }
 
 /// Ensure a space exists after punctuation when followed by a word character.
-fn ensure_space_after_punctuation(text: &str) -> String {
+pub fn ensure_space_after_punctuation(text: &str) -> String {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"([.,?!:;])(\w)").unwrap());
     re.replace_all(text, "$1 $2").to_string()

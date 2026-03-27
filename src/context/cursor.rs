@@ -4,9 +4,11 @@
 //! context for Whisper transcription biasing.
 
 /// The number of characters before the cursor to capture for context.
+#[cfg(any(target_os = "macos", test))]
 const CONTEXT_CHARS_BEFORE: usize = 200;
 
 /// The number of characters after the cursor to capture for context.
+#[cfg(any(target_os = "macos", test))]
 const CONTEXT_CHARS_AFTER: usize = 50;
 
 /// Text surrounding the cursor position.

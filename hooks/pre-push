@@ -1,0 +1,20 @@
+#!/bin/sh
+
+# Pre-push hook: ensure code is formatted and passes clippy.
+# Install with: git config core.hooksPath hooks
+
+set -e
+
+echo "Running cargo fmt --check..."
+if ! cargo fmt --check; then
+    echo ""
+    echo "Push rejected: code is not formatted. Run 'cargo fmt' and commit the changes."
+    exit 1
+fi
+
+echo "Running cargo clippy..."
+if ! cargo clippy --all-targets -- -D warnings 2>&1; then
+    echo ""
+    echo "Push rejected: clippy found warnings. Fix them and commit the changes."
+    exit 1
+fi

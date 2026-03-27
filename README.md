@@ -169,3 +169,11 @@ Removes the binary, service/startup config, and logs. Prompts before deleting us
 ## License
 
 MIT
+
+## Contributing
+
+```bash
+git config core.hooksPath hooks
+```
+
+This enables the pre-push hook which runs `cargo fmt --check` and `cargo clippy` before each push.

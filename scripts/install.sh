@@ -152,7 +152,13 @@ download_binary() {
 # ── Install ──────────────────────────────────────────────────────────────────
 
 install_binary() {
+    # Remove macOS quarantine attribute (set when downloading from the internet)
+    xattr -d com.apple.quarantine "$TMP_DIR/$ARTIFACT" 2>/dev/null || true
     sudo install -m 755 "$TMP_DIR/$ARTIFACT" "$INSTALL_DIR/$APP_NAME"
+    # Re-sign the binary so macOS TCC recognises it for Accessibility /
+    # Input Monitoring permissions. Release binaries are linker-signed
+    # ad-hoc, which TCC silently ignores.
+    sudo codesign -s - -f "$INSTALL_DIR/$APP_NAME" 2>/dev/null || true
     rm -rf "$TMP_DIR"
 }
 
@@ -264,8 +270,15 @@ print_summary() {
 
     if [ "$PLATFORM" = "macos" ]; then
         printf "  ${YELLOW}⚠${RESET}  ${BOLD}macOS permissions required:${RESET}\n"
-        printf "     ${DIM}•${RESET} Accessibility: ${DIM}System Settings → Privacy → Accessibility${RESET}\n"
-        printf "     ${DIM}•${RESET} Microphone:    ${DIM}System Settings → Privacy → Microphone${RESET}\n"
+        printf "     ${DIM}•${RESET} Accessibility:    ${DIM}System Settings → Privacy → Accessibility${RESET}\n"
+        printf "     ${DIM}•${RESET} Input Monitoring:  ${DIM}System Settings → Privacy → Input Monitoring${RESET}\n"
+        printf "     ${DIM}•${RESET} Microphone:        ${DIM}System Settings → Privacy → Microphone${RESET}\n"
+        printf "     ${DIM}Tip: click +, press ⌘⇧G, type /usr/local/bin, select murmur${RESET}\n"
+        echo ""
+        printf "  ${DIM}Opening System Settings…${RESET}\n"
+        open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" 2>/dev/null || true
+        open "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent" 2>/dev/null || true
+        open "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone" 2>/dev/null || true
         echo ""
         printf "  ${DIM}Manage service:${RESET}\n"
         printf "     ${DIM}Stop:${RESET}    launchctl bootout gui/$(id -u)/com.jafreck.murmur\n"

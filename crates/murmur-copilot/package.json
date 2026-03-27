@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "tauri": "tauri",
-    "dev": "echo 'Serve src/ for Tauri dev mode'",
+    "dev": "npx serve src --listen tcp://localhost:1420 --no-clipboard",
     "build": "echo 'No build step — vanilla TS/HTML frontend'"
   },
   "devDependencies": {

@@ -267,6 +267,7 @@ pub fn run() -> Result<()> {
 
         while let Ok(_event) = TrayIconEvent::receiver().try_recv() {}
 
+        tray.tick();
         pump_event_loop();
     }
 

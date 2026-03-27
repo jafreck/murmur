@@ -484,6 +484,7 @@ fn full_config_with_vocabulary_save_load() {
         app_contexts,
         excluded_apps: vec!["com.1password".to_string()],
         dictation_mode: DictationMode::Prose,
+        noise_suppression: true,
     };
     cfg.save_to(&path).unwrap();
 

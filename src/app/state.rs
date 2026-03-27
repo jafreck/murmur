@@ -19,6 +19,7 @@ pub enum AppMessage {
     TraySetMode(InputMode),
     TrayToggleStreaming,
     TrayToggleTranslate,
+    TrayToggleNoiseSuppression,
     TrayOpenConfig,
     TrayReloadConfig,
     TraySetHotkey,
@@ -66,6 +67,8 @@ pub enum AppEffect {
     EnterHotkeyCaptureMode,
     /// Save the captured hotkey and update the listener.
     SetHotkey(String),
+    /// Update the noise suppression state on the audio recorder.
+    UpdateNoiseSuppression(bool),
     Quit,
     LogError(String),
 }
@@ -77,6 +80,7 @@ pub struct AppState {
     pub streaming: bool,
     pub spoken_punctuation: bool,
     pub translate_to_english: bool,
+    pub noise_suppression: bool,
     pub max_recordings: u32,
     pub last_transcription: Option<String>,
     pub model_size: String,
@@ -101,6 +105,7 @@ impl AppState {
             streaming: config.streaming,
             spoken_punctuation: config.spoken_punctuation,
             translate_to_english: config.translate_to_english,
+            noise_suppression: config.noise_suppression,
             max_recordings: Config::effective_max_recordings(config.max_recordings),
             last_transcription: None,
             model_size: config.model_size.clone(),
@@ -135,6 +140,7 @@ impl AppState {
             AppMessage::TraySetMode(mode) => self.on_set_mode(mode),
             AppMessage::TrayToggleStreaming => self.on_toggle_streaming(),
             AppMessage::TrayToggleTranslate => self.on_toggle_translate(),
+            AppMessage::TrayToggleNoiseSuppression => self.on_toggle_noise_suppression(),
             AppMessage::TrayOpenConfig => vec![AppEffect::OpenConfig],
             AppMessage::TrayReloadConfig => vec![AppEffect::ReloadConfig],
             AppMessage::TraySetHotkey => self.on_tray_set_hotkey(),
@@ -296,6 +302,14 @@ impl AppState {
         vec![AppEffect::SaveConfig]
     }
 
+    fn on_toggle_noise_suppression(&mut self) -> Vec<AppEffect> {
+        self.noise_suppression = !self.noise_suppression;
+        vec![
+            AppEffect::UpdateNoiseSuppression(self.noise_suppression),
+            AppEffect::SaveConfig,
+        ]
+    }
+
     fn on_tray_set_hotkey(&mut self) -> Vec<AppEffect> {
         self.capturing_hotkey = true;
         vec![
@@ -320,6 +334,7 @@ impl AppState {
             mode: self.mode.clone(),
             streaming: self.streaming,
             translate_to_english: self.translate_to_english,
+            noise_suppression: self.noise_suppression,
             vocabulary: base.vocabulary.clone(),
             app_contexts: base.app_contexts.clone(),
             excluded_apps: base.excluded_apps.clone(),
@@ -339,6 +354,7 @@ mod tests {
             streaming: false,
             spoken_punctuation: false,
             translate_to_english: false,
+            noise_suppression: true,
             max_recordings: 0,
             last_transcription: None,
             model_size: "base.en".to_string(),

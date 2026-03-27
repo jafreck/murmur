@@ -1,5 +1,5 @@
 use crate::audio::recordings::RecordingStore;
-use crate::config::{Config, InputMode};
+use crate::config::{AppMode, Config, InputMode};
 use crate::ui::tray::TrayState;
 use rdev::Key;
 
@@ -24,8 +24,7 @@ pub enum AppMessage {
     TrayOpenConfig,
     TrayReloadConfig,
     TraySetHotkey,
-    TrayToggleWakeWord,
-    TrayToggleOverlay,
+    TrayToggleAppMode,
     HotkeyCapture(Key),
     TranscriptionDone(String),
     TranscriptionError(String),
@@ -127,10 +126,8 @@ pub struct AppState {
     pub capturing_hotkey: bool,
     /// True when the current dictation session was started by the wake word.
     pub wake_word_initiated: bool,
-    /// Wake word detection enabled.
-    pub wake_word_enabled: bool,
-    /// Overlay enabled.
-    pub overlay_enabled: bool,
+    /// Application mode: Dictation (paste at cursor) or Notes (overlay + wake word).
+    pub app_mode: AppMode,
     /// Accumulated overlay text for the current session.
     pub overlay_text: String,
     /// The configured stop phrase for wake-word-initiated sessions.
@@ -159,8 +156,7 @@ impl AppState {
             reload_generation: 0,
             capturing_hotkey: false,
             wake_word_initiated: false,
-            wake_word_enabled: config.wake_word_enabled,
-            overlay_enabled: config.overlay_enabled,
+            app_mode: config.app_mode,
             overlay_text: String::new(),
             stop_phrase: config.stop_phrase.clone(),
             last_speech_at: None,
@@ -173,6 +169,10 @@ impl AppState {
         } else {
             RecordingStore::new_recording_path()
         }
+    }
+
+    fn is_notes_mode(&self) -> bool {
+        self.app_mode == AppMode::Notes
     }
 
     pub fn handle_message(&mut self, msg: &AppMessage) -> Vec<AppEffect> {
@@ -196,8 +196,7 @@ impl AppState {
             AppMessage::TrayOpenConfig => vec![AppEffect::OpenConfig],
             AppMessage::TrayReloadConfig => vec![AppEffect::ReloadConfig],
             AppMessage::TraySetHotkey => self.on_tray_set_hotkey(),
-            AppMessage::TrayToggleWakeWord => self.on_toggle_wake_word(),
-            AppMessage::TrayToggleOverlay => self.on_toggle_overlay(),
+            AppMessage::TrayToggleAppMode => self.on_toggle_app_mode(),
             AppMessage::HotkeyCapture(key) => self.on_hotkey_capture(key),
             // TranscriberReady is handled directly in the run() loop before
             // reaching handle_message, but we need an arm for exhaustiveness.
@@ -225,11 +224,11 @@ impl AppState {
         if self.streaming {
             effects.push(AppEffect::StartStreaming);
         }
-        if self.overlay_enabled {
+        if self.is_notes_mode() {
             self.overlay_text.clear();
             effects.push(AppEffect::ShowOverlay);
         }
-        if self.wake_word_enabled {
+        if self.is_notes_mode() {
             effects.push(AppEffect::PauseWakeWord);
         }
         effects.push(AppEffect::SetTrayState(TrayState::Recording));
@@ -265,7 +264,7 @@ impl AppState {
                         replace_chars: *replace_chars,
                     });
                 }
-                if self.overlay_enabled {
+                if self.is_notes_mode() {
                     self.overlay_text = cleaned;
                 }
                 // Trigger stop
@@ -276,11 +275,15 @@ impl AppState {
 
         if *replace_chars > 0 || !text.is_empty() {
             self.streaming_chars_emitted = text.chars().count();
-            let mut effects = vec![AppEffect::StreamingReplace {
-                text: text.to_string(),
-                replace_chars: *replace_chars,
-            }];
-            if self.overlay_enabled {
+            let mut effects = vec![];
+            // In Dictation mode, type text at cursor; in Notes mode, only update overlay
+            if !self.is_notes_mode() {
+                effects.push(AppEffect::StreamingReplace {
+                    text: text.to_string(),
+                    replace_chars: *replace_chars,
+                });
+            }
+            if self.is_notes_mode() {
                 self.overlay_text = text.to_string();
                 effects.push(AppEffect::UpdateOverlayText(text.to_string()));
             }
@@ -328,24 +331,19 @@ impl AppState {
         vec![]
     }
 
-    fn on_toggle_wake_word(&mut self) -> Vec<AppEffect> {
-        self.wake_word_enabled = !self.wake_word_enabled;
+    fn on_toggle_app_mode(&mut self) -> Vec<AppEffect> {
         let mut effects = vec![AppEffect::SaveConfig];
-        if self.wake_word_enabled {
-            effects.push(AppEffect::StartWakeWord);
-        } else {
-            effects.push(AppEffect::StopWakeWord);
-        }
-        effects
-    }
-
-    fn on_toggle_overlay(&mut self) -> Vec<AppEffect> {
-        self.overlay_enabled = !self.overlay_enabled;
-        let mut effects = vec![AppEffect::SaveConfig];
-        if self.overlay_enabled {
-            effects.push(AppEffect::SpawnOverlay);
-        } else {
-            effects.push(AppEffect::KillOverlay);
+        match self.app_mode {
+            AppMode::Dictation => {
+                self.app_mode = AppMode::Notes;
+                effects.push(AppEffect::SpawnOverlay);
+                effects.push(AppEffect::StartWakeWord);
+            }
+            AppMode::Notes => {
+                self.app_mode = AppMode::Dictation;
+                effects.push(AppEffect::KillOverlay);
+                effects.push(AppEffect::StopWakeWord);
+            }
         }
         effects
     }
@@ -391,31 +389,34 @@ impl AppState {
 
         let mut effects = vec![];
         if !text.is_empty() {
-            if was_streaming && streamed_chars > 0 {
-                effects.push(AppEffect::StreamingReplace {
-                    text: text.to_string(),
-                    replace_chars: streamed_chars,
-                });
-            } else if !was_streaming {
-                effects.push(AppEffect::InsertText(text.to_string()));
+            // In Dictation mode, paste/type text at cursor
+            if !self.is_notes_mode() {
+                if was_streaming && streamed_chars > 0 {
+                    effects.push(AppEffect::StreamingReplace {
+                        text: text.to_string(),
+                        replace_chars: streamed_chars,
+                    });
+                } else if !was_streaming {
+                    effects.push(AppEffect::InsertText(text.to_string()));
+                }
             }
             self.last_transcription = Some(text.to_string());
 
             // Update overlay with final text and save note
-            if self.overlay_enabled {
+            if self.is_notes_mode() {
                 self.overlay_text = text.to_string();
                 effects.push(AppEffect::UpdateOverlayText(text.to_string()));
                 effects.push(AppEffect::SaveNote(text.to_string()));
                 effects.push(AppEffect::HideOverlay);
             }
-        } else if self.overlay_enabled {
+        } else if self.is_notes_mode() {
             effects.push(AppEffect::HideOverlay);
         }
 
         if !self.is_pressed {
             effects.push(AppEffect::SetTrayState(TrayState::Idle));
             // Resume wake word detection after dictation completes
-            if self.wake_word_enabled {
+            if self.is_notes_mode() {
                 effects.push(AppEffect::ResumeWakeWord);
             }
         }
@@ -534,10 +535,11 @@ impl AppState {
             app_contexts: base.app_contexts.clone(),
             excluded_apps: base.excluded_apps.clone(),
             dictation_mode: base.dictation_mode,
-            wake_word_enabled: self.wake_word_enabled,
+            app_mode: self.app_mode,
+            overlay_enabled: false,
+            wake_word_enabled: false,
             wake_word: base.wake_word.clone(),
             stop_phrase: base.stop_phrase.clone(),
-            overlay_enabled: self.overlay_enabled,
             notes_dir: base.notes_dir.clone(),
         }
     }
@@ -565,8 +567,7 @@ mod tests {
             reload_generation: 0,
             capturing_hotkey: false,
             wake_word_initiated: false,
-            wake_word_enabled: false,
-            overlay_enabled: false,
+            app_mode: AppMode::Dictation,
             overlay_text: String::new(),
             stop_phrase: "murmur stop".to_string(),
             last_speech_at: None,

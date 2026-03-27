@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 
 use crate::audio::AudioRecorder;
-use crate::config::Config;
+use crate::config::{AppMode, Config};
 use crate::input::hotkey::{self, HotkeyManager};
 use crate::input::keycodes;
 use crate::platform::permissions;
@@ -87,17 +87,16 @@ impl From<TrayAction> for AppMessage {
             TrayAction::OpenConfig => AppMessage::TrayOpenConfig,
             TrayAction::ReloadConfig => AppMessage::TrayReloadConfig,
             TrayAction::SetHotkey => AppMessage::TraySetHotkey,
-            TrayAction::ToggleWakeWord => AppMessage::TrayToggleWakeWord,
-            TrayAction::ToggleOverlay => AppMessage::TrayToggleOverlay,
+            TrayAction::ToggleAppMode => AppMessage::TrayToggleAppMode,
         }
     }
 }
 
-pub fn run(overlay: bool) -> Result<()> {
+pub fn run(notes_mode: bool) -> Result<()> {
     let mut config = Config::load();
 
-    if overlay {
-        config.overlay_enabled = true;
+    if notes_mode {
+        config.app_mode = AppMode::Notes;
     }
 
     info!("Hotkey: {}", config.hotkey);
@@ -215,7 +214,7 @@ pub fn run(overlay: bool) -> Result<()> {
     let notes = crate::notes::NotesManager::new(config.notes_dir());
 
     // Overlay subprocess (if enabled)
-    let mut overlay: Option<crate::ui::overlay::OverlayHandle> = if config.overlay_enabled {
+    let mut overlay: Option<crate::ui::overlay::OverlayHandle> = if config.is_notes_mode() {
         match crate::ui::overlay::OverlayHandle::spawn() {
             Ok(h) => {
                 info!("Overlay started");
@@ -236,7 +235,7 @@ pub fn run(overlay: bool) -> Result<()> {
     println!("murmur v{VERSION}");
     println!("Hotkey: {}", config.hotkey);
     println!("Model: {}", config.model_size);
-    if config.wake_word_enabled {
+    if config.is_notes_mode() {
         println!("Wake word: \"{}\"", config.wake_word);
     }
     println!("Loading model in background...");
@@ -255,7 +254,7 @@ pub fn run(overlay: bool) -> Result<()> {
                     if generation == 0 {
                         println!("Ready.");
                         // Start wake word detector now that the main model is loaded
-                        if config.wake_word_enabled && wake_word.is_none() {
+                        if config.is_notes_mode() && wake_word.is_none() {
                             let wake_phrase = config.wake_word.clone();
                             let stop_phrase = config.stop_phrase.clone();
                             let ww_tx = tx.clone();

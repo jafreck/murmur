@@ -22,9 +22,9 @@ struct Cli {
 enum Commands {
     /// Start the dictation daemon
     Start {
-        /// Enable the transparent overlay for this session
+        /// Enable notes mode for this session
         #[arg(long)]
-        overlay: bool,
+        notes: bool,
     },
     /// Set the push-to-talk hotkey
     SetHotkey {
@@ -73,7 +73,7 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Some(Commands::Start { overlay }) => cmd_start(overlay),
+        Some(Commands::Start { notes }) => cmd_start(notes),
         Some(Commands::SetHotkey { key }) => cmd_set_hotkey(&key),
         Some(Commands::GetHotkey) => cmd_get_hotkey(),
         Some(Commands::SetModel { size }) => cmd_set_model(&size),
@@ -96,9 +96,9 @@ fn main() {
     }
 }
 
-fn cmd_start(overlay: bool) -> Result<()> {
+fn cmd_start(notes: bool) -> Result<()> {
     println!("murmur v{VERSION}");
-    app::run(overlay)
+    app::run(notes)
 }
 
 fn cmd_set_hotkey(key_string: &str) -> Result<()> {

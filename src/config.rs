@@ -2,6 +2,28 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Top-level application mode.
+///
+/// **Dictation** — transcription is pasted at the cursor via hotkey.
+/// **Notes** — transcription is shown in an overlay and saved to note files,
+/// triggered by wake word.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppMode {
+    #[default]
+    Dictation,
+    Notes,
+}
+
+impl std::fmt::Display for AppMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AppMode::Dictation => write!(f, "Dictation"),
+            AppMode::Notes => write!(f, "Notes"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputMode {
@@ -182,18 +204,21 @@ pub struct Config {
     /// Default dictation mode
     #[serde(default)]
     pub dictation_mode: DictationMode,
-    /// Enable wake word detection to start dictation hands-free
+    /// Application mode: `dictation` (paste at cursor) or `notes` (overlay + wake word)
     #[serde(default)]
+    pub app_mode: AppMode,
+    /// Backward compat: old configs may have overlay_enabled/wake_word_enabled.
+    /// If either is true and app_mode is not explicitly set, migrate to Notes mode.
+    #[serde(default, skip_serializing)]
+    pub overlay_enabled: bool,
+    #[serde(default, skip_serializing)]
     pub wake_word_enabled: bool,
-    /// Phrase that triggers dictation when spoken (default: "murmur start")
+    /// Phrase that triggers dictation when spoken (default: "murmur start dictation")
     #[serde(default = "default_wake_word")]
     pub wake_word: String,
-    /// Phrase that stops dictation when spoken (default: "murmur stop")
+    /// Phrase that stops dictation when spoken (default: "murmur stop dictation")
     #[serde(default = "default_stop_phrase")]
     pub stop_phrase: String,
-    /// Enable the transparent overlay for live note taking
-    #[serde(default)]
-    pub overlay_enabled: bool,
     /// Directory for saving dictation notes (default: data_dir/murmur/notes)
     #[serde(default)]
     pub notes_dir: Option<std::path::PathBuf>,
@@ -228,10 +253,11 @@ impl Default for Config {
             app_contexts: std::collections::HashMap::new(),
             excluded_apps: Vec::new(),
             dictation_mode: DictationMode::default(),
+            app_mode: AppMode::default(),
+            overlay_enabled: false,
             wake_word_enabled: false,
             wake_word: default_wake_word(),
             stop_phrase: default_stop_phrase(),
-            overlay_enabled: false,
             notes_dir: None,
         }
     }
@@ -257,6 +283,11 @@ impl Config {
 
     pub fn file_path() -> PathBuf {
         Self::dir().join("config.json")
+    }
+
+    /// Whether the app is in Notes mode.
+    pub fn is_notes_mode(&self) -> bool {
+        self.app_mode == AppMode::Notes
     }
 
     /// Resolved notes directory, falling back to data_dir/murmur/notes.
@@ -285,8 +316,14 @@ impl Config {
     }
 
     pub fn parse(contents: &str, source: &std::path::Path) -> Self {
-        match serde_json::from_str(contents) {
-            Ok(config) => config,
+        match serde_json::from_str::<Config>(contents) {
+            Ok(mut config) => {
+                // Backward compat: migrate old overlay_enabled/wake_word_enabled to app_mode
+                if config.overlay_enabled || config.wake_word_enabled {
+                    config.app_mode = AppMode::Notes;
+                }
+                config
+            }
             Err(e) => {
                 eprintln!("Warning: unable to parse {}: {e}", source.display());
                 Self::default()

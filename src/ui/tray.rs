@@ -50,8 +50,7 @@ pub enum TrayAction {
     ToggleTranslate,
     ToggleNoiseSuppression,
     SetHotkey,
-    ToggleWakeWord,
-    ToggleOverlay,
+    ToggleAppMode,
     OpenConfig,
     ReloadConfig,
     Quit,
@@ -96,8 +95,7 @@ pub struct MenuActionIds {
     pub translate: MenuId,
     pub noise_suppression: MenuId,
     pub set_hotkey: MenuId,
-    pub wake_word: MenuId,
-    pub overlay: MenuId,
+    pub app_mode: MenuId,
 }
 
 /// Menu event matching engine. Maps MenuId → TrayAction.
@@ -112,8 +110,8 @@ pub struct MenuActionMap {
     translate_id: MenuId,
     noise_suppression_id: MenuId,
     set_hotkey_id: MenuId,
-    wake_word_id: MenuId,
-    overlay_id: MenuId,
+    app_mode_id: MenuId,
+
     model_ids: Vec<(MenuId, String)>,
     language_ids: Vec<(MenuId, String)>,
     mode_ids: Vec<(MenuId, InputMode)>,
@@ -137,8 +135,8 @@ impl MenuActionMap {
             translate_id: ids.translate,
             noise_suppression_id: ids.noise_suppression,
             set_hotkey_id: ids.set_hotkey,
-            wake_word_id: ids.wake_word,
-            overlay_id: ids.overlay,
+            app_mode_id: ids.app_mode,
+
             model_ids,
             language_ids,
             mode_ids,
@@ -176,11 +174,8 @@ impl MenuActionMap {
         if event_id == &self.set_hotkey_id {
             return Some(TrayAction::SetHotkey);
         }
-        if event_id == &self.wake_word_id {
-            return Some(TrayAction::ToggleWakeWord);
-        }
-        if event_id == &self.overlay_id {
-            return Some(TrayAction::ToggleOverlay);
+        if event_id == &self.app_mode_id {
+            return Some(TrayAction::ToggleAppMode);
         }
 
         for (id, size) in &self.model_ids {
@@ -271,8 +266,7 @@ pub struct TrayController {
     translate_item: CheckMenuItem,
     #[allow(dead_code)]
     noise_suppression_item: CheckMenuItem,
-    wake_word_item: CheckMenuItem,
-    overlay_item: CheckMenuItem,
+    app_mode_item: CheckMenuItem,
 
     status_item: MenuItem,
     hotkey_item: MenuItem,
@@ -357,12 +351,8 @@ impl TrayController {
             CheckMenuItem::new("Noise Suppression", true, config.noise_suppression, None);
         let noise_suppression_id = noise_suppression_item.id().clone();
 
-        let wake_word_item =
-            CheckMenuItem::new("Wake Word Detection", true, config.wake_word_enabled, None);
-        let wake_word_id = wake_word_item.id().clone();
-
-        let overlay_item = CheckMenuItem::new("Live Overlay", true, config.overlay_enabled, None);
-        let overlay_id = overlay_item.id().clone();
+        let app_mode_item = CheckMenuItem::new("Notes Mode", true, config.is_notes_mode(), None);
+        let app_mode_id = app_mode_item.id().clone();
 
         let open_config = MenuItem::new("Open Config…", true, None);
         let open_config_id = open_config.id().clone();
@@ -389,8 +379,7 @@ impl TrayController {
         menu.append(&translate_item)?;
         menu.append(&noise_suppression_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
-        menu.append(&wake_word_item)?;
-        menu.append(&overlay_item)?;
+        menu.append(&app_mode_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&open_config)?;
         menu.append(&reload_config)?;
@@ -409,8 +398,7 @@ impl TrayController {
                 translate: translate_id,
                 noise_suppression: noise_suppression_id,
                 set_hotkey: set_hotkey_id,
-                wake_word: wake_word_id,
-                overlay: overlay_id,
+                app_mode: app_mode_id,
             },
             model_ids,
             language_ids,
@@ -457,8 +445,7 @@ impl TrayController {
             streaming_item,
             translate_item,
             noise_suppression_item,
-            wake_word_item,
-            overlay_item,
+            app_mode_item,
             status_item,
             hotkey_item,
             idle_icon,
@@ -589,8 +576,7 @@ impl TrayController {
             .set_checked(config.filler_word_removal);
         self.streaming_item.set_checked(config.streaming);
         self.translate_item.set_checked(config.translate_to_english);
-        self.wake_word_item.set_checked(config.wake_word_enabled);
-        self.overlay_item.set_checked(config.overlay_enabled);
+        self.app_mode_item.set_checked(config.is_notes_mode());
     }
 
     pub fn match_menu_event(&self, event: &MenuEvent) -> Option<TrayAction> {
@@ -839,8 +825,7 @@ mod tests {
             translate: MenuId::new("tr"),
             noise_suppression: MenuId::new("ns"),
             set_hotkey: MenuId::new("sh"),
-            wake_word: MenuId::new("ww"),
-            overlay: MenuId::new("ov"),
+            app_mode: MenuId::new("am"),
         }
     }
 

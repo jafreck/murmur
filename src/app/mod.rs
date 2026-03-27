@@ -338,6 +338,37 @@ pub fn run(overlay: bool) -> Result<()> {
         while let Ok(_event) = TrayIconEvent::receiver().try_recv() {}
 
         tray.tick();
+
+        // Auto-stop wake-word dictation after sustained silence
+        let silence_effects = state.check_silence_timeout();
+        for effect in silence_effects {
+            let (quit, _) = effects::apply_effect(
+                effect,
+                &mut EffectContext {
+                    recorder: &mut recorder,
+                    transcriber: &mut transcriber,
+                    tray: &mut tray,
+                    config: &mut config,
+                    state: &mut state,
+                    tx: &tx,
+                    streaming_stop: &mut streaming_stop,
+                    hotkey_config: &hotkey_config,
+                    capture_flag: &capture_flag,
+                    overlay: &mut overlay,
+                    wake_word: &mut wake_word,
+                    notes: &notes,
+                },
+            )?;
+            if quit {
+                should_quit = true;
+                break;
+            }
+        }
+
+        if should_quit {
+            break;
+        }
+
         pump_event_loop();
     }
 

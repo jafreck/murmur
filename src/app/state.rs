@@ -133,6 +133,9 @@ pub struct AppState {
     pub overlay_text: String,
     /// The configured stop phrase for wake-word-initiated sessions.
     pub stop_phrase: String,
+    /// Timestamp of last speech activity (recording start or streaming text).
+    /// Used to auto-stop wake-word-initiated sessions after silence.
+    pub last_speech_at: Option<std::time::Instant>,
 }
 
 impl AppState {
@@ -158,6 +161,7 @@ impl AppState {
             overlay_enabled: config.overlay_enabled,
             overlay_text: String::new(),
             stop_phrase: config.stop_phrase.clone(),
+            last_speech_at: None,
         }
     }
 
@@ -209,6 +213,7 @@ impl AppState {
         self.is_pressed = true;
         self.streaming_active = self.streaming;
         self.streaming_chars_emitted = 0;
+        self.last_speech_at = Some(std::time::Instant::now());
         let path = self.recording_output_path();
         let mut effects = vec![AppEffect::StartRecording(path)];
         if self.streaming {
@@ -228,6 +233,7 @@ impl AppState {
     fn stop_recording_effects(&mut self) -> Vec<AppEffect> {
         self.is_pressed = false;
         self.wake_word_initiated = false;
+        self.last_speech_at = None;
         let mut effects = vec![];
         if self.streaming {
             effects.push(AppEffect::StopStreaming);
@@ -264,6 +270,9 @@ impl AppState {
 
         if *replace_chars > 0 || !text.is_empty() {
             self.streaming_chars_emitted = text.chars().count();
+            if !text.is_empty() {
+                self.last_speech_at = Some(std::time::Instant::now());
+            }
             let mut effects = vec![AppEffect::StreamingReplace {
                 text: text.to_string(),
                 replace_chars: *replace_chars,
@@ -293,6 +302,27 @@ impl AppState {
         }
         log::info!("Stop phrase detected — stopping dictation");
         self.stop_recording_effects()
+    }
+
+    /// Seconds of silence before auto-stopping a wake-word-initiated session.
+    const WAKE_WORD_SILENCE_TIMEOUT_SECS: f32 = 5.0;
+
+    /// Check if a wake-word-initiated session should auto-stop due to silence.
+    /// Called from the main loop on each tick.
+    pub fn check_silence_timeout(&mut self) -> Vec<AppEffect> {
+        if !self.wake_word_initiated || !self.is_pressed {
+            return vec![];
+        }
+        if let Some(last) = self.last_speech_at {
+            if last.elapsed().as_secs_f32() >= Self::WAKE_WORD_SILENCE_TIMEOUT_SECS {
+                log::info!(
+                    "Silence timeout ({:.0}s) — auto-stopping wake-word dictation",
+                    Self::WAKE_WORD_SILENCE_TIMEOUT_SECS
+                );
+                return self.stop_recording_effects();
+            }
+        }
+        vec![]
     }
 
     fn on_toggle_wake_word(&mut self) -> Vec<AppEffect> {
@@ -536,6 +566,7 @@ mod tests {
             overlay_enabled: false,
             overlay_text: String::new(),
             stop_phrase: "murmur stop".to_string(),
+            last_speech_at: None,
         }
     }
 

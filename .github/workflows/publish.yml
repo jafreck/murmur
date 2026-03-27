@@ -35,16 +35,16 @@ jobs:
           echo "LIBRARY_PATH=/usr/lib/x86_64-linux-gnu${LIBRARY_PATH:+:$LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: Build
-        run: cargo build --all-targets
+        run: cargo build --workspace --all-targets
 
       - name: Test
-        run: cargo test -- --test-threads=1
+        run: cargo test --workspace -- --test-threads=1
 
       - name: Format
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   build:
     name: Build ${{ matrix.target }}
@@ -83,11 +83,14 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+          sudo apt-get install -y libasound2-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev \
+            libwayland-dev libx11-dev libx11-xcb-dev libxcursor-dev libxext-dev libxfixes-dev \
+            libxft-dev libxi-dev libxinerama-dev libxmu-dev libxrandr-dev libxrender-dev \
+            libxss-dev libxt-dev libxtst-dev libxxf86vm-dev libgl1-mesa-dev libegl1-mesa-dev
           echo "LIBRARY_PATH=/usr/lib/x86_64-linux-gnu${LIBRARY_PATH:+:$LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} ${{ matrix.features && format('--features {0}', matrix.features) }}
+        run: cargo build --release --target ${{ matrix.target }} -p murmur ${{ matrix.features && format('--features {0}', matrix.features) }}
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -149,14 +152,28 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+          sudo apt-get install -y libasound2-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev \
+            libwayland-dev libx11-dev libx11-xcb-dev libxcursor-dev libxext-dev libxfixes-dev \
+            libxft-dev libxi-dev libxinerama-dev libxmu-dev libxrandr-dev libxrender-dev \
+            libxss-dev libxt-dev libxtst-dev libxxf86vm-dev libgl1-mesa-dev libegl1-mesa-dev
           echo "LIBRARY_PATH=/usr/lib/x86_64-linux-gnu${LIBRARY_PATH:+:$LIBRARY_PATH}" >> "$GITHUB_ENV"
 
-      - name: Dry-run publish
-        run: cargo publish --dry-run
+      - name: Dry-run publish (murmur-core)
+        run: cargo publish --dry-run -p murmur-core
 
-      - name: Publish
-        run: cargo publish
+      - name: Publish murmur-core
+        run: cargo publish -p murmur-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for crates.io index
+        run: sleep 30
+
+      - name: Dry-run publish (murmur)
+        run: cargo publish --dry-run -p murmur
+
+      - name: Publish murmur
+        run: cargo publish -p murmur
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

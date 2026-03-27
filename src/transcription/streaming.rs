@@ -46,6 +46,7 @@ pub fn start_streaming(
     transcriber: Arc<Transcriber>,
     translate: bool,
     spoken_punctuation: bool,
+    filler_word_removal: bool,
     tx: mpsc::Sender<StreamingEvent>,
 ) -> mpsc::Sender<()> {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
@@ -56,6 +57,7 @@ pub fn start_streaming(
             transcriber,
             translate,
             spoken_punctuation,
+            filler_word_removal,
             tx,
             stop_rx,
         );
@@ -71,6 +73,7 @@ fn streaming_loop(
     transcriber: Arc<Transcriber>,
     translate: bool,
     spoken_punctuation: bool,
+    filler_word_removal: bool,
     tx: mpsc::Sender<StreamingEvent>,
     stop_rx: mpsc::Receiver<()>,
 ) {
@@ -124,6 +127,13 @@ fn streaming_loop(
 
         if full_text.is_empty() {
             continue;
+        }
+
+        if filler_word_removal {
+            full_text = super::postprocess::remove_filler_words(&full_text);
+            if full_text.is_empty() {
+                continue;
+            }
         }
 
         if spoken_punctuation {

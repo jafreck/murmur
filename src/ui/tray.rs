@@ -28,6 +28,7 @@ pub enum TrayAction {
     SetModel(String),
     SetLanguage(String),
     ToggleSpokenPunctuation,
+    ToggleFillerWordRemoval,
     SetMode(InputMode),
     ToggleStreaming,
     ToggleTranslate,
@@ -71,6 +72,7 @@ pub struct MenuActionIds {
     pub open_config: MenuId,
     pub reload_config: MenuId,
     pub spoken_punct: MenuId,
+    pub filler_removal: MenuId,
     pub streaming: MenuId,
     pub translate: MenuId,
     pub set_hotkey: MenuId,
@@ -83,6 +85,7 @@ pub struct MenuActionMap {
     open_config_id: MenuId,
     reload_config_id: MenuId,
     spoken_punct_id: MenuId,
+    filler_removal_id: MenuId,
     streaming_id: MenuId,
     translate_id: MenuId,
     set_hotkey_id: MenuId,
@@ -104,6 +107,7 @@ impl MenuActionMap {
             open_config_id: ids.open_config,
             reload_config_id: ids.reload_config,
             spoken_punct_id: ids.spoken_punct,
+            filler_removal_id: ids.filler_removal,
             streaming_id: ids.streaming,
             translate_id: ids.translate,
             set_hotkey_id: ids.set_hotkey,
@@ -128,6 +132,9 @@ impl MenuActionMap {
         }
         if event_id == &self.spoken_punct_id {
             return Some(TrayAction::ToggleSpokenPunctuation);
+        }
+        if event_id == &self.filler_removal_id {
+            return Some(TrayAction::ToggleFillerWordRemoval);
         }
         if event_id == &self.streaming_id {
             return Some(TrayAction::ToggleStreaming);
@@ -224,6 +231,8 @@ pub struct TrayController {
     #[allow(dead_code)]
     spoken_punct_item: CheckMenuItem,
     #[allow(dead_code)]
+    filler_removal_item: CheckMenuItem,
+    #[allow(dead_code)]
     streaming_item: CheckMenuItem,
     #[allow(dead_code)]
     translate_item: CheckMenuItem,
@@ -275,6 +284,14 @@ impl TrayController {
             CheckMenuItem::new("Spoken Punctuation", true, config.spoken_punctuation, None);
         let spoken_punct_id = spoken_punct_item.id().clone();
 
+        let filler_removal_item = CheckMenuItem::new(
+            "Filler Word Removal",
+            true,
+            config.filler_word_removal,
+            None,
+        );
+        let filler_removal_id = filler_removal_item.id().clone();
+
         let mode_submenu = Submenu::new("Mode", true);
         let mode_items: Vec<(&str, InputMode)> = vec![
             ("Push to Talk", InputMode::PushToTalk),
@@ -314,6 +331,7 @@ impl TrayController {
         menu.append(&set_hotkey)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&spoken_punct_item)?;
+        menu.append(&filler_removal_item)?;
         menu.append(&mode_submenu)?;
         menu.append(&streaming_item)?;
         menu.append(&translate_item)?;
@@ -330,6 +348,7 @@ impl TrayController {
                 open_config: open_config_id,
                 reload_config: reload_config_id,
                 spoken_punct: spoken_punct_id,
+                filler_removal: filler_removal_id,
                 streaming: streaming_id,
                 translate: translate_id,
                 set_hotkey: set_hotkey_id,
@@ -375,6 +394,7 @@ impl TrayController {
             language_entries,
             mode_entries,
             spoken_punct_item,
+            filler_removal_item,
             streaming_item,
             translate_item,
             status_item,
@@ -673,6 +693,7 @@ mod tests {
             open_config: MenuId::new("oc"),
             reload_config: MenuId::new("rc"),
             spoken_punct: MenuId::new("sp"),
+            filler_removal: MenuId::new("fr"),
             streaming: MenuId::new("st"),
             translate: MenuId::new("tr"),
             set_hotkey: MenuId::new("sh"),

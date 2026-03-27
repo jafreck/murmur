@@ -79,6 +79,7 @@ impl From<TrayAction> for AppMessage {
             TrayAction::SetModel(s) => AppMessage::TraySetModel(s),
             TrayAction::SetLanguage(c) => AppMessage::TraySetLanguage(c),
             TrayAction::ToggleSpokenPunctuation => AppMessage::TrayToggleSpokenPunctuation,
+            TrayAction::ToggleFillerWordRemoval => AppMessage::TrayToggleFillerWordRemoval,
             TrayAction::SetMode(mode) => AppMessage::TraySetMode(mode),
             TrayAction::ToggleStreaming => AppMessage::TrayToggleStreaming,
             TrayAction::ToggleTranslate => AppMessage::TrayToggleTranslate,

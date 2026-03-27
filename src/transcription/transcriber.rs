@@ -63,6 +63,65 @@ pub struct TranscriptionContext {
 /// Maximum length for the initial_prompt string to avoid degrading performance.
 const MAX_PROMPT_CHARS: usize = 500;
 
+/// Maximum tokens to allocate when tokenizing a single term for ranking.
+const MAX_TOKENS_PER_TERM: usize = 32;
+
+/// Terms producing fewer BPE tokens than this are considered "known" to Whisper
+/// and are deprioritized in the prompt. Terms at or above this threshold are
+/// novel/domain-specific and get priority.
+const NOVELTY_TOKEN_THRESHOLD: usize = 2;
+
+/// A vocabulary term annotated with its BPE token count for ranking.
+#[derive(Debug, Clone)]
+pub struct RankedTerm {
+    pub term: String,
+    pub token_count: usize,
+}
+
+/// Rank vocabulary terms by how "novel" they are to Whisper's tokenizer.
+///
+/// Terms that fragment into many BPE subwords are ones Whisper doesn't know as
+/// units — these benefit most from prompt biasing. Single-token terms (like
+/// "function" or "return") are already in Whisper's vocabulary and waste prompt
+/// space.
+///
+/// Returns terms sorted by token count descending (most novel first).
+/// Terms that fail to tokenize are kept and treated as maximally novel.
+pub fn rank_vocabulary(ctx: &WhisperContext, terms: &[String]) -> Vec<RankedTerm> {
+    let mut ranked: Vec<RankedTerm> = terms
+        .iter()
+        .map(|term| {
+            let token_count = match ctx.tokenize(term, MAX_TOKENS_PER_TERM) {
+                Ok(tokens) => tokens.len(),
+                Err(_) => {
+                    // If tokenization fails, assume the term is very novel
+                    log::debug!("Failed to tokenize term '{term}', treating as novel");
+                    MAX_TOKENS_PER_TERM
+                }
+            };
+            RankedTerm {
+                term: term.clone(),
+                token_count,
+            }
+        })
+        .collect();
+
+    // Sort by token count descending — most novel terms first
+    ranked.sort_by(|a, b| b.token_count.cmp(&a.token_count));
+    ranked
+}
+
+/// Filter ranked terms to only those Whisper is likely to get wrong.
+///
+/// Returns terms that tokenize into [`NOVELTY_TOKEN_THRESHOLD`] or more
+/// subwords, discarding single-token terms that Whisper already knows.
+pub fn filter_novel_terms(ranked: &[RankedTerm]) -> Vec<&RankedTerm> {
+    ranked
+        .iter()
+        .filter(|rt| rt.token_count >= NOVELTY_TOKEN_THRESHOLD)
+        .collect()
+}
+
 /// Build a Whisper initial_prompt from context information.
 ///
 /// The prompt is structured as:
@@ -244,10 +303,38 @@ impl Transcriber {
         params.set_print_timestamps(false);
         params.set_suppress_nst(true);
 
-        // Apply context-based initial_prompt
+        // Apply context-based initial_prompt with smart vocabulary ranking
         let prompt_string;
         if let Some(ctx) = context {
-            if let Some(prompt) = build_initial_prompt(ctx) {
+            // Rank vocabulary terms by novelty if any are provided
+            let ranked_ctx;
+            let effective_ctx = if !ctx.vocabulary.is_empty() {
+                let ranked = rank_vocabulary(&self.ctx, &ctx.vocabulary);
+                let novel: Vec<String> = filter_novel_terms(&ranked)
+                    .into_iter()
+                    .map(|rt| rt.term.clone())
+                    .collect();
+                let kept = novel.len();
+                let dropped = ctx.vocabulary.len() - kept;
+                if dropped > 0 {
+                    log::debug!(
+                        "Vocabulary ranking: {} terms → {} novel (dropped {} known)",
+                        ctx.vocabulary.len(),
+                        kept,
+                        dropped,
+                    );
+                }
+                ranked_ctx = TranscriptionContext {
+                    vocabulary: novel,
+                    surrounding_text: ctx.surrounding_text.clone(),
+                    prompt_prefix: ctx.prompt_prefix.clone(),
+                };
+                &ranked_ctx
+            } else {
+                ctx
+            };
+
+            if let Some(prompt) = build_initial_prompt(effective_ctx) {
                 log::debug!(
                     "Using initial_prompt ({} chars): {}...",
                     prompt.len(),
@@ -685,5 +772,82 @@ mod tests {
         let gamma_pos = prompt.find("gamma").unwrap();
         assert!(alpha_pos < beta_pos);
         assert!(beta_pos < gamma_pos);
+    }
+
+    // -- RankedTerm / vocabulary ranking --
+
+    #[test]
+    fn test_ranked_term_struct() {
+        let rt = RankedTerm {
+            term: "useState".to_string(),
+            token_count: 3,
+        };
+        assert_eq!(rt.term, "useState");
+        assert_eq!(rt.token_count, 3);
+    }
+
+    #[test]
+    fn test_filter_novel_terms_above_threshold() {
+        let ranked = vec![
+            RankedTerm {
+                term: "kAXValueAttribute".to_string(),
+                token_count: 5,
+            },
+            RankedTerm {
+                term: "rustfmt".to_string(),
+                token_count: 3,
+            },
+            RankedTerm {
+                term: "useState".to_string(),
+                token_count: 2,
+            },
+            RankedTerm {
+                term: "function".to_string(),
+                token_count: 1,
+            },
+        ];
+        let novel = filter_novel_terms(&ranked);
+        assert_eq!(novel.len(), 3);
+        assert_eq!(novel[0].term, "kAXValueAttribute");
+        assert_eq!(novel[1].term, "rustfmt");
+        assert_eq!(novel[2].term, "useState");
+    }
+
+    #[test]
+    fn test_filter_novel_terms_all_known() {
+        let ranked = vec![
+            RankedTerm {
+                term: "hello".to_string(),
+                token_count: 1,
+            },
+            RankedTerm {
+                term: "world".to_string(),
+                token_count: 1,
+            },
+        ];
+        let novel = filter_novel_terms(&ranked);
+        assert!(novel.is_empty());
+    }
+
+    #[test]
+    fn test_filter_novel_terms_empty() {
+        let novel = filter_novel_terms(&[]);
+        assert!(novel.is_empty());
+    }
+
+    #[test]
+    fn test_novelty_threshold_constant() {
+        assert!(
+            NOVELTY_TOKEN_THRESHOLD >= 2,
+            "threshold must exclude single-token terms"
+        );
+    }
+
+    #[test]
+    fn test_max_prompt_chars_within_whisper_limits() {
+        // Whisper's decoder context is 448 tokens, prompt gets ~half.
+        // 500 chars ≈ 125-170 tokens, well within budget.
+        assert!(MAX_PROMPT_CHARS <= 1000);
+        assert!(MAX_PROMPT_CHARS >= 200);
     }
 }

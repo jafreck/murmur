@@ -58,7 +58,6 @@ Murmur is built in Rust with an optimized audio pipeline designed for low-latenc
 | **Streaming latency** | Partial results update every ~300 ms while speaking |
 | **In-memory pipeline** | Zero disk I/O by default — audio is recorded and transcribed entirely in memory |
 | **GPU acceleration** | Metal (Apple Silicon), CUDA (NVIDIA), and Vulkan (cross-vendor) for faster-than-real-time inference |
-| **Binary optimization** | Release builds use `opt-level = 3`, LTO, and symbol stripping for minimal overhead |
 | **Distil-Whisper** | Distilled models run significantly faster while maintaining near-original accuracy |
 
 ## Install

@@ -21,6 +21,11 @@ interface AudioDevice {
   is_loopback_hint: boolean;
 }
 
+interface LlmStatus {
+  available: boolean;
+  model: string | null;
+}
+
 function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   return window.__TAURI__!.core.invoke(cmd, args);
 }
@@ -36,11 +41,35 @@ export function initApp(): void {
   const btnStart = document.getElementById("btn-start") as HTMLButtonElement;
   const btnStop = document.getElementById("btn-stop") as HTMLButtonElement;
   const btnStealth = document.getElementById("btn-stealth") as HTMLButtonElement;
+  const btnSuggest = document.getElementById("btn-suggest") as HTMLButtonElement;
   const statusEl = document.getElementById("status") as HTMLSpanElement;
+  const llmStatusEl = document.getElementById("llm-status") as HTMLSpanElement;
   const transcriptEl = document.getElementById("transcript") as HTMLElement;
   const deviceSelect = document.getElementById("device-select") as HTMLSelectElement;
+  const suggestionPanel = document.getElementById("suggestion-panel") as HTMLElement;
+  const suggestionContent = document.getElementById("suggestion-content") as HTMLElement;
+  const summaryPanel = document.getElementById("summary-panel") as HTMLElement;
+  const summaryContent = document.getElementById("summary-content") as HTMLElement;
 
   const display = new TranscriptDisplay(transcriptEl);
+
+  // ── LLM status check ──────────────────────────────────────────────
+  async function checkLlmStatus() {
+    try {
+      const status = (await invoke("get_llm_status")) as LlmStatus;
+      if (status.available) {
+        llmStatusEl.textContent = "🟢";
+        llmStatusEl.title = `LLM connected: ${status.model}`;
+      } else {
+        llmStatusEl.textContent = "🔴";
+        llmStatusEl.title = "LLM disconnected";
+      }
+    } catch {
+      llmStatusEl.textContent = "🔴";
+      llmStatusEl.title = "LLM disconnected";
+    }
+  }
+  checkLlmStatus();
 
   // ── Populate audio device selector ─────────────────────────────────
   async function loadDevices() {
@@ -72,6 +101,9 @@ export function initApp(): void {
       await invoke("start_meeting");
       btnStop.disabled = false;
       statusEl.textContent = "recording";
+      suggestionPanel.classList.remove("hidden");
+      summaryPanel.classList.add("hidden");
+      suggestionContent.textContent = "No suggestions yet.";
     } catch (err) {
       statusEl.textContent = `error: ${err}`;
       btnStart.disabled = false;
@@ -88,9 +120,35 @@ export function initApp(): void {
       if (entries && entries.length > 0) {
         display.setFinalTranscript(entries);
       }
+      suggestionPanel.classList.add("hidden");
+
+      // Auto-generate summary when meeting ends
+      try {
+        const summary = (await invoke("generate_summary")) as string | null;
+        if (summary) {
+          summaryContent.textContent = summary;
+          summaryPanel.classList.remove("hidden");
+        }
+      } catch {
+        // LLM may not be available — that's fine
+      }
     } catch (err) {
       statusEl.textContent = `error: ${err}`;
       btnStop.disabled = false;
+    }
+  });
+
+  // ── Suggestion button ──────────────────────────────────────────────
+  btnSuggest.addEventListener("click", async () => {
+    try {
+      btnSuggest.disabled = true;
+      suggestionContent.textContent = "Thinking…";
+      const suggestion = (await invoke("get_suggestion")) as string | null;
+      suggestionContent.textContent = suggestion ?? "No suggestions available.";
+    } catch (err) {
+      suggestionContent.textContent = `Error: ${err}`;
+    } finally {
+      btnSuggest.disabled = false;
     }
   });
 

@@ -1,17 +1,8 @@
 use tauri::{App, Manager};
 
-use crate::commands::AppState;
-use std::sync::Mutex;
-
-/// Configure the overlay window and register managed state.
+/// Configure the overlay window.
 pub fn configure_overlay(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let config = murmur_core::config::Config::load();
-
-    // Register application state so Tauri commands can access it.
-    app.manage(AppState {
-        session: Mutex::new(None),
-        stealth_enabled: Mutex::new(config.stealth_mode),
-    });
 
     // The overlay window is declared in tauri.conf.json with:
     //   transparent: true, decorations: false, alwaysOnTop: true

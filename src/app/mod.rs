@@ -114,36 +114,34 @@ pub fn run() -> Result<()> {
     let hotkey_config_listener = hotkey_config.clone();
     let capture_flag_listener = capture_flag.clone();
     let tx_hotkey = tx.clone();
-    std::thread::spawn(move || {
-        loop {
-            let tx_down = tx_hotkey.clone();
-            let tx_up = tx_hotkey.clone();
-            let tx_capture = tx_hotkey.clone();
-            match HotkeyManager::start(
-                hotkey_config_listener.clone(),
-                capture_flag_listener.clone(),
-                move || {
-                    let _ = tx_down.send(AppMessage::KeyDown);
-                },
-                move || {
-                    let _ = tx_up.send(AppMessage::KeyUp);
-                },
-                move |key| {
-                    let _ = tx_capture.send(AppMessage::HotkeyCapture(key));
-                },
-            ) {
-                Ok(()) => {
-                    info!("Hotkey listener exited");
-                    break;
-                }
-                Err(e) => {
-                    error!(
-                        "Hotkey listener failed: {e}. Retrying in 5 seconds... \
+    std::thread::spawn(move || loop {
+        let tx_down = tx_hotkey.clone();
+        let tx_up = tx_hotkey.clone();
+        let tx_capture = tx_hotkey.clone();
+        match HotkeyManager::start(
+            hotkey_config_listener.clone(),
+            capture_flag_listener.clone(),
+            move || {
+                let _ = tx_down.send(AppMessage::KeyDown);
+            },
+            move || {
+                let _ = tx_up.send(AppMessage::KeyUp);
+            },
+            move |key| {
+                let _ = tx_capture.send(AppMessage::HotkeyCapture(key));
+            },
+        ) {
+            Ok(()) => {
+                info!("Hotkey listener exited");
+                break;
+            }
+            Err(e) => {
+                error!(
+                    "Hotkey listener failed: {e}. Retrying in 5 seconds... \
                          On macOS, ensure Accessibility permission is granted in \
                          System Settings → Privacy & Security → Accessibility."
-                    );
-                    std::thread::sleep(std::time::Duration::from_secs(5));
-                }
+                );
+                std::thread::sleep(std::time::Duration::from_secs(5));
             }
         }
     });

@@ -41,6 +41,7 @@ fn custom_config_round_trip() {
         model_size: "small.en".to_string(),
         language: "fr".to_string(),
         spoken_punctuation: true,
+        filler_word_removal: true,
         max_recordings: 10,
         mode: InputMode::OpenMic,
         streaming: true,
@@ -189,6 +190,7 @@ fn config_to_state_and_back() {
         model_size: "medium.en".to_string(),
         language: "de".to_string(),
         spoken_punctuation: true,
+        filler_word_removal: true,
         max_recordings: 5,
         mode: InputMode::OpenMic,
         streaming: true,
@@ -222,6 +224,7 @@ fn config_save_load_then_state_round_trip() {
         model_size: "small.en".to_string(),
         language: "ja".to_string(),
         spoken_punctuation: false,
+        filler_word_removal: true,
         max_recordings: 3,
         mode: InputMode::PushToTalk,
         streaming: false,
@@ -485,6 +488,7 @@ fn full_config_with_vocabulary_save_load() {
         excluded_apps: vec!["com.1password".to_string()],
         dictation_mode: DictationMode::Prose,
         noise_suppression: true,
+        filler_word_removal: true,
     };
     cfg.save_to(&path).unwrap();
 
@@ -492,6 +496,7 @@ fn full_config_with_vocabulary_save_load() {
     assert_eq!(loaded.vocabulary, vec!["murmur", "whisper"]);
     assert_eq!(loaded.excluded_apps, vec!["com.1password"]);
     assert_eq!(loaded.dictation_mode, DictationMode::Prose);
+    assert!(loaded.filler_word_removal);
 
     let vscode = loaded.app_contexts.get("com.vscode").unwrap();
     assert_eq!(vscode.vocabulary, vec!["rustfmt", "clippy"]);

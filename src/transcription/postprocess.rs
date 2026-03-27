@@ -2,6 +2,37 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
+// ── Filler word removal ────────────────────────────────────────────────
+
+/// Pure verbal tics with no semantic meaning.
+const FILLERS: &[&str] = &["um", "uh", "er", "ah", "hmm", "hm"];
+
+fn compiled_fillers() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        let alts = FILLERS.join("|");
+        Regex::new(&format!(r"(?i)\b(?:{alts})\b")).unwrap()
+    })
+}
+
+fn collapse_spaces() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r" {2,}").unwrap())
+}
+
+/// Remove filler words from transcribed text.
+pub fn remove_filler_words(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let result = compiled_fillers().replace_all(text, "").to_string();
+    let result = collapse_spaces().replace_all(&result, " ").to_string();
+    result.trim().to_string()
+}
+
+// ── Spoken punctuation replacement ─────────────────────────────────────
+
 /// Replacement rules for spoken punctuation.
 /// Multi-word patterns must come before their single-word substrings
 /// (e.g. "semi colon" before "colon") to avoid partial matches.
@@ -221,5 +252,80 @@ mod tests {
         assert!(result.contains(','));
         assert!(result.contains('?'));
         assert!(result.contains('.'));
+    }
+
+    // ── Filler word removal tests ────────────────────────────────────
+
+    #[test]
+    fn filler_empty_string() {
+        assert_eq!(remove_filler_words(""), "");
+    }
+
+    #[test]
+    fn filler_no_fillers() {
+        assert_eq!(
+            remove_filler_words("the quick brown fox"),
+            "the quick brown fox"
+        );
+    }
+
+    #[test]
+    fn filler_removes_verbal_tics() {
+        assert_eq!(remove_filler_words("um hello"), "hello");
+        assert_eq!(remove_filler_words("hello uh world"), "hello world");
+        assert_eq!(remove_filler_words("hello er"), "hello");
+        assert_eq!(remove_filler_words("ah I see"), "I see");
+        assert_eq!(remove_filler_words("hmm let me think"), "let me think");
+        assert_eq!(remove_filler_words("hm okay"), "okay");
+    }
+
+    #[test]
+    fn filler_case_insensitive() {
+        assert_eq!(remove_filler_words("UM hello"), "hello");
+        assert_eq!(remove_filler_words("Um hello"), "hello");
+        assert_eq!(remove_filler_words("UH world"), "world");
+    }
+
+    #[test]
+    fn filler_preserves_meaningful_words() {
+        // Conversational words that have legitimate uses should be kept
+        assert_eq!(remove_filler_words("I like pizza"), "I like pizza");
+        assert_eq!(remove_filler_words("turn right here"), "turn right here");
+        assert_eq!(remove_filler_words("So the thing is"), "So the thing is");
+        assert_eq!(remove_filler_words("Well I think so"), "Well I think so");
+        assert_eq!(
+            remove_filler_words("I think you know it works"),
+            "I think you know it works"
+        );
+        assert_eq!(
+            remove_filler_words("it is kind of good"),
+            "it is kind of good"
+        );
+    }
+
+    #[test]
+    fn filler_multiple_fillers() {
+        assert_eq!(remove_filler_words("um uh er hello"), "hello");
+    }
+
+    #[test]
+    fn filler_cleans_double_spaces() {
+        let result = remove_filler_words("hello um world");
+        assert!(!result.contains("  "), "result was: {result}");
+    }
+
+    #[test]
+    fn filler_only_fillers() {
+        assert_eq!(remove_filler_words("um uh er"), "");
+    }
+
+    #[test]
+    fn filler_mixed_with_content() {
+        let result = remove_filler_words("um so I was uh thinking about it");
+        assert!(!result.contains("um"), "result: {result}");
+        assert!(!result.contains("uh"), "result: {result}");
+        assert!(result.contains("so"), "result: {result}");
+        assert!(result.contains("thinking"), "result: {result}");
+        assert!(result.contains("about it"), "result: {result}");
     }
 }

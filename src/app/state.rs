@@ -16,6 +16,7 @@ pub enum AppMessage {
     TraySetModel(String),
     TraySetLanguage(String),
     TrayToggleSpokenPunctuation,
+    TrayToggleFillerWordRemoval,
     TraySetMode(InputMode),
     TrayToggleStreaming,
     TrayToggleTranslate,
@@ -79,6 +80,7 @@ pub struct AppState {
     pub mode: InputMode,
     pub streaming: bool,
     pub spoken_punctuation: bool,
+    pub filler_word_removal: bool,
     pub translate_to_english: bool,
     pub noise_suppression: bool,
     pub max_recordings: u32,
@@ -104,6 +106,7 @@ impl AppState {
             mode: config.mode.clone(),
             streaming: config.streaming,
             spoken_punctuation: config.spoken_punctuation,
+            filler_word_removal: config.filler_word_removal,
             translate_to_english: config.translate_to_english,
             noise_suppression: config.noise_suppression,
             max_recordings: Config::effective_max_recordings(config.max_recordings),
@@ -137,6 +140,7 @@ impl AppState {
             AppMessage::TraySetModel(size) => self.on_set_model(size),
             AppMessage::TraySetLanguage(code) => self.on_set_language(code),
             AppMessage::TrayToggleSpokenPunctuation => self.on_toggle_spoken_punctuation(),
+            AppMessage::TrayToggleFillerWordRemoval => self.on_toggle_filler_word_removal(),
             AppMessage::TraySetMode(mode) => self.on_set_mode(mode),
             AppMessage::TrayToggleStreaming => self.on_toggle_streaming(),
             AppMessage::TrayToggleTranslate => self.on_toggle_translate(),
@@ -287,6 +291,11 @@ impl AppState {
         vec![AppEffect::SaveConfig]
     }
 
+    fn on_toggle_filler_word_removal(&mut self) -> Vec<AppEffect> {
+        self.filler_word_removal = !self.filler_word_removal;
+        vec![AppEffect::SaveConfig]
+    }
+
     fn on_set_mode(&mut self, mode: &InputMode) -> Vec<AppEffect> {
         self.mode = mode.clone();
         vec![AppEffect::SaveConfig, AppEffect::SetTrayMode(mode.clone())]
@@ -330,6 +339,7 @@ impl AppState {
             model_size: self.model_size.clone(),
             language: self.language.clone(),
             spoken_punctuation: self.spoken_punctuation,
+            filler_word_removal: self.filler_word_removal,
             max_recordings: base.max_recordings,
             mode: self.mode.clone(),
             streaming: self.streaming,
@@ -353,6 +363,7 @@ mod tests {
             mode: InputMode::PushToTalk,
             streaming: false,
             spoken_punctuation: false,
+            filler_word_removal: true,
             translate_to_english: false,
             noise_suppression: true,
             max_recordings: 0,
@@ -603,6 +614,7 @@ mod tests {
             model_size: "small.en".to_string(),
             language: "fr".to_string(),
             spoken_punctuation: true,
+            filler_word_removal: true,
             max_recordings: 10,
             mode: InputMode::OpenMic,
             streaming: true,

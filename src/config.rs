@@ -153,6 +153,8 @@ pub struct Config {
     #[serde(default)]
     pub spoken_punctuation: bool,
     #[serde(default)]
+    pub filler_word_removal: bool,
+    #[serde(default)]
     pub max_recordings: u32,
     #[serde(default)]
     pub mode: InputMode,
@@ -188,6 +190,7 @@ impl Default for Config {
             model_size: "base.en".to_string(),
             language: "en".to_string(),
             spoken_punctuation: false,
+            filler_word_removal: false,
             max_recordings: 0,
             mode: InputMode::PushToTalk,
             streaming: false,
@@ -374,6 +377,7 @@ mod tests {
             model_size: "small.en".to_string(),
             language: "fr".to_string(),
             spoken_punctuation: true,
+            filler_word_removal: true,
             max_recordings: 10,
             mode: InputMode::OpenMic,
             streaming: true,
@@ -421,6 +425,7 @@ mod tests {
             model_size: "medium.en".to_string(),
             language: "de".to_string(),
             spoken_punctuation: true,
+            filler_word_removal: true,
             max_recordings: 5,
             mode: InputMode::OpenMic,
             streaming: false,
@@ -568,6 +573,7 @@ mod tests {
             model_size: "large".to_string(),
             language: "auto".to_string(),
             spoken_punctuation: true,
+            filler_word_removal: true,
             max_recordings: 50,
             mode: InputMode::OpenMic,
             streaming: true,

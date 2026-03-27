@@ -178,6 +178,7 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
         return;
     };
     let spoken_punctuation = ctx.state.spoken_punctuation;
+    let filler_word_removal = ctx.state.filler_word_removal;
     let translate_to_english = ctx.state.translate_to_english;
     let max_recordings = ctx.state.max_recordings;
     let tx = ctx.tx.clone();
@@ -194,12 +195,16 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
         std::thread::spawn(move || {
             match transcriber.transcribe_samples(&samples, translate_to_english) {
                 Ok(raw) => {
-                    let text = if spoken_punctuation {
-                        postprocess::process(&raw)
-                    } else {
-                        raw
-                    };
-                    let _ = tx.send(AppMessage::TranscriptionDone(text));
+                    let mut text = raw;
+                    if filler_word_removal {
+                        text = postprocess::remove_filler_words(&text);
+                    }
+                    if spoken_punctuation {
+                        text = postprocess::process(&text);
+                    }
+                    if !text.is_empty() {
+                        let _ = tx.send(AppMessage::TranscriptionDone(text));
+                    }
                 }
                 Err(e) => {
                     let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
@@ -220,12 +225,16 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
             RecordingStore::prune(max_recordings);
             match result {
                 Ok(raw) => {
-                    let text = if spoken_punctuation {
-                        postprocess::process(&raw)
-                    } else {
-                        raw
-                    };
-                    let _ = tx.send(AppMessage::TranscriptionDone(text));
+                    let mut text = raw;
+                    if filler_word_removal {
+                        text = postprocess::remove_filler_words(&text);
+                    }
+                    if spoken_punctuation {
+                        text = postprocess::process(&text);
+                    }
+                    if !text.is_empty() {
+                        let _ = tx.send(AppMessage::TranscriptionDone(text));
+                    }
                 }
                 Err(e) => {
                     let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
@@ -245,6 +254,7 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
     let tx_app = ctx.tx.clone();
     let translate = ctx.state.translate_to_english;
     let spoken_punct = ctx.state.spoken_punctuation;
+    let filler_removal = ctx.state.filler_word_removal;
 
     let (streaming_tx, streaming_rx) = mpsc::channel::<streaming::StreamingEvent>();
 
@@ -270,6 +280,7 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
         transcriber,
         translate,
         spoken_punct,
+        filler_removal,
         streaming_tx,
     );
     *ctx.streaming_stop = Some(handle);

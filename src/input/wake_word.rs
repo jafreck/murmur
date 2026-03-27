@@ -212,6 +212,9 @@ fn detector_thread(
 }
 
 /// Check if `text` contains the given `phrase` (fuzzy word-boundary match).
+///
+/// Uses exact matching for most words but fuzzy matching (edit distance ≤ 2)
+/// for short words that Whisper often mistranscribes (e.g. "murmur" → "mama").
 fn contains_phrase(text: &str, phrase: &str) -> bool {
     if phrase.is_empty() {
         return false;
@@ -228,9 +231,64 @@ fn contains_phrase(text: &str, phrase: &str) -> bool {
         window.iter().zip(phrase_words.iter()).all(|(tw, pw)| {
             let tw_clean = tw.trim_matches(|c: char| c.is_ascii_punctuation());
             let pw_clean = pw.trim_matches(|c: char| c.is_ascii_punctuation());
-            tw_clean == pw_clean
+            words_match(tw_clean, pw_clean)
         })
     })
+}
+
+/// Check whether two words match, using fuzzy matching for short words
+/// that are prone to mistranscription and exact matching otherwise.
+fn words_match(heard: &str, expected: &str) -> bool {
+    if heard == expected {
+        return true;
+    }
+    // Check known aliases for the app name (Whisper commonly mistranscribes these)
+    if is_known_alias(heard, expected) {
+        return true;
+    }
+    // Use edit distance ≤ 2 for words ≤ 8 chars to catch minor transcription errors
+    if expected.len() <= 8 {
+        return edit_distance(heard, expected) <= 2;
+    }
+    false
+}
+
+/// Known mistranscriptions of "murmur" by Whisper tiny.
+const MURMUR_ALIASES: &[&str] = &["mama", "mamma", "mirror", "murmured", "memo", "memer"];
+
+/// Check if `heard` is a known alias for `expected`.
+fn is_known_alias(heard: &str, expected: &str) -> bool {
+    if expected == "murmur" {
+        return MURMUR_ALIASES.contains(&heard);
+    }
+    false
+}
+
+/// Compute Levenshtein edit distance between two strings.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let m = a.len();
+    let n = b.len();
+
+    // Early exit: if length difference alone exceeds threshold, skip full computation
+    if m.abs_diff(n) > 2 {
+        return m.abs_diff(n);
+    }
+
+    let mut prev: Vec<usize> = (0..=n).collect();
+    let mut curr = vec![0usize; n + 1];
+
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[n]
 }
 
 /// Open a cpal input stream that pushes 16 kHz mono samples into `buffer`.
@@ -339,7 +397,7 @@ pub fn check_and_strip_stop_phrase(text: &str, stop_phrase: &str) -> Option<Stri
             .zip(phrase_lower_words.iter())
             .all(|(tw, pw)| {
                 let pw_clean = pw.trim_matches(|c: char| c.is_ascii_punctuation());
-                tw == pw_clean
+                words_match(tw, pw_clean)
             });
 
         if matches {
@@ -361,51 +419,165 @@ mod tests {
 
     #[test]
     fn test_contains_phrase_basic() {
-        assert!(contains_phrase("hello murmur start please", "murmur start"));
-        assert!(contains_phrase("murmur start", "murmur start"));
-        assert!(!contains_phrase("hello world", "murmur start"));
+        assert!(contains_phrase(
+            "hello murmur start dictation please",
+            "murmur start dictation"
+        ));
+        assert!(contains_phrase(
+            "murmur start dictation",
+            "murmur start dictation"
+        ));
+        assert!(!contains_phrase("hello world", "murmur start dictation"));
     }
 
     #[test]
     fn test_contains_phrase_punctuation() {
-        assert!(contains_phrase("hello, murmur start.", "murmur start"));
-        assert!(contains_phrase("\"murmur start\"", "murmur start"));
+        assert!(contains_phrase(
+            "hello, murmur start dictation.",
+            "murmur start dictation"
+        ));
+        assert!(contains_phrase(
+            "\"murmur start dictation\"",
+            "murmur start dictation"
+        ));
     }
 
     #[test]
     fn test_contains_phrase_empty() {
         assert!(!contains_phrase("hello", ""));
-        assert!(!contains_phrase("", "murmur start"));
+        assert!(!contains_phrase("", "murmur start dictation"));
     }
 
     #[test]
     fn test_contains_phrase_partial() {
-        assert!(!contains_phrase("murmur", "murmur start"));
-        assert!(!contains_phrase("start", "murmur start"));
+        assert!(!contains_phrase("murmur", "murmur start dictation"));
+        assert!(!contains_phrase(
+            "start dictation",
+            "murmur start dictation"
+        ));
+    }
+
+    #[test]
+    fn test_contains_phrase_fuzzy_murmur() {
+        // Common Whisper mistranscriptions of "murmur"
+        assert!(contains_phrase(
+            "mama start dictation",
+            "murmur start dictation"
+        ));
+        assert!(contains_phrase(
+            "mirror start dictation",
+            "murmur start dictation"
+        ));
+        assert!(contains_phrase(
+            "murder start dictation",
+            "murmur start dictation"
+        ));
+        assert!(contains_phrase(
+            "murmer start dictation",
+            "murmur start dictation"
+        ));
+        // Too far away — should NOT match
+        assert!(!contains_phrase(
+            "banana start dictation",
+            "murmur start dictation"
+        ));
+        assert!(!contains_phrase(
+            "tomorrow start dictation",
+            "murmur start dictation"
+        ));
+    }
+
+    #[test]
+    fn test_contains_phrase_fuzzy_stop() {
+        assert!(contains_phrase(
+            "mama stop dictation",
+            "murmur stop dictation"
+        ));
+        assert!(contains_phrase(
+            "mirror stop dictation",
+            "murmur stop dictation"
+        ));
+    }
+
+    #[test]
+    fn test_edit_distance() {
+        assert_eq!(edit_distance("murmur", "murmur"), 0);
+        assert_eq!(edit_distance("murder", "murmur"), 2);
+        assert_eq!(edit_distance("murmer", "murmur"), 1);
+        assert_eq!(edit_distance("mama", "murmur"), 4);
+        assert_eq!(edit_distance("mirror", "murmur"), 3);
+        assert!(edit_distance("banana", "murmur") > 2);
+    }
+
+    #[test]
+    fn test_words_match_exact() {
+        assert!(words_match("start", "start"));
+        assert!(words_match("murmur", "murmur"));
+        assert!(!words_match("start", "stop"));
+    }
+
+    #[test]
+    fn test_words_match_fuzzy() {
+        // Known aliases
+        assert!(words_match("mama", "murmur"));
+        assert!(words_match("mirror", "murmur"));
+        assert!(words_match("mamma", "murmur"));
+        // Edit distance ≤ 2
+        assert!(words_match("murder", "murmur"));
+        assert!(words_match("murmer", "murmur"));
+        // Too different
+        assert!(!words_match("banana", "murmur"));
+        assert!(!words_match("number", "murmur"));
+    }
+
+    #[test]
+    fn test_is_known_alias() {
+        assert!(is_known_alias("mama", "murmur"));
+        assert!(is_known_alias("mirror", "murmur"));
+        assert!(!is_known_alias("mama", "start"));
+        assert!(!is_known_alias("banana", "murmur"));
     }
 
     #[test]
     fn test_check_and_strip_stop_phrase() {
-        let result = check_and_strip_stop_phrase("hello world murmur stop thanks", "murmur stop");
+        let result = check_and_strip_stop_phrase(
+            "hello world murmur stop dictation thanks",
+            "murmur stop dictation",
+        );
         assert_eq!(result, Some("hello world thanks".to_string()));
     }
 
     #[test]
     fn test_check_and_strip_stop_phrase_at_end() {
-        let result = check_and_strip_stop_phrase("hello world murmur stop", "murmur stop");
+        let result = check_and_strip_stop_phrase(
+            "hello world murmur stop dictation",
+            "murmur stop dictation",
+        );
         assert_eq!(result, Some("hello world".to_string()));
     }
 
     #[test]
     fn test_check_and_strip_stop_phrase_at_start() {
-        let result = check_and_strip_stop_phrase("murmur stop hello world", "murmur stop");
+        let result = check_and_strip_stop_phrase(
+            "murmur stop dictation hello world",
+            "murmur stop dictation",
+        );
         assert_eq!(result, Some("hello world".to_string()));
     }
 
     #[test]
     fn test_check_and_strip_stop_phrase_not_found() {
-        let result = check_and_strip_stop_phrase("hello world", "murmur stop");
+        let result = check_and_strip_stop_phrase("hello world", "murmur stop dictation");
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_check_and_strip_stop_phrase_fuzzy() {
+        let result = check_and_strip_stop_phrase(
+            "hello mama stop dictation thanks",
+            "murmur stop dictation",
+        );
+        assert_eq!(result, Some("hello thanks".to_string()));
     }
 
     #[test]

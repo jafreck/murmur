@@ -204,11 +204,11 @@ fn default_true() -> bool {
 }
 
 fn default_wake_word() -> String {
-    "murmur start".to_string()
+    "murmur start dictation".to_string()
 }
 
 fn default_stop_phrase() -> String {
-    "murmur stop".to_string()
+    "murmur stop dictation".to_string()
 }
 
 impl Default for Config {

@@ -4,6 +4,51 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::config::Config;
 
+/// Minimum audio duration in samples at 16 kHz.
+/// Clips shorter than this tend to produce hallucinated output.
+const MIN_AUDIO_SAMPLES: usize = 8_000; // 0.5 seconds
+
+/// RMS energy threshold below which audio is considered silence.
+const SILENCE_RMS_THRESHOLD: f32 = 0.01;
+
+/// Phrases commonly hallucinated by Whisper on silence or near-silence.
+const HALLUCINATED_PHRASES: &[&str] = &[
+    "the following",
+    "thank you",
+    "thanks for watching",
+    "thank you for watching",
+    "thanks for listening",
+    "thank you for listening",
+    "like and subscribe",
+    "please subscribe",
+    "subscribe",
+    "goodbye",
+    "bye bye",
+    "bye",
+    "you",
+];
+
+/// Return true if audio samples are effectively silence.
+fn is_silent(samples: &[f32]) -> bool {
+    if samples.is_empty() {
+        return true;
+    }
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+    rms < SILENCE_RMS_THRESHOLD
+}
+
+/// Return true if text matches a known Whisper hallucination pattern.
+fn is_hallucination(text: &str) -> bool {
+    let normalized = text
+        .trim()
+        .trim_matches(|c: char| c.is_ascii_punctuation())
+        .to_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    HALLUCINATED_PHRASES.iter().any(|&h| normalized == h)
+}
+
 pub struct Transcriber {
     ctx: WhisperContext,
     language: String,
@@ -72,6 +117,20 @@ impl Transcriber {
             return Ok(String::new());
         }
 
+        if samples.len() < MIN_AUDIO_SAMPLES {
+            log::debug!(
+                "Audio too short ({} samples, need {}), skipping",
+                samples.len(),
+                MIN_AUDIO_SAMPLES
+            );
+            return Ok(String::new());
+        }
+
+        if is_silent(samples) {
+            log::debug!("Audio is silence, skipping transcription");
+            return Ok(String::new());
+        }
+
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_language(self.language_param());
         params.set_translate(translate);
@@ -79,6 +138,7 @@ impl Transcriber {
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+        params.set_suppress_nst(true);
 
         let mut state = self
             .ctx
@@ -103,7 +163,14 @@ impl Transcriber {
             }
         }
 
-        Ok(text.trim().to_string())
+        let text = text.trim().to_string();
+
+        if is_hallucination(&text) {
+            log::debug!("Filtered hallucinated text: '{text}'");
+            return Ok(String::new());
+        }
+
+        Ok(text)
     }
 }
 
@@ -331,5 +398,69 @@ mod tests {
     fn test_model_exists_consistent_with_find_model() {
         let size = "nonexistent_test_model_xyz";
         assert_eq!(model_exists(size), find_model(size).is_some());
+    }
+
+    // -- is_silent --
+
+    #[test]
+    fn test_is_silent_zeros() {
+        assert!(is_silent(&vec![0.0f32; 16000]));
+    }
+
+    #[test]
+    fn test_is_silent_low_noise() {
+        assert!(is_silent(&vec![0.001f32; 16000]));
+    }
+
+    #[test]
+    fn test_is_silent_loud() {
+        assert!(!is_silent(&vec![0.5f32; 16000]));
+    }
+
+    #[test]
+    fn test_is_silent_empty() {
+        assert!(is_silent(&[]));
+    }
+
+    #[test]
+    fn test_is_silent_threshold_boundary() {
+        let below = SILENCE_RMS_THRESHOLD * 0.9;
+        assert!(is_silent(&vec![below; 1000]));
+        let above = SILENCE_RMS_THRESHOLD * 1.1;
+        assert!(!is_silent(&vec![above; 1000]));
+    }
+
+    // -- is_hallucination --
+
+    #[test]
+    fn test_is_hallucination_known_phrases() {
+        assert!(is_hallucination("The following:"));
+        assert!(is_hallucination("Thank you."));
+        assert!(is_hallucination("  thanks for watching  "));
+        assert!(is_hallucination("Goodbye."));
+        assert!(is_hallucination("you"));
+        assert!(is_hallucination("Bye."));
+    }
+
+    #[test]
+    fn test_is_hallucination_real_speech() {
+        assert!(!is_hallucination("Hello, my name is Jacob"));
+        assert!(!is_hallucination("The following steps are important"));
+        assert!(!is_hallucination("Thank you for your help with the code"));
+    }
+
+    #[test]
+    fn test_is_hallucination_empty() {
+        assert!(!is_hallucination(""));
+        assert!(!is_hallucination("   "));
+    }
+
+    // -- constants --
+
+    #[test]
+    fn test_constants() {
+        const { assert!(MIN_AUDIO_SAMPLES > 0) };
+        const { assert!(SILENCE_RMS_THRESHOLD > 0.0) };
+        assert!(!HALLUCINATED_PHRASES.is_empty());
     }
 }

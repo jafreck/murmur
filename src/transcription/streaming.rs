@@ -110,6 +110,16 @@ fn streaming_loop(
     // The exact text currently on screen from streaming emissions.
     let mut emitted_text = String::new();
 
+    // Create a single WhisperState up-front and reuse it across
+    // iterations to avoid per-call KV-cache allocation overhead.
+    let mut whisper_state = match transcriber.create_streaming_state() {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Failed to create whisper state for streaming: {e}");
+            return;
+        }
+    };
+
     loop {
         match stop_rx.try_recv() {
             Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
@@ -146,14 +156,15 @@ fn streaming_loop(
             continue;
         }
 
-        let mut full_text = match transcriber.transcribe_samples(&window, translate) {
-            Ok(t) => t,
-            Err(e) => {
-                log::error!("Streaming transcription failed: {e}");
-                last_transcribed = total_samples;
-                continue;
-            }
-        };
+        let mut full_text =
+            match transcriber.streaming_transcribe(&mut whisper_state, &window, translate) {
+                Ok(t) => t,
+                Err(e) => {
+                    log::error!("Streaming transcription failed: {e}");
+                    last_transcribed = total_samples;
+                    continue;
+                }
+            };
 
         // Re-read the current buffer position so the min-new-audio threshold
         // is relative to *now*, not to when this transcription started.

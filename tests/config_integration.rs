@@ -4,7 +4,8 @@
 mod helpers;
 
 use murmur::config::{
-    is_valid_language, language_name, Config, InputMode, SUPPORTED_LANGUAGES, SUPPORTED_MODELS,
+    is_valid_language, language_name, AppContextConfig, Config, DictationMode, InputMode,
+    SUPPORTED_LANGUAGES, SUPPORTED_MODELS,
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -44,6 +45,8 @@ fn custom_config_round_trip() {
         mode: InputMode::OpenMic,
         streaming: true,
         translate_to_english: true,
+        vocabulary: vec!["test".to_string()],
+        ..Config::default()
     };
     config.save_to(&path).unwrap();
 
@@ -56,6 +59,7 @@ fn custom_config_round_trip() {
     assert_eq!(loaded.mode, InputMode::OpenMic);
     assert!(loaded.streaming);
     assert!(loaded.translate_to_english);
+    assert_eq!(loaded.vocabulary, vec!["test"]);
 }
 
 #[test]
@@ -189,6 +193,7 @@ fn config_to_state_and_back() {
         mode: InputMode::OpenMic,
         streaming: true,
         translate_to_english: true,
+        ..Config::default()
     };
 
     let state = AppState::new(&original);
@@ -221,6 +226,7 @@ fn config_save_load_then_state_round_trip() {
         mode: InputMode::PushToTalk,
         streaming: false,
         translate_to_english: false,
+        ..Config::default()
     };
 
     original.save_to(&path).unwrap();
@@ -336,4 +342,187 @@ fn effective_max_recordings_values() {
     // Positive values are passed through
     assert_eq!(Config::effective_max_recordings(5), 5);
     assert_eq!(Config::effective_max_recordings(1), 1);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  Vocabulary & app context features
+// ═══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn vocab_file_round_trip() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let vocab_content = "# Project vocabulary\nKubernetes\nkubectl\n\n# More terms\nhelm\n";
+    std::fs::write(tmp.path().join(".murmur-vocab"), vocab_content).unwrap();
+
+    let terms = Config::load_vocab_file(tmp.path());
+    assert_eq!(terms, vec!["Kubernetes", "kubectl", "helm"]);
+}
+
+#[test]
+fn effective_vocabulary_merges_all_sources() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(tmp.path().join(".murmur-vocab"), "file_term\n").unwrap();
+
+    let mut app_contexts = std::collections::HashMap::new();
+    app_contexts.insert(
+        "com.terminal".to_string(),
+        AppContextConfig {
+            vocabulary: vec!["app_term".to_string()],
+            mode: None,
+        },
+    );
+
+    let cfg = Config {
+        vocabulary: vec!["global_term".to_string()],
+        app_contexts,
+        ..Config::default()
+    };
+
+    let vocab = cfg.effective_vocabulary(Some("com.terminal"), Some(tmp.path()));
+    assert_eq!(vocab, vec!["global_term", "app_term", "file_term"]);
+}
+
+#[test]
+fn effective_vocabulary_deduplicates() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(tmp.path().join(".murmur-vocab"), "shared\n").unwrap();
+
+    let mut app_contexts = std::collections::HashMap::new();
+    app_contexts.insert(
+        "app".to_string(),
+        AppContextConfig {
+            vocabulary: vec!["shared".to_string()],
+            mode: None,
+        },
+    );
+
+    let cfg = Config {
+        vocabulary: vec!["shared".to_string()],
+        app_contexts,
+        ..Config::default()
+    };
+
+    let vocab = cfg.effective_vocabulary(Some("app"), Some(tmp.path()));
+    assert_eq!(vocab, vec!["shared"]);
+}
+
+#[test]
+fn app_exclusion_integration() {
+    let cfg = Config {
+        excluded_apps: vec!["com.1password".to_string(), "com.chase.mobile".to_string()],
+        ..Config::default()
+    };
+
+    assert!(cfg.is_app_excluded("com.1password"));
+    assert!(cfg.is_app_excluded("com.chase.mobile"));
+    assert!(!cfg.is_app_excluded("com.apple.notes"));
+}
+
+#[test]
+fn dictation_mode_app_override_integration() {
+    let mut app_contexts = std::collections::HashMap::new();
+    app_contexts.insert(
+        "com.terminal".to_string(),
+        AppContextConfig {
+            vocabulary: Vec::new(),
+            mode: Some(DictationMode::Command),
+        },
+    );
+    app_contexts.insert(
+        "com.notes".to_string(),
+        AppContextConfig {
+            vocabulary: Vec::new(),
+            mode: None,
+        },
+    );
+
+    let cfg = Config {
+        dictation_mode: DictationMode::Prose,
+        app_contexts,
+        ..Config::default()
+    };
+
+    assert_eq!(cfg.effective_dictation_mode(None), DictationMode::Prose);
+    assert_eq!(
+        cfg.effective_dictation_mode(Some("com.terminal")),
+        DictationMode::Command
+    );
+    assert_eq!(
+        cfg.effective_dictation_mode(Some("com.notes")),
+        DictationMode::Prose
+    );
+    assert_eq!(
+        cfg.effective_dictation_mode(Some("com.unknown")),
+        DictationMode::Prose
+    );
+}
+
+#[test]
+fn full_config_with_vocabulary_save_load() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("config.json");
+
+    let mut app_contexts = std::collections::HashMap::new();
+    app_contexts.insert(
+        "com.vscode".to_string(),
+        AppContextConfig {
+            vocabulary: vec!["rustfmt".to_string(), "clippy".to_string()],
+            mode: Some(DictationMode::Code),
+        },
+    );
+
+    let cfg = Config {
+        hotkey: "f10".to_string(),
+        model_size: "small.en".to_string(),
+        language: "en".to_string(),
+        spoken_punctuation: false,
+        max_recordings: 0,
+        mode: InputMode::PushToTalk,
+        streaming: false,
+        translate_to_english: false,
+        vocabulary: vec!["murmur".to_string(), "whisper".to_string()],
+        app_contexts,
+        excluded_apps: vec!["com.1password".to_string()],
+        dictation_mode: DictationMode::Prose,
+    };
+    cfg.save_to(&path).unwrap();
+
+    let loaded = Config::load_from(&path);
+    assert_eq!(loaded.vocabulary, vec!["murmur", "whisper"]);
+    assert_eq!(loaded.excluded_apps, vec!["com.1password"]);
+    assert_eq!(loaded.dictation_mode, DictationMode::Prose);
+
+    let vscode = loaded.app_contexts.get("com.vscode").unwrap();
+    assert_eq!(vscode.vocabulary, vec!["rustfmt", "clippy"]);
+    assert_eq!(vscode.mode, Some(DictationMode::Code));
+
+    // Verify effective vocabulary merges correctly
+    let vocab = loaded.effective_vocabulary(Some("com.vscode"), None);
+    assert_eq!(vocab, vec!["murmur", "whisper", "rustfmt", "clippy"]);
+}
+
+#[test]
+fn backward_compat_old_config_loads_with_defaults() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let path = tmp.path().join("config.json");
+
+    // Write a config without any of the new fields
+    let old_json = r#"{
+        "hotkey": "f5",
+        "model_size": "base.en",
+        "language": "en",
+        "spoken_punctuation": false,
+        "max_recordings": 0,
+        "mode": "push_to_talk",
+        "streaming": false,
+        "translate_to_english": false
+    }"#;
+    std::fs::write(&path, old_json).unwrap();
+
+    let loaded = Config::load_from(&path);
+    assert_eq!(loaded.hotkey, "f5");
+    assert!(loaded.vocabulary.is_empty());
+    assert!(loaded.app_contexts.is_empty());
+    assert!(loaded.excluded_apps.is_empty());
+    assert_eq!(loaded.dictation_mode, DictationMode::Prose);
 }

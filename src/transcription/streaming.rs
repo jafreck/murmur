@@ -153,7 +153,15 @@ fn streaming_loop(
             }
         };
 
-        last_transcribed = total_samples;
+        // Re-read the current buffer position so the min-new-audio threshold
+        // is relative to *now*, not to when this transcription started.
+        // Without this, audio that accumulated during a slow transcription
+        // immediately triggers another (even larger) transcription, creating
+        // a snowball effect that falls further and further behind real-time.
+        last_transcribed = match sample_buffer.lock() {
+            Ok(b) => b.len(),
+            Err(e) => e.into_inner().len(),
+        };
 
         if full_text.is_empty() {
             continue;

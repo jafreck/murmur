@@ -263,20 +263,28 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
 
     let (streaming_tx, streaming_rx) = mpsc::channel::<streaming::StreamingEvent>();
 
-    // Forward streaming events to app messages
+    // Forward streaming events to app messages, coalescing any stale
+    // events that queued up while the app was busy.  We keep the
+    // `replace_chars` from the first (oldest) event in the batch —
+    // it reflects what is actually on screen — and the `text` from
+    // the last (newest) event.
     std::thread::spawn(move || {
         while let Ok(event) = streaming_rx.recv() {
-            match event {
-                streaming::StreamingEvent::PartialText {
-                    text,
-                    replace_chars,
-                } => {
-                    let _ = tx_app.send(AppMessage::StreamingPartialText {
-                        text,
-                        replace_chars,
-                    });
-                }
+            let streaming::StreamingEvent::PartialText {
+                mut text,
+                replace_chars,
+            } = event;
+
+            // Drain any newer events that arrived while we blocked.
+            while let Ok(newer) = streaming_rx.try_recv() {
+                let streaming::StreamingEvent::PartialText { text: t, .. } = newer;
+                text = t;
             }
+
+            let _ = tx_app.send(AppMessage::StreamingPartialText {
+                text,
+                replace_chars,
+            });
         }
     });
 

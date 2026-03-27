@@ -118,7 +118,10 @@ fn streaming_loop(
             Err(mpsc::TryRecvError::Empty) => {}
         }
 
-        let total_samples = sample_buffer.lock().map(|b| b.len()).unwrap_or(0);
+        let total_samples = match sample_buffer.lock() {
+            Ok(b) => b.len(),
+            Err(e) => e.into_inner().len(),
+        };
 
         if total_samples < last_transcribed + min_new_samples {
             std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
@@ -131,7 +134,7 @@ fn streaming_loop(
         }
 
         let window: Vec<f32> = {
-            let buf = sample_buffer.lock().unwrap();
+            let buf = sample_buffer.lock().unwrap_or_else(|e| e.into_inner());
             buf[anchor..total_samples].to_vec()
         };
 

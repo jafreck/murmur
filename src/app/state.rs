@@ -84,9 +84,12 @@ pub struct AppState {
     pub model_size: String,
     pub language: String,
     /// True while a streaming session is actively inserting partial text.
-    /// When set, the final full-transcription result is suppressed to
-    /// avoid duplicating text that was already inserted incrementally.
+    /// When set, the final full-transcription result replaces the
+    /// streaming text (via StreamingReplace) instead of appending.
     pub streaming_active: bool,
+    /// Number of characters currently on screen from streaming emissions.
+    /// Used to backspace-replace with the final transcription result.
+    pub streaming_chars_emitted: usize,
     /// Monotonic counter incremented on each ReloadTranscriber request.
     /// Used to discard stale transcriber loads when the user changes
     /// model/language multiple times quickly.
@@ -109,6 +112,7 @@ impl AppState {
             model_size: config.model_size.clone(),
             language: config.language.clone(),
             streaming_active: false,
+            streaming_chars_emitted: 0,
             reload_generation: 0,
             capturing_hotkey: false,
         }
@@ -151,6 +155,7 @@ impl AppState {
                 replace_chars,
             } => {
                 if *replace_chars > 0 || !text.is_empty() {
+                    self.streaming_chars_emitted = text.chars().count();
                     vec![AppEffect::StreamingReplace {
                         text: text.clone(),
                         replace_chars: *replace_chars,
@@ -165,6 +170,7 @@ impl AppState {
     fn start_recording_effects(&mut self) -> Vec<AppEffect> {
         self.is_pressed = true;
         self.streaming_active = self.streaming;
+        self.streaming_chars_emitted = 0;
         let path = self.recording_output_path();
         let mut effects = vec![AppEffect::StartRecording(path)];
         if self.streaming {
@@ -217,18 +223,25 @@ impl AppState {
 
     fn on_transcription_done(&mut self, text: &str) -> Vec<AppEffect> {
         let was_streaming = self.streaming_active;
-        // Only clear streaming flag if not currently recording (result may be from a previous cycle)
+        let streamed_chars = self.streaming_chars_emitted;
+        // Only clear streaming state if not currently recording (result may be from a previous cycle)
         if !self.is_pressed {
             self.streaming_active = false;
+            self.streaming_chars_emitted = 0;
         }
 
         let mut effects = vec![];
         if !text.is_empty() {
             // Text arrives already postprocessed (spoken punctuation applied
             // by the background transcription thread or streaming loop).
-            // When streaming was active, partial text was already inserted
-            // incrementally — skip re-inserting the full transcription.
-            if !was_streaming {
+            if was_streaming && streamed_chars > 0 {
+                // Streaming already inserted partial text. Replace it with
+                // the final (more complete and accurate) full transcription.
+                effects.push(AppEffect::StreamingReplace {
+                    text: text.to_string(),
+                    replace_chars: streamed_chars,
+                });
+            } else if !was_streaming {
                 effects.push(AppEffect::InsertText(text.to_string()));
             }
             self.last_transcription = Some(text.to_string());
@@ -355,6 +368,7 @@ mod tests {
             model_size: "base.en".to_string(),
             language: "en".to_string(),
             streaming_active: false,
+            streaming_chars_emitted: 0,
             reload_generation: 0,
             capturing_hotkey: false,
         }
@@ -693,18 +707,25 @@ mod tests {
     }
 
     #[test]
-    fn transcription_done_skips_insert_when_streaming_was_active() {
+    fn transcription_done_replaces_streaming_text_with_final() {
         let mut state = default_state();
         state.streaming_active = true;
+        state.streaming_chars_emitted = 9; // "hello wor" was on screen
         let effects =
             state.handle_message(&AppMessage::TranscriptionDone("hello world".to_string()));
-        // Should NOT contain InsertText since streaming already inserted incrementally
+        // Should replace the streaming text with the final transcription
+        assert!(effects.iter().any(|e| matches!(
+            e, AppEffect::StreamingReplace { text, replace_chars }
+            if text == "hello world" && *replace_chars == 9
+        )));
+        // Should NOT contain InsertText (replaced via StreamingReplace)
         assert!(!effects
             .iter()
             .any(|e| matches!(e, AppEffect::InsertText(_))));
-        // But should still save last_transcription for copy-last
+        // Should still save last_transcription for copy-last
         assert_eq!(state.last_transcription, Some("hello world".to_string()));
         assert!(!state.streaming_active);
+        assert_eq!(state.streaming_chars_emitted, 0);
     }
 
     #[test]
@@ -899,6 +920,23 @@ mod tests {
     }
 
     // -- Transcription results during recording --
+
+    #[test]
+    fn streaming_partial_text_tracks_emitted_chars() {
+        let mut state = default_state();
+        state.handle_message(&AppMessage::StreamingPartialText {
+            text: "hello".to_string(),
+            replace_chars: 0,
+        });
+        assert_eq!(state.streaming_chars_emitted, 5);
+
+        // Second partial replaces with longer text
+        state.handle_message(&AppMessage::StreamingPartialText {
+            text: "hello world".to_string(),
+            replace_chars: 5,
+        });
+        assert_eq!(state.streaming_chars_emitted, 11);
+    }
 
     #[test]
     fn transcription_done_during_recording_does_not_reset_tray() {

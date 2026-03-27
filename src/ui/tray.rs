@@ -228,13 +228,9 @@ pub struct TrayController {
     language_entries: Vec<RadioEntry<String>>,
     mode_entries: Vec<RadioEntry<InputMode>>,
 
-    #[allow(dead_code)]
     spoken_punct_item: CheckMenuItem,
-    #[allow(dead_code)]
     filler_removal_item: CheckMenuItem,
-    #[allow(dead_code)]
     streaming_item: CheckMenuItem,
-    #[allow(dead_code)]
     translate_item: CheckMenuItem,
 
     status_item: MenuItem,
@@ -450,6 +446,21 @@ impl TrayController {
 
     pub fn set_status(&mut self, text: &str) {
         self.status_item.set_text(text);
+    }
+
+    /// Sync all tray UI elements to match the given config.
+    /// Used after reloading config from disk.
+    pub fn sync_config(&mut self, config: &Config) {
+        self.set_model(&config.model_size);
+        self.set_language(&config.language);
+        self.set_mode(&config.mode);
+        self.set_hotkey(&config.hotkey);
+        self.spoken_punct_item
+            .set_checked(config.spoken_punctuation);
+        self.filler_removal_item
+            .set_checked(config.filler_word_removal);
+        self.streaming_item.set_checked(config.streaming);
+        self.translate_item.set_checked(config.translate_to_english);
     }
 
     pub fn match_menu_event(&self, event: &MenuEvent) -> Option<TrayAction> {

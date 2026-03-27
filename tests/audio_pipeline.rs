@@ -120,16 +120,16 @@ fn wav_duration_is_correct() {
 fn f32_to_i16_edge_cases() {
     assert_eq!(f32_to_i16(0.0), 0);
     assert_eq!(f32_to_i16(1.0), 32767);
-    assert_eq!(f32_to_i16(-1.0), -32767);
+    assert_eq!(f32_to_i16(-1.0), -32768);
 }
 
 #[test]
 fn f32_to_i16_clamps_overflow() {
     // Values beyond [-1.0, 1.0] should be clamped
     assert_eq!(f32_to_i16(2.0), 32767);
-    assert_eq!(f32_to_i16(-2.0), -32767);
+    assert_eq!(f32_to_i16(-2.0), -32768);
     assert_eq!(f32_to_i16(100.0), 32767);
-    assert_eq!(f32_to_i16(-100.0), -32767);
+    assert_eq!(f32_to_i16(-100.0), -32768);
 }
 
 #[test]

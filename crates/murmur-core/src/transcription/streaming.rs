@@ -121,6 +121,9 @@ fn streaming_loop(
     // The exact text currently on screen from streaming emissions.
     let mut emitted_text = String::new();
 
+    // Pre-allocate the window buffer to avoid per-iteration heap allocations.
+    let mut window: Vec<f32> = Vec::with_capacity(max_window_samples);
+
     // Create a single WhisperState up-front and reuse it across
     // iterations to avoid per-call KV-cache allocation overhead.
     let mut whisper_state = match transcriber.create_streaming_state() {
@@ -152,10 +155,12 @@ fn streaming_loop(
             anchor = total_samples - max_window_samples;
         }
 
-        let window: Vec<f32> = {
+        // Reuse the pre-allocated buffer instead of allocating each iteration.
+        window.clear();
+        {
             let buf = sample_buffer.lock().unwrap_or_else(|e| e.into_inner());
-            buf[anchor..total_samples].to_vec()
-        };
+            window.extend_from_slice(&buf[anchor..total_samples]);
+        }
 
         // Only run VAD on audio that arrived since the last transcription,
         // not the full window. This avoids redundant Silero inference on

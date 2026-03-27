@@ -19,8 +19,11 @@ const WINDOW_SECS: f32 = 3.0;
 /// Samples in one detection window.
 const WINDOW_SAMPLES: usize = (TARGET_RATE as f32 * WINDOW_SECS) as usize;
 
-/// How often to check for speech (milliseconds).
+/// How often to check for speech (milliseconds) — base interval.
 const POLL_INTERVAL_MS: u64 = 300;
+
+/// Maximum poll interval after sustained silence (exponential backoff).
+const MAX_POLL_INTERVAL_MS: u64 = 1200;
 
 /// Minimum silence gap between detections to avoid re-triggering.
 const COOLDOWN_MS: u64 = 2000;
@@ -132,6 +135,11 @@ fn detector_thread(
         .checked_sub(std::time::Duration::from_millis(COOLDOWN_MS * 2))
         .unwrap_or_else(std::time::Instant::now);
 
+    // Adaptive poll interval: starts at POLL_INTERVAL_MS and backs off
+    // when consecutive polls find no speech, up to MAX_POLL_INTERVAL_MS.
+    // Resets to base on speech detection.
+    let mut current_poll_ms = POLL_INTERVAL_MS;
+
     loop {
         // Check for stop signal
         match stop_rx.try_recv() {
@@ -141,7 +149,7 @@ fn detector_thread(
 
         // Skip if paused
         if paused.load(Ordering::Relaxed) {
-            std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+            std::thread::sleep(std::time::Duration::from_millis(current_poll_ms));
             continue;
         }
 
@@ -150,7 +158,7 @@ fn detector_thread(
             let buf = ring_buffer.lock().unwrap_or_else(|e| e.into_inner());
             if buf.len() < WINDOW_SAMPLES {
                 drop(buf);
-                std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+                std::thread::sleep(std::time::Duration::from_millis(current_poll_ms));
                 continue;
             }
             // Take the most recent window
@@ -169,13 +177,18 @@ fn detector_thread(
 
         // Only transcribe if VAD detects speech
         if !vad::contains_speech(&samples) {
-            std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+            // Back off: increase poll interval on consecutive silence
+            current_poll_ms = (current_poll_ms * 3 / 2).min(MAX_POLL_INTERVAL_MS);
+            std::thread::sleep(std::time::Duration::from_millis(current_poll_ms));
             continue;
         }
 
+        // Speech detected — reset to base poll interval
+        current_poll_ms = POLL_INTERVAL_MS;
+
         // Cooldown check
         if last_detection.elapsed() < std::time::Duration::from_millis(COOLDOWN_MS) {
-            std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+            std::thread::sleep(std::time::Duration::from_millis(current_poll_ms));
             continue;
         }
 
@@ -204,7 +217,7 @@ fn detector_thread(
             }
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+        std::thread::sleep(std::time::Duration::from_millis(current_poll_ms));
     }
 
     log::info!("Wake word detector stopped");

@@ -54,6 +54,9 @@ voice_activity_detector = "0.2"
 # Logging
 log = "0.4"
 env_logger = "0.11"
+
+# Noise suppression (pure Rust RNNoise port)
+nnnoiseless = "0.5"
 png = "0.18.1"
 
 # macOS: Cocoa event loop for system tray (already transitive deps of tray-icon)

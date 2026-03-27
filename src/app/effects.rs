@@ -144,6 +144,13 @@ pub fn apply_effect(
                 TrayState::Loading
             });
         }
+        AppEffect::UpdateNoiseSuppression(enabled) => {
+            ctx.recorder.set_noise_suppression(enabled);
+            info!(
+                "Noise suppression {}",
+                if enabled { "enabled" } else { "disabled" }
+            );
+        }
         AppEffect::Quit => {
             info!("Quit requested via tray");
             return Ok((true, vec![]));

@@ -32,6 +32,7 @@ pub enum TrayAction {
     SetMode(InputMode),
     ToggleStreaming,
     ToggleTranslate,
+    ToggleNoiseSuppression,
     SetHotkey,
     OpenConfig,
     ReloadConfig,
@@ -75,6 +76,7 @@ pub struct MenuActionIds {
     pub filler_removal: MenuId,
     pub streaming: MenuId,
     pub translate: MenuId,
+    pub noise_suppression: MenuId,
     pub set_hotkey: MenuId,
 }
 
@@ -88,6 +90,7 @@ pub struct MenuActionMap {
     filler_removal_id: MenuId,
     streaming_id: MenuId,
     translate_id: MenuId,
+    noise_suppression_id: MenuId,
     set_hotkey_id: MenuId,
     model_ids: Vec<(MenuId, String)>,
     language_ids: Vec<(MenuId, String)>,
@@ -110,6 +113,7 @@ impl MenuActionMap {
             filler_removal_id: ids.filler_removal,
             streaming_id: ids.streaming,
             translate_id: ids.translate,
+            noise_suppression_id: ids.noise_suppression,
             set_hotkey_id: ids.set_hotkey,
             model_ids,
             language_ids,
@@ -141,6 +145,9 @@ impl MenuActionMap {
         }
         if event_id == &self.translate_id {
             return Some(TrayAction::ToggleTranslate);
+        }
+        if event_id == &self.noise_suppression_id {
+            return Some(TrayAction::ToggleNoiseSuppression);
         }
         if event_id == &self.set_hotkey_id {
             return Some(TrayAction::SetHotkey);
@@ -228,14 +235,12 @@ pub struct TrayController {
     language_entries: Vec<RadioEntry<String>>,
     mode_entries: Vec<RadioEntry<InputMode>>,
 
-    #[allow(dead_code)]
     spoken_punct_item: CheckMenuItem,
-    #[allow(dead_code)]
     filler_removal_item: CheckMenuItem,
-    #[allow(dead_code)]
     streaming_item: CheckMenuItem,
-    #[allow(dead_code)]
     translate_item: CheckMenuItem,
+    #[allow(dead_code)]
+    noise_suppression_item: CheckMenuItem,
 
     status_item: MenuItem,
     hotkey_item: MenuItem,
@@ -312,6 +317,10 @@ impl TrayController {
         );
         let translate_id = translate_item.id().clone();
 
+        let noise_suppression_item =
+            CheckMenuItem::new("Noise Suppression", true, config.noise_suppression, None);
+        let noise_suppression_id = noise_suppression_item.id().clone();
+
         let open_config = MenuItem::new("Open Config…", true, None);
         let open_config_id = open_config.id().clone();
         let reload_config = MenuItem::new("Reload Config", true, None);
@@ -335,6 +344,7 @@ impl TrayController {
         menu.append(&mode_submenu)?;
         menu.append(&streaming_item)?;
         menu.append(&translate_item)?;
+        menu.append(&noise_suppression_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&open_config)?;
         menu.append(&reload_config)?;
@@ -351,6 +361,7 @@ impl TrayController {
                 filler_removal: filler_removal_id,
                 streaming: streaming_id,
                 translate: translate_id,
+                noise_suppression: noise_suppression_id,
                 set_hotkey: set_hotkey_id,
             },
             model_ids,
@@ -397,6 +408,7 @@ impl TrayController {
             filler_removal_item,
             streaming_item,
             translate_item,
+            noise_suppression_item,
             status_item,
             hotkey_item,
             idle_icon,
@@ -463,6 +475,21 @@ impl TrayController {
 
     pub fn set_status(&mut self, text: &str) {
         self.status_item.set_text(text);
+    }
+
+    /// Sync all tray UI elements to match the given config.
+    /// Used after reloading config from disk.
+    pub fn sync_config(&mut self, config: &Config) {
+        self.set_model(&config.model_size);
+        self.set_language(&config.language);
+        self.set_mode(&config.mode);
+        self.set_hotkey(&config.hotkey);
+        self.spoken_punct_item
+            .set_checked(config.spoken_punctuation);
+        self.filler_removal_item
+            .set_checked(config.filler_word_removal);
+        self.streaming_item.set_checked(config.streaming);
+        self.translate_item.set_checked(config.translate_to_english);
     }
 
     pub fn match_menu_event(&self, event: &MenuEvent) -> Option<TrayAction> {
@@ -709,6 +736,7 @@ mod tests {
             filler_removal: MenuId::new("fr"),
             streaming: MenuId::new("st"),
             translate: MenuId::new("tr"),
+            noise_suppression: MenuId::new("ns"),
             set_hotkey: MenuId::new("sh"),
         }
     }

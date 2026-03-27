@@ -271,8 +271,8 @@ fn golden_pipeline_silence_fast_path() {
     let per_call = elapsed / BENCH_ITERS as u32;
 
     assert!(
-        per_call < Duration::from_millis(VAD_SILENCE_BUDGET_MS),
-        "Full silence pipeline took {per_call:?} per call (budget: {VAD_SILENCE_BUDGET_MS}ms)"
+        per_call < Duration::from_millis(15),
+        "Full silence pipeline took {per_call:?} per call (budget: 15ms)"
     );
 }
 

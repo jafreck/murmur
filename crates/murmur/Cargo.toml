@@ -1,0 +1,46 @@
+[package]
+name = "murmur"
+version = "0.1.1"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cross-platform, local voice dictation. Worry free speech to text. Powered by whisper.cpp, runs 100% on-device."
+readme = "../../README.md"
+keywords = ["whisper", "dictation", "voice", "speech-to-text"]
+categories = ["multimedia::audio"]
+
+[dependencies]
+murmur-core = { version = "0.1.1", path = "../murmur-core" }
+tray-icon = "0.21"
+rdev = "0.5"
+arboard = "3"
+enigo = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+png = "0.18.1"
+whisper-rs = "0.16"
+regex = "1"
+dirs = "6"
+cpal = "0.17"
+eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+egui = "0.33"
+chrono = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSRunningApplication", "NSEvent", "NSWorkspace", "NSWindow"] }
+objc2-foundation = { version = "0.3", features = ["NSDate", "NSRunLoop"] }
+objc2 = "0.6"
+
+[features]
+default = []
+cuda = ["murmur-core/cuda"]
+metal = ["murmur-core/metal"]
+vulkan = ["murmur-core/vulkan"]
+
+[dev-dependencies]
+tempfile = "3"
+hound = "3.5"

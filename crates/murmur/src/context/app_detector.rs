@@ -4,8 +4,8 @@
 //! - **Linux**: xdotool (X11) or xprop fallback
 //! - **Windows**: GetForegroundWindow + GetWindowTextW + QueryFullProcessImageNameW
 
-use super::provider::{Context, ContextProvider, DictationMode};
-use super::title_analyzer;
+use murmur_core::context::title_analyzer;
+use murmur_core::context::{Context, ContextProvider, DictationMode};
 
 /// Detects the currently focused application on the host OS.
 pub struct AppDetector;

@@ -2795,18 +2795,36 @@ dependencies = [
  "env_logger",
  "hound",
  "log",
- "nnnoiseless",
+ "murmur-core",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "png 0.18.1",
  "rdev",
  "regex",
- "reqwest",
  "serde",
  "serde_json",
  "tempfile",
  "tray-icon",
+ "whisper-rs",
+]
+
+[[package]]
+name = "murmur-core"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "cpal",
+ "dirs",
+ "hound",
+ "log",
+ "nnnoiseless",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
  "voice_activity_detector",
  "whisper-rs",
 ]

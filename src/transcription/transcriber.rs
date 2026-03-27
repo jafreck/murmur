@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{
+    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
+};
 
 use crate::config::Config;
 use crate::transcription::vad;
@@ -297,6 +299,61 @@ impl Transcriber {
         self.run_inference_with_context(samples, translate, Some(context))
     }
 
+    // ── Streaming-optimised API ────────────────────────────────────────
+
+    /// Create a reusable `WhisperState` for streaming.
+    ///
+    /// Creating a state involves allocating KV caches and other internal
+    /// buffers. Reusing one across streaming iterations avoids that
+    /// per-call overhead.
+    pub fn create_streaming_state(&self) -> Result<WhisperState> {
+        self.ctx
+            .create_state()
+            .map_err(|e| anyhow::anyhow!("Failed to create whisper state: {e}"))
+    }
+
+    /// Run a single streaming transcription pass.
+    ///
+    /// Unlike [`transcribe_samples`], this method:
+    /// - reuses a caller-provided [`WhisperState`] (no per-call allocation),
+    /// - skips VAD and min-length checks (the streaming loop handles those),
+    /// - enables `single_segment` mode (skips segment-boundary detection),
+    /// - enables `no_context` (each pass re-transcribes the full window).
+    pub fn streaming_transcribe(
+        &self,
+        state: &mut WhisperState,
+        samples: &[f32],
+        translate: bool,
+    ) -> Result<String> {
+        if samples.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        params.set_language(self.language_param());
+        params.set_translate(translate);
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        params.set_suppress_nst(true);
+        params.set_single_segment(true);
+        params.set_no_context(true);
+
+        state
+            .full(params, samples)
+            .map_err(|e| anyhow::anyhow!("Transcription failed: {e}"))?;
+
+        let text = self.extract_text(state);
+
+        if is_hallucination(&text) {
+            log::debug!("Filtered hallucinated text: '{text}'");
+            return Ok(String::new());
+        }
+
+        Ok(text)
+    }
+
     fn run_inference(&self, samples: &[f32], translate: bool) -> Result<String> {
         self.run_inference_with_context(samples, translate, None)
     }
@@ -387,9 +444,21 @@ impl Transcriber {
             .full(params, samples)
             .map_err(|e| anyhow::anyhow!("Transcription failed: {e}"))?;
 
+        let text = self.extract_text(&state);
+
+        if is_hallucination(&text) {
+            log::debug!("Filtered hallucinated text: '{text}'");
+            return Ok(String::new());
+        }
+
+        Ok(text)
+    }
+
+    /// Collect segment text from a completed whisper state.
+    fn extract_text(&self, state: &WhisperState) -> String {
         let num_segments = state.full_n_segments();
         if num_segments < 0 {
-            anyhow::bail!("Failed to get segments");
+            return String::new();
         }
 
         let mut text = String::new();
@@ -400,15 +469,7 @@ impl Transcriber {
                 }
             }
         }
-
-        let text = text.trim().to_string();
-
-        if is_hallucination(&text) {
-            log::debug!("Filtered hallucinated text: '{text}'");
-            return Ok(String::new());
-        }
-
-        Ok(text)
+        text.trim().to_string()
     }
 }
 

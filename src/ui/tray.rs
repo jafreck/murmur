@@ -458,7 +458,7 @@ impl StateColors {
         if is_dark_mode() {
             // Light icons for dark menu bar
             Self {
-                idle: (100, 150, 255, 200),
+                idle: (255, 255, 255, 200),
                 recording: (255, 80, 80, 230),
                 transcribing: (255, 210, 50, 220),
                 loading: (180, 180, 180, 140),

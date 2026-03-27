@@ -119,7 +119,8 @@ fn detector_thread(
     log::info!("Wake word detector ready (phrase: \"{wake_phrase}\")");
 
     // Audio capture ring buffer shared with the cpal callback
-    let ring_buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::with_capacity(WINDOW_SAMPLES * 2)));
+    let ring_buffer: Arc<Mutex<Vec<f32>>> =
+        Arc::new(Mutex::new(Vec::with_capacity(WINDOW_SAMPLES * 2)));
 
     // Open a dedicated cpal audio stream for wake word detection
     let ring_clone = ring_buffer.clone();
@@ -223,21 +224,17 @@ fn contains_phrase(text: &str, phrase: &str) -> bool {
         return false;
     }
 
-    text_words
-        .windows(phrase_words.len())
-        .any(|window| {
-            window.iter().zip(phrase_words.iter()).all(|(tw, pw)| {
-                let tw_clean = tw.trim_matches(|c: char| c.is_ascii_punctuation());
-                let pw_clean = pw.trim_matches(|c: char| c.is_ascii_punctuation());
-                tw_clean == pw_clean
-            })
+    text_words.windows(phrase_words.len()).any(|window| {
+        window.iter().zip(phrase_words.iter()).all(|(tw, pw)| {
+            let tw_clean = tw.trim_matches(|c: char| c.is_ascii_punctuation());
+            let pw_clean = pw.trim_matches(|c: char| c.is_ascii_punctuation());
+            tw_clean == pw_clean
         })
+    })
 }
 
 /// Open a cpal input stream that pushes 16 kHz mono samples into `buffer`.
-fn open_capture_stream(
-    buffer: Arc<Mutex<Vec<f32>>>,
-) -> anyhow::Result<cpal::Stream> {
+fn open_capture_stream(buffer: Arc<Mutex<Vec<f32>>>) -> anyhow::Result<cpal::Stream> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
     let host = cpal::default_host();
@@ -329,7 +326,11 @@ pub fn check_and_strip_stop_phrase(text: &str, stop_phrase: &str) -> Option<Stri
     let phrase_lower_words: Vec<&str> = stop_lower.split_whitespace().collect();
     let text_lower_words: Vec<String> = text_words
         .iter()
-        .map(|w| w.to_lowercase().trim_matches(|c: char| c.is_ascii_punctuation()).to_string())
+        .map(|w| {
+            w.to_lowercase()
+                .trim_matches(|c: char| c.is_ascii_punctuation())
+                .to_string()
+        })
         .collect();
 
     for i in 0..=text_words.len().saturating_sub(phrase_words.len()) {
@@ -385,29 +386,25 @@ mod tests {
 
     #[test]
     fn test_check_and_strip_stop_phrase() {
-        let result =
-            check_and_strip_stop_phrase("hello world murmur stop thanks", "murmur stop");
+        let result = check_and_strip_stop_phrase("hello world murmur stop thanks", "murmur stop");
         assert_eq!(result, Some("hello world thanks".to_string()));
     }
 
     #[test]
     fn test_check_and_strip_stop_phrase_at_end() {
-        let result =
-            check_and_strip_stop_phrase("hello world murmur stop", "murmur stop");
+        let result = check_and_strip_stop_phrase("hello world murmur stop", "murmur stop");
         assert_eq!(result, Some("hello world".to_string()));
     }
 
     #[test]
     fn test_check_and_strip_stop_phrase_at_start() {
-        let result =
-            check_and_strip_stop_phrase("murmur stop hello world", "murmur stop");
+        let result = check_and_strip_stop_phrase("murmur stop hello world", "murmur stop");
         assert_eq!(result, Some("hello world".to_string()));
     }
 
     #[test]
     fn test_check_and_strip_stop_phrase_not_found() {
-        let result =
-            check_and_strip_stop_phrase("hello world", "murmur stop");
+        let result = check_and_strip_stop_phrase("hello world", "murmur stop");
         assert_eq!(result, None);
     }
 

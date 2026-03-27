@@ -361,8 +361,7 @@ impl TrayController {
             CheckMenuItem::new("Wake Word Detection", true, config.wake_word_enabled, None);
         let wake_word_id = wake_word_item.id().clone();
 
-        let overlay_item =
-            CheckMenuItem::new("Live Overlay", true, config.overlay_enabled, None);
+        let overlay_item = CheckMenuItem::new("Live Overlay", true, config.overlay_enabled, None);
         let overlay_id = overlay_item.id().clone();
 
         let open_config = MenuItem::new("Open Config…", true, None);

@@ -49,6 +49,77 @@ fn is_hallucination(text: &str) -> bool {
     HALLUCINATED_PHRASES.iter().any(|&h| normalized == h)
 }
 
+/// Optional context to improve transcription accuracy via Whisper's initial_prompt.
+#[derive(Debug, Clone, Default)]
+pub struct TranscriptionContext {
+    /// Vocabulary terms to bias the model toward (domain-specific words, names, etc.)
+    pub vocabulary: Vec<String>,
+    /// Text surrounding the cursor — provides sentence-level context for continuation
+    pub surrounding_text: Option<String>,
+    /// Additional prompt prefix (e.g., language-specific instructions)
+    pub prompt_prefix: Option<String>,
+}
+
+/// Maximum length for the initial_prompt string to avoid degrading performance.
+const MAX_PROMPT_CHARS: usize = 500;
+
+/// Build a Whisper initial_prompt from context information.
+///
+/// The prompt is structured as:
+/// 1. Optional prompt prefix
+/// 2. Vocabulary terms (as a comma-separated list)
+/// 3. Surrounding text (the most recent text before the cursor)
+///
+/// Whisper uses this as "prior context" to bias its decoder. The surrounding
+/// text is especially powerful — it gives the model sentence-level continuity.
+///
+/// The total prompt is capped at [`MAX_PROMPT_CHARS`] to avoid degrading performance.
+pub fn build_initial_prompt(ctx: &TranscriptionContext) -> Option<String> {
+    if ctx.vocabulary.is_empty() && ctx.surrounding_text.is_none() && ctx.prompt_prefix.is_none() {
+        return None;
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+
+    // Prompt prefix first (e.g. language hints)
+    if let Some(prefix) = &ctx.prompt_prefix {
+        let trimmed = prefix.trim();
+        if !trimmed.is_empty() {
+            parts.push(trimmed.to_string());
+        }
+    }
+
+    // Vocabulary terms — format as natural-looking text to bias decoder
+    if !ctx.vocabulary.is_empty() {
+        let vocab_str = ctx.vocabulary.join(", ");
+        parts.push(vocab_str);
+    }
+
+    // Surrounding text last — this is the most important signal as it gives
+    // the model direct sentence-level context for continuation
+    if let Some(surrounding) = &ctx.surrounding_text {
+        let trimmed = surrounding.trim();
+        if !trimmed.is_empty() {
+            parts.push(trimmed.to_string());
+        }
+    }
+
+    let prompt = parts.join(". ");
+    if prompt.is_empty() {
+        return None;
+    }
+
+    // Truncate from the LEFT if too long — the end (most recent context) is most valuable
+    if prompt.len() > MAX_PROMPT_CHARS {
+        let start = prompt.len() - MAX_PROMPT_CHARS;
+        // Try to break at a word boundary
+        let adjusted_start = prompt[start..].find(' ').map(|i| start + i + 1).unwrap_or(start);
+        Some(prompt[adjusted_start..].to_string())
+    } else {
+        Some(prompt)
+    }
+}
+
 pub struct Transcriber {
     ctx: WhisperContext,
     language: String,
@@ -112,7 +183,37 @@ impl Transcriber {
         self.run_inference(samples, translate)
     }
 
+    /// Transcribe with context biasing for improved accuracy.
+    pub fn transcribe_with_context(
+        &self,
+        audio_path: &Path,
+        translate: bool,
+        context: &TranscriptionContext,
+    ) -> Result<String> {
+        let samples = read_wav_samples(audio_path)?;
+        self.run_inference_with_context(&samples, translate, Some(context))
+    }
+
+    /// Transcribe raw samples with context biasing.
+    pub fn transcribe_samples_with_context(
+        &self,
+        samples: &[f32],
+        translate: bool,
+        context: &TranscriptionContext,
+    ) -> Result<String> {
+        self.run_inference_with_context(samples, translate, Some(context))
+    }
+
     fn run_inference(&self, samples: &[f32], translate: bool) -> Result<String> {
+        self.run_inference_with_context(samples, translate, None)
+    }
+
+    fn run_inference_with_context(
+        &self,
+        samples: &[f32],
+        translate: bool,
+        context: Option<&TranscriptionContext>,
+    ) -> Result<String> {
         if samples.is_empty() {
             return Ok(String::new());
         }
@@ -139,6 +240,20 @@ impl Transcriber {
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_suppress_nst(true);
+
+        // Apply context-based initial_prompt
+        let prompt_string;
+        if let Some(ctx) = context {
+            if let Some(prompt) = build_initial_prompt(ctx) {
+                log::debug!(
+                    "Using initial_prompt ({} chars): {}...",
+                    prompt.len(),
+                    &prompt[..prompt.len().min(80)]
+                );
+                prompt_string = prompt;
+                params.set_initial_prompt(&prompt_string);
+            }
+        }
 
         let mut state = self
             .ctx
@@ -462,5 +577,106 @@ mod tests {
         const { assert!(MIN_AUDIO_SAMPLES > 0) };
         const { assert!(SILENCE_RMS_THRESHOLD > 0.0) };
         assert!(!HALLUCINATED_PHRASES.is_empty());
+    }
+
+    // -- TranscriptionContext --
+
+    #[test]
+    fn test_transcription_context_default() {
+        let ctx = TranscriptionContext::default();
+        assert!(ctx.vocabulary.is_empty());
+        assert!(ctx.surrounding_text.is_none());
+        assert!(ctx.prompt_prefix.is_none());
+    }
+
+    // -- build_initial_prompt --
+
+    #[test]
+    fn test_build_prompt_empty_context() {
+        let ctx = TranscriptionContext::default();
+        assert!(build_initial_prompt(&ctx).is_none());
+    }
+
+    #[test]
+    fn test_build_prompt_vocabulary_only() {
+        let ctx = TranscriptionContext {
+            vocabulary: vec!["useState".to_string(), "async".to_string(), "impl".to_string()],
+            ..Default::default()
+        };
+        let prompt = build_initial_prompt(&ctx).unwrap();
+        assert!(prompt.contains("useState"));
+        assert!(prompt.contains("async"));
+        assert!(prompt.contains("impl"));
+    }
+
+    #[test]
+    fn test_build_prompt_surrounding_text_only() {
+        let ctx = TranscriptionContext {
+            surrounding_text: Some("The function returns a".to_string()),
+            ..Default::default()
+        };
+        let prompt = build_initial_prompt(&ctx).unwrap();
+        assert!(prompt.contains("The function returns a"));
+    }
+
+    #[test]
+    fn test_build_prompt_combined() {
+        let ctx = TranscriptionContext {
+            vocabulary: vec!["boolean".to_string()],
+            surrounding_text: Some("The function returns a".to_string()),
+            prompt_prefix: None,
+        };
+        let prompt = build_initial_prompt(&ctx).unwrap();
+        assert!(prompt.contains("boolean"));
+        assert!(prompt.contains("The function returns a"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_prefix() {
+        let ctx = TranscriptionContext {
+            vocabulary: vec![],
+            surrounding_text: None,
+            prompt_prefix: Some("Technical programming discussion.".to_string()),
+        };
+        let prompt = build_initial_prompt(&ctx).unwrap();
+        assert!(prompt.contains("Technical programming discussion"));
+    }
+
+    #[test]
+    fn test_build_prompt_truncation() {
+        let ctx = TranscriptionContext {
+            vocabulary: (0..100).map(|i| format!("word{i}")).collect(),
+            surrounding_text: Some("important context at the end".to_string()),
+            prompt_prefix: None,
+        };
+        let prompt = build_initial_prompt(&ctx).unwrap();
+        // Should be truncated to MAX_PROMPT_CHARS
+        assert!(prompt.len() <= MAX_PROMPT_CHARS);
+        // The end (surrounding text) should be preserved since we truncate from the left
+        assert!(prompt.contains("important context at the end"));
+    }
+
+    #[test]
+    fn test_build_prompt_whitespace_handling() {
+        let ctx = TranscriptionContext {
+            vocabulary: vec![],
+            surrounding_text: Some("   ".to_string()),
+            prompt_prefix: Some("  ".to_string()),
+        };
+        assert!(build_initial_prompt(&ctx).is_none());
+    }
+
+    #[test]
+    fn test_build_prompt_vocabulary_ordering() {
+        let ctx = TranscriptionContext {
+            vocabulary: vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()],
+            ..Default::default()
+        };
+        let prompt = build_initial_prompt(&ctx).unwrap();
+        let alpha_pos = prompt.find("alpha").unwrap();
+        let beta_pos = prompt.find("beta").unwrap();
+        let gamma_pos = prompt.find("gamma").unwrap();
+        assert!(alpha_pos < beta_pos);
+        assert!(beta_pos < gamma_pos);
     }
 }

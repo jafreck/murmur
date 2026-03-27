@@ -108,30 +108,43 @@ pub fn run() -> Result<()> {
     tray.set_state(crate::ui::tray::TrayState::Loading);
 
     let (tx, rx) = mpsc::channel::<AppMessage>();
-    let tx_down = tx.clone();
-    let tx_up = tx.clone();
-
     let hotkey_config = hotkey::shared_hotkey(&parsed);
     let capture_flag = Arc::new(AtomicBool::new(false));
 
     let hotkey_config_listener = hotkey_config.clone();
     let capture_flag_listener = capture_flag.clone();
-    let tx_capture = tx.clone();
+    let tx_hotkey = tx.clone();
     std::thread::spawn(move || {
-        if let Err(e) = HotkeyManager::start(
-            hotkey_config_listener,
-            capture_flag_listener,
-            move || {
-                let _ = tx_down.send(AppMessage::KeyDown);
-            },
-            move || {
-                let _ = tx_up.send(AppMessage::KeyUp);
-            },
-            move |key| {
-                let _ = tx_capture.send(AppMessage::HotkeyCapture(key));
-            },
-        ) {
-            error!("Hotkey listener failed: {e}");
+        loop {
+            let tx_down = tx_hotkey.clone();
+            let tx_up = tx_hotkey.clone();
+            let tx_capture = tx_hotkey.clone();
+            match HotkeyManager::start(
+                hotkey_config_listener.clone(),
+                capture_flag_listener.clone(),
+                move || {
+                    let _ = tx_down.send(AppMessage::KeyDown);
+                },
+                move || {
+                    let _ = tx_up.send(AppMessage::KeyUp);
+                },
+                move |key| {
+                    let _ = tx_capture.send(AppMessage::HotkeyCapture(key));
+                },
+            ) {
+                Ok(()) => {
+                    info!("Hotkey listener exited");
+                    break;
+                }
+                Err(e) => {
+                    error!(
+                        "Hotkey listener failed: {e}. Retrying in 5 seconds... \
+                         On macOS, ensure Accessibility permission is granted in \
+                         System Settings → Privacy & Security → Accessibility."
+                    );
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                }
+            }
         }
     });
 

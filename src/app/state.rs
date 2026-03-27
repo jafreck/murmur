@@ -61,6 +61,8 @@ pub enum AppEffect {
     SetTrayState(TrayState),
     SetTrayModel(String),
     SetTrayLanguage(String),
+    /// Enable or disable the language submenu (disabled for English-only models).
+    SetLanguageMenuEnabled(bool),
     SetTrayMode(InputMode),
     /// Download the model if needed and rebuild the Transcriber in a background thread.
     ReloadTranscriber(u64),
@@ -269,14 +271,24 @@ impl AppState {
     fn on_set_model(&mut self, size: &str) -> Vec<AppEffect> {
         self.model_size = size.to_string();
         self.reload_generation += 1;
-        vec![
-            AppEffect::SaveConfig,
+        let mut effects = vec![
             AppEffect::SetTrayModel(size.to_string()),
-            AppEffect::ReloadTranscriber(self.reload_generation),
-        ]
+            AppEffect::SetLanguageMenuEnabled(!crate::config::is_english_only_model(size)),
+        ];
+        if crate::config::is_english_only_model(size) && self.language != "en" {
+            self.language = "en".to_string();
+            effects.push(AppEffect::SetTrayLanguage("en".to_string()));
+        }
+        effects.push(AppEffect::SaveConfig);
+        effects.push(AppEffect::ReloadTranscriber(self.reload_generation));
+        effects
     }
 
     fn on_set_language(&mut self, code: &str) -> Vec<AppEffect> {
+        if crate::config::is_english_only_model(&self.model_size) {
+            // English-only model — ignore language change, reset tray to English
+            return vec![AppEffect::SetTrayLanguage("en".to_string())];
+        }
         self.language = code.to_string();
         self.reload_generation += 1;
         vec![
@@ -555,6 +567,8 @@ mod tests {
     #[test]
     fn set_language_updates_state_and_saves() {
         let mut state = default_state();
+        // Use a multilingual model so language changes are allowed
+        state.model_size = "base".to_string();
         let effects = state.handle_message(&AppMessage::TraySetLanguage("fr".to_string()));
         assert_eq!(state.language, "fr");
         assert!(effects.contains(&AppEffect::SaveConfig));
@@ -566,7 +580,9 @@ mod tests {
     #[test]
     fn reload_generation_increments_on_each_change() {
         let mut state = default_state();
-        state.handle_message(&AppMessage::TraySetModel("small.en".to_string()));
+        // Use a multilingual model so language changes also trigger reloads
+        state.model_size = "base".to_string();
+        state.handle_message(&AppMessage::TraySetModel("small".to_string()));
         assert_eq!(state.reload_generation, 1);
         state.handle_message(&AppMessage::TraySetLanguage("fr".to_string()));
         assert_eq!(state.reload_generation, 2);
@@ -1021,5 +1037,54 @@ mod tests {
         assert_eq!(state.last_transcription, Some("first".to_string()));
         state.handle_message(&AppMessage::TranscriptionDone("second".to_string()));
         assert_eq!(state.last_transcription, Some("second".to_string()));
+    }
+
+    // -- English-only model enforcement --
+
+    #[test]
+    fn set_english_only_model_forces_language_to_english() {
+        let mut state = default_state();
+        state.model_size = "base".to_string();
+        state.language = "fr".to_string();
+        let effects =
+            state.handle_message(&AppMessage::TraySetModel("distil-large-v3".to_string()));
+        assert_eq!(state.language, "en");
+        assert!(effects.contains(&AppEffect::SetTrayLanguage("en".to_string())));
+        assert!(effects.contains(&AppEffect::SetLanguageMenuEnabled(false)));
+    }
+
+    #[test]
+    fn set_en_model_disables_language_menu() {
+        let mut state = default_state();
+        state.model_size = "base".to_string();
+        let effects = state.handle_message(&AppMessage::TraySetModel("small.en".to_string()));
+        assert!(effects.contains(&AppEffect::SetLanguageMenuEnabled(false)));
+    }
+
+    #[test]
+    fn set_multilingual_model_enables_language_menu() {
+        let mut state = default_state();
+        let effects = state.handle_message(&AppMessage::TraySetModel("large".to_string()));
+        assert!(effects.contains(&AppEffect::SetLanguageMenuEnabled(true)));
+    }
+
+    #[test]
+    fn language_change_blocked_for_english_only_model() {
+        let mut state = default_state();
+        state.model_size = "distil-large-v3".to_string();
+        state.language = "en".to_string();
+        let effects = state.handle_message(&AppMessage::TraySetLanguage("fr".to_string()));
+        assert_eq!(state.language, "en");
+        assert!(!effects.contains(&AppEffect::SaveConfig));
+        assert!(effects.contains(&AppEffect::SetTrayLanguage("en".to_string())));
+    }
+
+    #[test]
+    fn language_change_allowed_for_multilingual_model() {
+        let mut state = default_state();
+        state.model_size = "large".to_string();
+        let effects = state.handle_message(&AppMessage::TraySetLanguage("fr".to_string()));
+        assert_eq!(state.language, "fr");
+        assert!(effects.contains(&AppEffect::SaveConfig));
     }
 }

@@ -770,7 +770,10 @@ mod tests {
     #[test]
     fn test_constants() {
         const { assert!(MIN_AUDIO_SAMPLES > 0) };
-        assert!(!HALLUCINATED_PHRASES.is_empty());
+        #[allow(clippy::const_is_empty)]
+        {
+            assert!(!HALLUCINATED_PHRASES.is_empty());
+        }
     }
 
     // -- TranscriptionContext --

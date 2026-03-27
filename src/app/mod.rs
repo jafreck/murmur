@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 
 use crate::audio::AudioRecorder;
-use crate::config::Config;
+use crate::config::{AppMode, Config};
 use crate::input::hotkey::{self, HotkeyManager};
 use crate::input::keycodes;
 use crate::platform::permissions;
@@ -87,12 +87,17 @@ impl From<TrayAction> for AppMessage {
             TrayAction::OpenConfig => AppMessage::TrayOpenConfig,
             TrayAction::ReloadConfig => AppMessage::TrayReloadConfig,
             TrayAction::SetHotkey => AppMessage::TraySetHotkey,
+            TrayAction::ToggleAppMode => AppMessage::TrayToggleAppMode,
         }
     }
 }
 
-pub fn run() -> Result<()> {
+pub fn run(notes_mode: bool) -> Result<()> {
     let mut config = Config::load();
+
+    if notes_mode {
+        config.app_mode = AppMode::Notes;
+    }
 
     info!("Hotkey: {}", config.hotkey);
     info!("Model: {}", config.model_size);
@@ -205,9 +210,34 @@ pub fn run() -> Result<()> {
     let mut state = AppState::new(&config);
     let mut streaming_stop: Option<crate::transcription::streaming::StreamingHandle> = None;
 
+    // Notes manager for the overlay
+    let notes = crate::notes::NotesManager::new(config.notes_dir());
+
+    // Overlay subprocess (if enabled)
+    let mut overlay: Option<crate::ui::overlay::OverlayHandle> = if config.is_notes_mode() {
+        match crate::ui::overlay::OverlayHandle::spawn() {
+            Ok(h) => {
+                info!("Overlay started");
+                Some(h)
+            }
+            Err(e) => {
+                error!("Failed to start overlay: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Wake word detector — deferred until the main transcriber is ready
+    let mut wake_word: Option<crate::input::wake_word::WakeWordHandle> = None;
+
     println!("murmur v{VERSION}");
     println!("Hotkey: {}", config.hotkey);
     println!("Model: {}", config.model_size);
+    if config.is_notes_mode() {
+        println!("Wake word: \"{}\"", config.wake_word);
+    }
     println!("Loading model in background...");
 
     loop {
@@ -223,6 +253,42 @@ pub fn run() -> Result<()> {
                     info!("Transcriber ready");
                     if generation == 0 {
                         println!("Ready.");
+                        // Start wake word detector now that the main model is loaded
+                        if config.is_notes_mode() && wake_word.is_none() {
+                            let wake_phrase = config.wake_word.clone();
+                            let stop_phrase = config.stop_phrase.clone();
+                            let ww_tx = tx.clone();
+                            let (event_tx, event_rx) = mpsc::channel();
+                            std::thread::spawn(move || {
+                                use crate::input::wake_word::WakeWordEvent;
+                                while let Ok(event) = event_rx.recv() {
+                                    let msg = match event {
+                                        WakeWordEvent::WakeWordDetected => {
+                                            AppMessage::WakeWordDetected
+                                        }
+                                        WakeWordEvent::StopPhraseDetected => {
+                                            AppMessage::StopPhraseDetected
+                                        }
+                                    };
+                                    if ww_tx.send(msg).is_err() {
+                                        break;
+                                    }
+                                }
+                            });
+                            match crate::input::wake_word::start_detector(
+                                wake_phrase,
+                                stop_phrase,
+                                event_tx,
+                            ) {
+                                Ok(handle) => {
+                                    info!("Wake word detector started");
+                                    wake_word = Some(handle);
+                                }
+                                Err(e) => {
+                                    error!("Failed to start wake word detector: {e}");
+                                }
+                            }
+                        }
                     }
                 } else {
                     info!(
@@ -246,6 +312,9 @@ pub fn run() -> Result<()> {
                         streaming_stop: &mut streaming_stop,
                         hotkey_config: &hotkey_config,
                         capture_flag: &capture_flag,
+                        overlay: &mut overlay,
+                        wake_word: &mut wake_word,
+                        notes: &notes,
                     },
                 )?;
                 effects.extend(extra);
@@ -268,7 +337,46 @@ pub fn run() -> Result<()> {
         while let Ok(_event) = TrayIconEvent::receiver().try_recv() {}
 
         tray.tick();
+
+        // Auto-stop wake-word dictation after sustained silence
+        let silence_effects = state.check_silence_timeout();
+        for effect in silence_effects {
+            let (quit, _) = effects::apply_effect(
+                effect,
+                &mut EffectContext {
+                    recorder: &mut recorder,
+                    transcriber: &mut transcriber,
+                    tray: &mut tray,
+                    config: &mut config,
+                    state: &mut state,
+                    tx: &tx,
+                    streaming_stop: &mut streaming_stop,
+                    hotkey_config: &hotkey_config,
+                    capture_flag: &capture_flag,
+                    overlay: &mut overlay,
+                    wake_word: &mut wake_word,
+                    notes: &notes,
+                },
+            )?;
+            if quit {
+                should_quit = true;
+                break;
+            }
+        }
+
+        if should_quit {
+            break;
+        }
+
         pump_event_loop();
+    }
+
+    // Clean up
+    if let Some(ww) = wake_word {
+        ww.stop();
+    }
+    if let Some(mut ov) = overlay {
+        ov.quit();
     }
 
     Ok(())

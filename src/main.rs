@@ -21,7 +21,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Start the dictation daemon
-    Start,
+    Start {
+        /// Enable notes mode for this session
+        #[arg(long)]
+        notes: bool,
+    },
     /// Set the push-to-talk hotkey
     SetHotkey {
         /// Key or key combo (e.g. "ctrl+shift+space", "f9", "globe")
@@ -47,6 +51,9 @@ enum Commands {
     },
     /// Show configuration and status
     Status,
+    /// Run the transparent overlay window (internal — spawned by the daemon)
+    #[command(hide = true)]
+    Overlay,
 }
 
 fn main() {
@@ -66,13 +73,14 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Some(Commands::Start) => cmd_start(),
+        Some(Commands::Start { notes }) => cmd_start(notes),
         Some(Commands::SetHotkey { key }) => cmd_set_hotkey(&key),
         Some(Commands::GetHotkey) => cmd_get_hotkey(),
         Some(Commands::SetModel { size }) => cmd_set_model(&size),
         Some(Commands::SetLanguage { code }) => cmd_set_language(&code),
         Some(Commands::DownloadModel { size }) => cmd_download_model(&size),
         Some(Commands::Status) => cmd_status(),
+        Some(Commands::Overlay) => murmur::ui::overlay::run_overlay(),
         None => {
             use clap::CommandFactory;
             Cli::command().print_help().ok();
@@ -88,9 +96,9 @@ fn main() {
     }
 }
 
-fn cmd_start() -> Result<()> {
+fn cmd_start(notes: bool) -> Result<()> {
     println!("murmur v{VERSION}");
-    app::run()
+    app::run(notes)
 }
 
 fn cmd_set_hotkey(key_string: &str) -> Result<()> {

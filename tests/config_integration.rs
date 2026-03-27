@@ -489,6 +489,7 @@ fn full_config_with_vocabulary_save_load() {
         dictation_mode: DictationMode::Prose,
         noise_suppression: true,
         filler_word_removal: true,
+        ..Config::default()
     };
     cfg.save_to(&path).unwrap();
 

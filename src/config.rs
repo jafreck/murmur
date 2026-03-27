@@ -2,6 +2,28 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Top-level application mode.
+///
+/// **Dictation** — transcription is pasted at the cursor via hotkey.
+/// **Notes** — transcription is shown in an overlay and saved to note files,
+/// triggered by wake word.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppMode {
+    #[default]
+    Dictation,
+    Notes,
+}
+
+impl std::fmt::Display for AppMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AppMode::Dictation => write!(f, "Dictation"),
+            AppMode::Notes => write!(f, "Notes"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputMode {
@@ -182,10 +204,30 @@ pub struct Config {
     /// Default dictation mode
     #[serde(default)]
     pub dictation_mode: DictationMode,
+    /// Application mode: `dictation` (paste at cursor) or `notes` (overlay + wake word)
+    #[serde(default)]
+    pub app_mode: AppMode,
+    /// Phrase that triggers dictation when spoken (default: "murmur start dictation")
+    #[serde(default = "default_wake_word")]
+    pub wake_word: String,
+    /// Phrase that stops dictation when spoken (default: "murmur stop dictation")
+    #[serde(default = "default_stop_phrase")]
+    pub stop_phrase: String,
+    /// Directory for saving dictation notes (default: data_dir/murmur/notes)
+    #[serde(default)]
+    pub notes_dir: Option<std::path::PathBuf>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_wake_word() -> String {
+    "murmur start dictation".to_string()
+}
+
+fn default_stop_phrase() -> String {
+    "murmur stop dictation".to_string()
 }
 
 impl Default for Config {
@@ -205,6 +247,10 @@ impl Default for Config {
             app_contexts: std::collections::HashMap::new(),
             excluded_apps: Vec::new(),
             dictation_mode: DictationMode::default(),
+            app_mode: AppMode::default(),
+            wake_word: default_wake_word(),
+            stop_phrase: default_stop_phrase(),
+            notes_dir: None,
         }
     }
 }
@@ -231,6 +277,21 @@ impl Config {
         Self::dir().join("config.json")
     }
 
+    /// Whether the app is in Notes mode.
+    pub fn is_notes_mode(&self) -> bool {
+        self.app_mode == AppMode::Notes
+    }
+
+    /// Resolved notes directory, falling back to data_dir/murmur/notes.
+    pub fn notes_dir(&self) -> PathBuf {
+        self.notes_dir.clone().unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("murmur")
+                .join("notes")
+        })
+    }
+
     pub fn load() -> Self {
         Self::load_from(&Self::file_path())
     }
@@ -247,7 +308,7 @@ impl Config {
     }
 
     pub fn parse(contents: &str, source: &std::path::Path) -> Self {
-        match serde_json::from_str(contents) {
+        match serde_json::from_str::<Config>(contents) {
             Ok(config) => config,
             Err(e) => {
                 eprintln!("Warning: unable to parse {}: {e}", source.display());
@@ -392,6 +453,7 @@ mod tests {
             excluded_apps: Vec::new(),
             dictation_mode: DictationMode::Code,
             noise_suppression: true,
+            ..Config::default()
         };
 
         let json = serde_json::to_string(&cfg).unwrap();
@@ -440,6 +502,7 @@ mod tests {
             excluded_apps: vec!["com.bank.app".to_string()],
             dictation_mode: DictationMode::Prose,
             noise_suppression: true,
+            ..Config::default()
         };
         cfg.save_to(&path).unwrap();
 
@@ -588,6 +651,7 @@ mod tests {
             excluded_apps: Vec::new(),
             dictation_mode: DictationMode::Command,
             noise_suppression: true,
+            ..Config::default()
         };
         let json = serde_json::to_string_pretty(&cfg).unwrap();
         assert!(json.contains("\"hotkey\": \"f5\""));

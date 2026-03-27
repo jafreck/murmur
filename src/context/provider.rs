@@ -1,26 +1,4 @@
-use serde::{Deserialize, Serialize};
-
-/// Dictation output mode — determines how transcribed text is formatted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum DictationMode {
-    #[default]
-    Prose,
-    Code,
-    Command,
-    List,
-}
-
-impl std::fmt::Display for DictationMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DictationMode::Prose => write!(f, "Prose"),
-            DictationMode::Code => write!(f, "Code"),
-            DictationMode::Command => write!(f, "Command"),
-            DictationMode::List => write!(f, "List"),
-        }
-    }
-}
+pub use crate::config::DictationMode;
 
 /// Runtime context gathered from the user's environment.
 /// Fields are all optional — providers fill in what they can.

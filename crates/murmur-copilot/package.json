@@ -1,0 +1,9 @@
+{
+  "name": "murmur-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo 'Serve src/ for Tauri dev mode'",
+    "build": "echo 'No build step — vanilla TS/HTML frontend'"
+  }
+}

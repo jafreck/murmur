@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nickel-org/nickel/refs/heads/main/nickel.schema.json",
+  "productName": "murmur-copilot",
+  "version": "0.1.0",
+  "identifier": "com.murmur.copilot",
+  "build": {
+    "frontendDist": "../src",
+    "devUrl": "http://localhost:1420"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "overlay",
+        "title": "Murmur Copilot",
+        "width": 400,
+        "height": 600,
+        "resizable": true,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "x": 50,
+        "y": 50
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+    }
+  }
+}

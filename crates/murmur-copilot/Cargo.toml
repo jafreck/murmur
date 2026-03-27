@@ -1,0 +1,3 @@
+# This is a marker Cargo.toml for the murmur-copilot Tauri project.
+# The actual Rust crate lives in src-tauri/ (Tauri convention).
+# See src-tauri/Cargo.toml for dependencies and build configuration.

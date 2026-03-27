@@ -1,0 +1,18 @@
+[package]
+name = "murmur-copilot"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Tauri-based meeting copilot with live streaming transcription overlay."
+
+[dependencies]
+murmur-core = { version = "0.1.1", path = "../../murmur-core" }
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+anyhow = "1"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

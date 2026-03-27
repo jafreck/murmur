@@ -49,3 +49,30 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --workspace --exclude murmur-copilot --all-targets -- -D warnings
+
+  pages:
+    name: Validate GitHub Pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check docs/index.html exists
+        run: test -f docs/index.html
+
+      - name: Validate HTML
+        run: |
+          # Ensure the file is valid HTML (has doctype and basic structure)
+          head -1 docs/index.html | grep -qi '<!doctype html>'
+
+      - name: Reject gitlink entries
+        run: |
+          # Gitlinks (mode 160000) without .gitmodules break GitHub Pages
+          if git ls-tree -r HEAD | grep -q '^160000'; then
+            echo "::error::Found gitlink entries (mode 160000) that will break GitHub Pages:"
+            git ls-tree -r HEAD | grep '^160000'
+            echo "Remove with: git rm --cached <path>"
+            exit 1
+          fi
+
+      - name: Check .nojekyll exists
+        run: test -f docs/.nojekyll

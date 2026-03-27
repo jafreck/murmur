@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.murmur.copilot",
   "build": {
+    "beforeDevCommand": "npm run dev",
     "frontendDist": "../src",
     "devUrl": "http://localhost:1420"
   },

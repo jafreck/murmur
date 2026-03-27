@@ -320,6 +320,10 @@ impl AppState {
             mode: self.mode.clone(),
             streaming: self.streaming,
             translate_to_english: self.translate_to_english,
+            vocabulary: base.vocabulary.clone(),
+            app_contexts: base.app_contexts.clone(),
+            excluded_apps: base.excluded_apps.clone(),
+            dictation_mode: base.dictation_mode,
         }
     }
 }
@@ -587,6 +591,7 @@ mod tests {
             mode: InputMode::OpenMic,
             streaming: true,
             translate_to_english: true,
+            ..Config::default()
         };
         let state = AppState::new(&config);
         assert_eq!(state.model_size, "small.en");

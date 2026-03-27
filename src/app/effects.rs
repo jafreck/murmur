@@ -320,7 +320,6 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
     let sample_buffer = ctx.recorder.sample_buffer();
     let tx_app = ctx.tx.clone();
     let translate = ctx.state.translate_to_english;
-    let spoken_punct = ctx.state.spoken_punctuation;
     let filler_removal = ctx.state.filler_word_removal;
 
     let (streaming_tx, streaming_rx) = mpsc::channel::<streaming::StreamingEvent>();
@@ -354,7 +353,6 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
         sample_buffer,
         transcriber,
         translate,
-        spoken_punct,
         filler_removal,
         streaming_tx,
     );

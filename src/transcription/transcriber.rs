@@ -3,13 +3,11 @@ use std::path::{Path, PathBuf};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 use crate::config::Config;
+use crate::transcription::vad;
 
 /// Minimum audio duration in samples at 16 kHz.
 /// Clips shorter than this tend to produce hallucinated output.
 const MIN_AUDIO_SAMPLES: usize = 8_000; // 0.5 seconds
-
-/// RMS energy threshold below which audio is considered silence.
-const SILENCE_RMS_THRESHOLD: f32 = 0.01;
 
 /// Phrases commonly hallucinated by Whisper on silence or near-silence.
 const HALLUCINATED_PHRASES: &[&str] = &[
@@ -27,15 +25,6 @@ const HALLUCINATED_PHRASES: &[&str] = &[
     "bye",
     "you",
 ];
-
-/// Return true if audio samples are effectively silence.
-fn is_silent(samples: &[f32]) -> bool {
-    if samples.is_empty() {
-        return true;
-    }
-    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-    rms < SILENCE_RMS_THRESHOLD
-}
 
 /// Return true if text matches a known Whisper hallucination pattern.
 fn is_hallucination(text: &str) -> bool {
@@ -331,8 +320,8 @@ impl Transcriber {
             return Ok(String::new());
         }
 
-        if is_silent(samples) {
-            log::debug!("Audio is silence, skipping transcription");
+        if !vad::contains_speech(samples) {
+            log::debug!("VAD: no speech detected, skipping transcription");
             return Ok(String::new());
         }
 
@@ -649,34 +638,21 @@ mod tests {
         assert_eq!(model_exists(size), find_model(size).is_some());
     }
 
-    // -- is_silent --
+    // -- VAD speech detection --
 
     #[test]
-    fn test_is_silent_zeros() {
-        assert!(is_silent(&vec![0.0f32; 16000]));
+    fn test_vad_silence_has_no_speech() {
+        assert!(!vad::contains_speech(&vec![0.0f32; 16000]));
     }
 
     #[test]
-    fn test_is_silent_low_noise() {
-        assert!(is_silent(&vec![0.001f32; 16000]));
+    fn test_vad_low_noise_has_no_speech() {
+        assert!(!vad::contains_speech(&vec![0.001f32; 16000]));
     }
 
     #[test]
-    fn test_is_silent_loud() {
-        assert!(!is_silent(&vec![0.5f32; 16000]));
-    }
-
-    #[test]
-    fn test_is_silent_empty() {
-        assert!(is_silent(&[]));
-    }
-
-    #[test]
-    fn test_is_silent_threshold_boundary() {
-        let below = SILENCE_RMS_THRESHOLD * 0.9;
-        assert!(is_silent(&vec![below; 1000]));
-        let above = SILENCE_RMS_THRESHOLD * 1.1;
-        assert!(!is_silent(&vec![above; 1000]));
+    fn test_vad_empty_has_no_speech() {
+        assert!(!vad::contains_speech(&[]));
     }
 
     // -- is_hallucination --
@@ -709,7 +685,6 @@ mod tests {
     #[test]
     fn test_constants() {
         const { assert!(MIN_AUDIO_SAMPLES > 0) };
-        const { assert!(SILENCE_RMS_THRESHOLD > 0.0) };
         assert!(!HALLUCINATED_PHRASES.is_empty());
     }
 

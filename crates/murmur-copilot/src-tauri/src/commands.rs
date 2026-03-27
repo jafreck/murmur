@@ -6,12 +6,16 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::llm::LlmManager;
 use crate::meeting::{MeetingSession, SessionState, TranscriptEntry};
 use crate::overlay;
+use crate::session::{SavedSession, SessionStore, SessionSummary};
 
 /// Application-level state managed by Tauri.
 pub struct AppState {
     pub session: Mutex<Option<MeetingSession>>,
     pub stealth_enabled: Mutex<bool>,
     pub llm: Arc<Mutex<LlmManager>>,
+    pub session_store: Mutex<SessionStore>,
+    #[allow(dead_code)]
+    pub auto_summary: bool,
 }
 
 #[tauri::command]
@@ -193,4 +197,36 @@ pub async fn extract_action_items(state: State<'_, AppState>) -> Result<Option<S
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+// ── Session management commands ──────────────────────────────────────────────
+
+/// Returns a list of saved meeting sessions (lightweight summaries).
+#[tauri::command]
+pub fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionSummary>, String> {
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    store.list().map_err(|e| e.to_string())
+}
+
+/// Returns a specific session with its full transcript.
+#[tauri::command]
+pub fn get_session(state: State<'_, AppState>, id: String) -> Result<SavedSession, String> {
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    store.load(&id).map_err(|e| e.to_string())
+}
+
+/// Deletes a saved session.
+#[tauri::command]
+pub fn delete_session(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    store.delete(&id).map_err(|e| e.to_string())?;
+    Ok(format!("session {id} deleted"))
+}
+
+/// Exports a session as markdown text.
+#[tauri::command]
+pub fn export_session(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    let session = store.load(&id).map_err(|e| e.to_string())?;
+    Ok(session.to_markdown())
 }

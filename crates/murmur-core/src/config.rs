@@ -229,6 +229,12 @@ pub struct Config {
     /// Ollama API base URL
     #[serde(default = "default_ollama_url")]
     pub ollama_url: String,
+    /// Directory for storing meeting sessions
+    #[serde(default)]
+    pub sessions_dir: Option<String>,
+    /// Auto-generate summary when meeting ends
+    #[serde(default)]
+    pub auto_summary: bool,
 }
 
 fn default_true() -> bool {
@@ -276,6 +282,8 @@ impl Default for Config {
             stealth_mode: false,
             llm_model: default_llm_model(),
             ollama_url: default_ollama_url(),
+            sessions_dir: None,
+            auto_summary: false,
         }
     }
 }

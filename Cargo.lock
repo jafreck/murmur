@@ -3383,6 +3383,7 @@ name = "murmur-copilot"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dirs",
  "env_logger",
  "log",
  "murmur-core",
@@ -3393,6 +3394,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tempfile",
  "tokio",
 ]
 

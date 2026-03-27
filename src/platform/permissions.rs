@@ -57,9 +57,7 @@ pub fn check_accessibility() -> bool {
         log::info!("macOS: Accessibility permission granted.");
     } else {
         log::warn!("macOS: Accessibility permission NOT granted.");
-        log::warn!(
-            "Grant access in System Settings → Privacy & Security → Accessibility."
-        );
+        log::warn!("Grant access in System Settings → Privacy & Security → Accessibility.");
         log::warn!(
             "Also grant Input Monitoring in System Settings → Privacy & Security → Input Monitoring."
         );

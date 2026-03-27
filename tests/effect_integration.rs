@@ -65,7 +65,11 @@ fn set_model_emits_save_and_reload() {
 
 #[test]
 fn set_language_emits_save_and_reload() {
-    let mut h = Harness::new();
+    let config = Config {
+        model_size: "base".to_string(), // multilingual model allows language changes
+        ..Config::default()
+    };
+    let mut h = Harness::with_config(&config);
 
     let fx = h.send(AppMessage::TraySetLanguage("fr".into()));
 
@@ -133,7 +137,7 @@ fn state_mutations_produce_correct_config_on_disk() {
 
     let mut h = Harness::with_config(&base);
 
-    h.send(AppMessage::TraySetModel("medium.en".into()));
+    h.send(AppMessage::TraySetModel("medium".into())); // multilingual model
     h.send(AppMessage::TraySetLanguage("ja".into()));
     h.send(AppMessage::TrayToggleSpokenPunctuation);
     h.send(AppMessage::TrayToggleStreaming);
@@ -146,7 +150,7 @@ fn state_mutations_produce_correct_config_on_disk() {
 
     // Reload and verify
     let loaded = Config::load_from(&path);
-    assert_eq!(loaded.model_size, "medium.en");
+    assert_eq!(loaded.model_size, "medium");
     assert_eq!(loaded.language, "ja");
     assert!(loaded.spoken_punctuation);
     assert!(loaded.streaming);
@@ -303,10 +307,14 @@ fn stitch_no_overlap() {
 
 #[test]
 fn reload_generation_increments() {
-    let mut h = Harness::new();
+    let config = Config {
+        model_size: "base".to_string(), // multilingual model allows language changes
+        ..Config::default()
+    };
+    let mut h = Harness::with_config(&config);
     let gen0 = h.state.reload_generation;
 
-    h.send(AppMessage::TraySetModel("small.en".into()));
+    h.send(AppMessage::TraySetModel("small".into()));
     assert!(h.state.reload_generation > gen0);
 
     let gen1 = h.state.reload_generation;

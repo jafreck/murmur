@@ -397,7 +397,7 @@ impl TrayController {
             .with_menu_on_left_click(true)
             .build()?;
 
-        Ok(Self {
+        let controller = Self {
             tray,
             state: TrayState::Idle,
             action_map,
@@ -415,7 +415,13 @@ impl TrayController {
             recording_icon,
             transcribing_icon,
             loading_icon,
-        })
+        };
+
+        if config::is_english_only_model(&config.model_size) {
+            controller.set_language_menu_enabled(false);
+        }
+
+        Ok(controller)
     }
 
     pub fn set_state(&mut self, state: TrayState) {
@@ -449,6 +455,13 @@ impl TrayController {
         update_radio_entries(&self.language_entries, &new_code, |code| {
             config::language_name(code).unwrap_or(code).to_string()
         });
+    }
+
+    /// Enable or disable all language menu entries.
+    pub fn set_language_menu_enabled(&self, enabled: bool) {
+        for entry in &self.language_entries {
+            entry.item.set_enabled(enabled);
+        }
     }
 
     pub fn set_mode(&mut self, mode: &InputMode) {

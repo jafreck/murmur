@@ -341,7 +341,11 @@ fn set_model_triggers_reload() {
 
 #[test]
 fn set_language_triggers_reload() {
-    let mut h = Harness::new();
+    let config = Config {
+        model_size: "base".to_string(),
+        ..Config::default()
+    };
+    let mut h = Harness::with_config(&config);
 
     let fx = h.send(AppMessage::TraySetLanguage("fr".into()));
     assert_eq!(h.state.language, "fr");
@@ -352,9 +356,13 @@ fn set_language_triggers_reload() {
 
 #[test]
 fn reload_generation_increments_monotonically() {
-    let mut h = Harness::new();
+    let config = Config {
+        model_size: "base".to_string(),
+        ..Config::default()
+    };
+    let mut h = Harness::with_config(&config);
 
-    h.send(AppMessage::TraySetModel("small.en".into()));
+    h.send(AppMessage::TraySetModel("small".into()));
     assert_eq!(h.state.reload_generation, 1);
 
     h.send(AppMessage::TraySetLanguage("fr".into()));
@@ -752,12 +760,16 @@ fn regression_spoken_punctuation_processes_all_types() {
 /// increasing generation counters.
 #[test]
 fn regression_rapid_model_changes_generation_counter() {
-    let mut h = Harness::new();
+    let config = Config {
+        model_size: "base".to_string(),
+        ..Config::default()
+    };
+    let mut h = Harness::with_config(&config);
 
     let changes = [
         AppMessage::TraySetModel("tiny".into()),
         AppMessage::TraySetLanguage("fr".into()),
-        AppMessage::TraySetModel("small.en".into()),
+        AppMessage::TraySetModel("small".into()),
         AppMessage::TraySetLanguage("de".into()),
         AppMessage::TraySetModel("large".into()),
     ];
@@ -851,11 +863,14 @@ fn transcription_result_during_recording_does_not_reset_tray() {
 
 #[test]
 fn to_config_reflects_tray_mutations() {
-    let base = Config::default();
+    let base = Config {
+        model_size: "base".to_string(),
+        ..Config::default()
+    };
     let mut h = Harness::with_config(&base);
 
     // Mutate state through messages
-    h.send(AppMessage::TraySetModel("small.en".into()));
+    h.send(AppMessage::TraySetModel("small".into()));
     h.send(AppMessage::TraySetLanguage("de".into()));
     h.send(AppMessage::TrayToggleSpokenPunctuation);
     h.send(AppMessage::TraySetMode(InputMode::OpenMic));
@@ -864,7 +879,7 @@ fn to_config_reflects_tray_mutations() {
 
     // Build config from state
     let cfg = h.state.to_config(&base);
-    assert_eq!(cfg.model_size, "small.en");
+    assert_eq!(cfg.model_size, "small");
     assert_eq!(cfg.language, "de");
     assert!(cfg.spoken_punctuation);
     assert_eq!(cfg.mode, InputMode::OpenMic);

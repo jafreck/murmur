@@ -8,6 +8,7 @@
 //! Once the window exceeds `MAX_WINDOW_SECS` the start anchor slides
 //! forward to keep each Whisper pass short and responsive.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -42,15 +43,18 @@ pub enum StreamingEvent {
 /// `Transcriber` (e.g. before starting a final transcription pass).
 pub struct StreamingHandle {
     stop_tx: mpsc::Sender<()>,
+    abort_flag: Arc<AtomicBool>,
     join_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl StreamingHandle {
     /// Signal the streaming thread to stop and block until it exits.
     ///
-    /// This prevents concurrent access to the shared `WhisperContext`
-    /// between the streaming thread and a subsequent transcription thread.
+    /// Sets the abort flag first so any in-progress whisper inference
+    /// is cancelled immediately, then sends the channel stop signal
+    /// and joins the thread.
     pub fn stop_and_join(mut self) {
+        self.abort_flag.store(true, Ordering::Relaxed);
         let _ = self.stop_tx.send(());
         if let Some(handle) = self.join_handle.take() {
             if let Err(e) = handle.join() {
@@ -74,6 +78,8 @@ pub fn start_streaming(
     tx: mpsc::Sender<StreamingEvent>,
 ) -> StreamingHandle {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let abort_flag = Arc::new(AtomicBool::new(false));
+    let abort_flag_clone = Arc::clone(&abort_flag);
 
     let join_handle = std::thread::spawn(move || {
         streaming_loop(
@@ -83,11 +89,13 @@ pub fn start_streaming(
             filler_word_removal,
             tx,
             stop_rx,
+            abort_flag_clone,
         );
     });
 
     StreamingHandle {
         stop_tx,
+        abort_flag,
         join_handle: Some(join_handle),
     }
 }
@@ -101,6 +109,7 @@ fn streaming_loop(
     filler_word_removal: bool,
     tx: mpsc::Sender<StreamingEvent>,
     stop_rx: mpsc::Receiver<()>,
+    abort_flag: Arc<AtomicBool>,
 ) {
     let min_new_samples = (MIN_NEW_AUDIO_SECS * TARGET_RATE as f32) as usize;
     let max_window_samples = (MAX_WINDOW_SECS * TARGET_RATE as f32) as usize;
@@ -156,15 +165,19 @@ fn streaming_loop(
             continue;
         }
 
-        let mut full_text =
-            match transcriber.streaming_transcribe(&mut whisper_state, &window, translate) {
-                Ok(t) => t,
-                Err(e) => {
-                    log::error!("Streaming transcription failed: {e}");
-                    last_transcribed = total_samples;
-                    continue;
-                }
-            };
+        let mut full_text = match transcriber.streaming_transcribe(
+            &mut whisper_state,
+            &window,
+            translate,
+            &abort_flag,
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                log::error!("Streaming transcription failed: {e}");
+                last_transcribed = total_samples;
+                continue;
+            }
+        };
 
         // Re-read the current buffer position so the min-new-audio threshold
         // is relative to *now*, not to when this transcription started.

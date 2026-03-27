@@ -35,20 +35,13 @@ Murmur runs [OpenAI Whisper](https://github.com/openai/whisper) — a state-of-t
 
 Raw Whisper is a CLI inference tool. Murmur turns it into a seamless dictation system:
 
-- **Push to Talk** — hold a key to record, release to transcribe and paste
-- **Open Mic** — toggle recording on/off with a single keypress
-- **Instant paste** — transcribed text is inserted at your cursor automatically, preserving your clipboard contents (text and images)
+- **Two recording modes** — Push to Talk (hold to record) or Open Mic (toggle on/off), with instant paste at your cursor that preserves clipboard contents
 - **Live streaming (preview)** — see partial transcriptions appear in real time as you speak
 - **Spoken punctuation** — say "period", "comma", "question mark", "new paragraph", etc. and they're converted to symbols
 - **Filler word removal** — automatically strips "um", "uh", "er", "ah", and other verbal fillers
 - **Noise suppression** — built-in audio denoising cleans up background noise before transcription
-- **Hallucination filtering** — detects and discards phantom text that Whisper sometimes generates on silence or very short clips
-- **Voice activity detection** — accurately distinguishes speech from silence, so Murmur only transcribes when you're actually talking
-- **System tray UI** — control everything from the menu bar: model, language, mode, hotkey, and all toggles
-- **Hotkey rebinding** — set any key or combo as your trigger from the tray menu or config
-- **Model management** — download and switch between Whisper models with a single command
-- **Copy last dictation** — retrieve your most recent transcription from the tray menu
-- **Homebrew support** — `brew install jafreck/murmur/murmur`
+- **Speech detection** — voice activity detection and hallucination filtering ensure only real speech is transcribed
+- **System tray UI** — control model, language, mode, hotkey, and all settings from the menu bar
 
 ### 🔒 Privacy
 

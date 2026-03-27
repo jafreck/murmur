@@ -131,22 +131,22 @@ Edit the config file:
 
 murmur uses [OpenAI Whisper](https://github.com/openai/whisper) models running locally via [whisper.cpp](https://github.com/ggml-org/whisper.cpp). Models are downloaded in GGML format on first run.
 
-| Model | Size | Speed | Accuracy | Best for |
-|---|---|---|---|---|
-| `tiny.en` | 75 MB | Fastest | Lower | Quick notes |
-| **`base.en`** | 142 MB | **Fast** | **Good** | **Most users (default)** |
-| `small.en` | 466 MB | Moderate | Better | Technical terms |
-| `medium.en` | 1.5 GB | Slower | Great | Maximum accuracy |
-| `large-v3-turbo` | 1.6 GB | Moderate | Great | Multilingual |
-| `large` | 3 GB | Slowest | Best | Highest accuracy |
+| Model | Disk Size | Memory | Speed | Accuracy | Best for |
+|---|---|---|---|---|---|
+| `tiny.en` | 75 MB | ~273 MB | Fastest | Lower | Quick notes |
+| **`base.en`** | **142 MB** | **~388 MB** | **Fast** | **Good** | **Most users (default)** |
+| `small.en` | 466 MB | ~852 MB | Moderate | Better | Technical terms |
+| `medium.en` | 1.5 GB | ~2.1 GB | Slower | Great | Maximum accuracy |
+| `large-v3-turbo` | 1.6 GB | ~2 GB | Moderate | Great | Multilingual |
+| `large` | 3 GB | ~3.9 GB | Slowest | Best | Highest accuracy |
 
 #### Distil-Whisper (faster alternatives)
 
 [Distil-Whisper](https://github.com/huggingface/distil-whisper) models are distilled versions that run significantly faster while maintaining near-original accuracy. English-only.
 
-| Model | Size | Speed | Accuracy | Best for |
-|---|---|---|---|---|
-| `distil-large-v3` | ~1.5 GB | Fast | Great | Best distilled quality |
+| Model | Disk Size | Memory | Speed | Accuracy | Best for |
+|---|---|---|---|---|---|
+| `distil-large-v3` | ~1.5 GB | ~2–3 GB | Fast | Great | Best distilled quality |
 
 ## Privacy
 

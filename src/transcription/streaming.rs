@@ -5,8 +5,8 @@
 //! (from the start up to the current position), diffs against what
 //! was already emitted, and sends only new words incrementally.
 //!
-//! Once the window exceeds MAX_WINDOW_SECS, the start anchor slides
-//! forward to keep Whisper's input under its 30s native limit.
+//! Once the window exceeds `MAX_WINDOW_SECS` the start anchor slides
+//! forward to keep each Whisper pass short and responsive.
 
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -20,9 +20,10 @@ use crate::audio::capture::TARGET_RATE;
 const MIN_NEW_AUDIO_SECS: f32 = 1.0;
 /// Minimum interval between transcription attempts, in milliseconds.
 const POLL_INTERVAL_MS: u64 = 300;
-/// Maximum window size sent to Whisper, in seconds.
-/// Whisper natively handles up to 30s; leave headroom.
-const MAX_WINDOW_SECS: f32 = 28.0;
+/// Maximum window size sent to Whisper during streaming, in seconds.
+/// Smaller windows keep each inference pass fast at the cost of less
+/// context. 10 s is a good balance between latency and accuracy.
+const MAX_WINDOW_SECS: f32 = 10.0;
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -69,7 +70,6 @@ pub fn start_streaming(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
     transcriber: Arc<Transcriber>,
     translate: bool,
-    spoken_punctuation: bool,
     filler_word_removal: bool,
     tx: mpsc::Sender<StreamingEvent>,
 ) -> StreamingHandle {
@@ -80,7 +80,6 @@ pub fn start_streaming(
             sample_buffer,
             transcriber,
             translate,
-            spoken_punctuation,
             filler_word_removal,
             tx,
             stop_rx,
@@ -99,7 +98,6 @@ fn streaming_loop(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
     transcriber: Arc<Transcriber>,
     translate: bool,
-    spoken_punctuation: bool,
     filler_word_removal: bool,
     tx: mpsc::Sender<StreamingEvent>,
     stop_rx: mpsc::Receiver<()>,
@@ -148,7 +146,11 @@ fn streaming_loop(
             buf[anchor..total_samples].to_vec()
         };
 
-        if !super::vad::contains_speech(&window) {
+        // Only run VAD on audio that arrived since the last transcription,
+        // not the full window. This avoids redundant Silero inference on
+        // already-checked audio.
+        let new_offset = last_transcribed.saturating_sub(anchor);
+        if !super::vad::contains_speech(&window[new_offset..]) {
             last_transcribed = total_samples;
             std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
             continue;
@@ -185,9 +187,8 @@ fn streaming_loop(
             }
         }
 
-        if spoken_punctuation {
-            full_text = super::postprocess::process(&full_text);
-        }
+        // Spoken-punctuation regex (17 passes) is deferred to the final
+        // transcription pass to keep each streaming iteration fast.
         full_text = super::postprocess::ensure_space_after_punctuation(&full_text);
 
         // If the transcription changed at all, replace everything.

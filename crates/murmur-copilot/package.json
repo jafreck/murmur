@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "tauri": "tauri",
     "dev": "echo 'Serve src/ for Tauri dev mode'",
     "build": "echo 'No build step — vanilla TS/HTML frontend'"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
   }
 }

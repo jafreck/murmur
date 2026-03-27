@@ -41,9 +41,9 @@ Raw Whisper is a CLI inference tool. Murmur turns it into a seamless dictation s
 - **Live streaming (preview)** — see partial transcriptions appear in real time as you speak
 - **Spoken punctuation** — say "period", "comma", "question mark", "new paragraph", etc. and they're converted to symbols
 - **Filler word removal** — automatically strips "um", "uh", "er", "ah", and other verbal fillers
-- **Noise suppression** — built-in audio denoising via [nnnoiseless](https://github.com/jneem/nnnoiseless) cleans up background noise before transcription
+- **Noise suppression** — built-in audio denoising cleans up background noise before transcription
 - **Hallucination filtering** — detects and discards phantom text that Whisper sometimes generates on silence or very short clips
-- **Voice activity detection** — [Silero VAD](https://github.com/snakers4/silero-vad) accurately distinguishes speech from silence, replacing basic energy-level detection
+- **Voice activity detection** — accurately distinguishes speech from silence, so Murmur only transcribes when you're actually talking
 - **System tray UI** — control everything from the menu bar: model, language, mode, hotkey, and all toggles
 - **Hotkey rebinding** — set any key or combo as your trigger from the tray menu or config
 - **Model management** — download and switch between Whisper models with a single command

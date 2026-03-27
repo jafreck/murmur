@@ -16,6 +16,11 @@ const PRE_ROLL_MS: u32 = 200;
 /// Number of 16 kHz samples in the pre-roll buffer.
 const PRE_ROLL_SAMPLES: usize = (TARGET_RATE * PRE_ROLL_MS / 1000) as usize;
 
+/// Expected recording duration for initial buffer capacity (seconds).
+/// Pre-allocating ~5 seconds of 16 kHz audio (80 000 samples ≈ 320 KB)
+/// avoids multiple early reallocations during typical dictation.
+const INITIAL_RECORDING_SECS: usize = 5;
+
 /// Shared state between the audio callback thread and the main thread.
 struct SharedCaptureState {
     /// True while actively recording (as opposed to standby pre-roll capture).
@@ -34,10 +39,11 @@ struct SharedCaptureState {
 
 impl SharedCaptureState {
     fn new() -> Self {
+        let initial_capacity = TARGET_RATE as usize * INITIAL_RECORDING_SECS;
         Self {
             recording: AtomicBool::new(false),
             writer: Mutex::new(None),
-            samples: Arc::new(Mutex::new(Vec::new())),
+            samples: Arc::new(Mutex::new(Vec::with_capacity(initial_capacity))),
             pre_roll: Mutex::new(VecDeque::with_capacity(PRE_ROLL_SAMPLES + 512)),
             dropped_samples: AtomicU64::new(0),
         }

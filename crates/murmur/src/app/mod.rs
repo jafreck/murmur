@@ -38,6 +38,8 @@ fn init_macos_app() {
 
 /// Pump the macOS AppKit event loop, dispatching all pending Cocoa events
 /// (tray icon clicks, menu interactions, rendering, etc.).
+///
+/// Does **not** sleep — the caller controls pacing via `recv_timeout`.
 #[cfg(target_os = "macos")]
 fn pump_event_loop() {
     use objc2::MainThreadMarker;
@@ -61,15 +63,21 @@ fn pump_event_loop() {
             None => break,
         }
     }
-
-    std::thread::sleep(std::time::Duration::from_millis(16));
 }
 
-/// On non-macOS platforms, just sleep briefly.
+/// On non-macOS platforms, this is a no-op — the caller controls pacing via
+/// `recv_timeout`.
 #[cfg(not(target_os = "macos"))]
-fn pump_event_loop() {
-    std::thread::sleep(std::time::Duration::from_millis(16));
-}
+fn pump_event_loop() {}
+
+/// How often the main loop ticks when idle (no recording in progress).
+/// Higher values save CPU; 100ms gives ~10 ticks/sec which is plenty for
+/// tray updates and UI responsiveness.
+const IDLE_TICK_MS: u64 = 100;
+
+/// How often the main loop ticks during active recording or transcription.
+/// 16ms ≈ 60fps for responsive streaming text updates.
+const ACTIVE_TICK_MS: u64 = 16;
 
 impl From<TrayAction> for AppMessage {
     fn from(action: TrayAction) -> Self {
@@ -242,6 +250,26 @@ pub fn run(notes_mode: bool) -> Result<()> {
 
     loop {
         let mut should_quit = false;
+
+        // Adaptive tick rate: fast during recording for responsive streaming,
+        // slow when idle to save CPU.
+        let tick_ms = if state.is_pressed {
+            ACTIVE_TICK_MS
+        } else {
+            IDLE_TICK_MS
+        };
+
+        // Block on the message channel instead of busy-polling.
+        // `recv_timeout` wakes immediately when a message arrives, or after
+        // `tick_ms` so we can still pump UI events and check timeouts.
+        match rx.recv_timeout(std::time::Duration::from_millis(tick_ms)) {
+            Ok(msg) => {
+                // Process this message, then drain any remaining pending messages.
+                let _ = tx.send(msg); // re-enqueue so the drain loop below handles it
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
 
         while let Ok(msg) = rx.try_recv() {
             // TranscriberReady carries an Arc that must be moved out,

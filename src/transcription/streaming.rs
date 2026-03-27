@@ -23,8 +23,6 @@ const POLL_INTERVAL_MS: u64 = 300;
 /// Maximum window size sent to Whisper, in seconds.
 /// Whisper natively handles up to 30s; leave headroom.
 const MAX_WINDOW_SECS: f32 = 28.0;
-/// RMS threshold below which audio is considered silence.
-const SILENCE_RMS_THRESHOLD: f32 = 0.005;
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -35,22 +33,48 @@ pub enum StreamingEvent {
     PartialText { text: String, replace_chars: usize },
 }
 
+/// Handle returned by [`start_streaming`] to control the streaming thread.
+///
+/// Dropping the handle sends a stop signal (by disconnecting the channel),
+/// but does **not** block until the thread exits. Call [`stop_and_join`]
+/// when you need to guarantee the thread has exited before reusing the
+/// `Transcriber` (e.g. before starting a final transcription pass).
+pub struct StreamingHandle {
+    stop_tx: mpsc::Sender<()>,
+    join_handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl StreamingHandle {
+    /// Signal the streaming thread to stop and block until it exits.
+    ///
+    /// This prevents concurrent access to the shared `WhisperContext`
+    /// between the streaming thread and a subsequent transcription thread.
+    pub fn stop_and_join(mut self) {
+        let _ = self.stop_tx.send(());
+        if let Some(handle) = self.join_handle.take() {
+            if let Err(e) = handle.join() {
+                log::error!("Streaming thread panicked: {e:?}");
+            }
+        }
+    }
+}
+
 /// Start streaming transcription in a background thread.
 ///
 /// Reads from `sample_buffer` (the AudioRecorder's shared buffer), transcribes
 /// overlapping chunks, and sends incremental text via `tx`.
 ///
-/// Returns a handle that, when dropped or sent `()`, signals the thread to stop.
+/// Returns a [`StreamingHandle`] that can stop and join the thread.
 pub fn start_streaming(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
     transcriber: Arc<Transcriber>,
     translate: bool,
     spoken_punctuation: bool,
     tx: mpsc::Sender<StreamingEvent>,
-) -> mpsc::Sender<()> {
+) -> StreamingHandle {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
 
-    std::thread::spawn(move || {
+    let join_handle = std::thread::spawn(move || {
         streaming_loop(
             sample_buffer,
             transcriber,
@@ -61,7 +85,10 @@ pub fn start_streaming(
         );
     });
 
-    stop_tx
+    StreamingHandle {
+        stop_tx,
+        join_handle: Some(join_handle),
+    }
 }
 
 // ── Internal ───────────────────────────────────────────────────────────
@@ -105,7 +132,7 @@ fn streaming_loop(
             buf[anchor..total_samples].to_vec()
         };
 
-        if is_silent(&window) {
+        if !super::vad::contains_speech(&window) {
             last_transcribed = total_samples;
             std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
             continue;
@@ -213,15 +240,6 @@ fn longest_suffix_prefix_match(a: &[String], b: &[String]) -> usize {
 
 // ── Utilities ──────────────────────────────────────────────────────────
 
-/// Check whether a chunk of audio is effectively silence.
-pub fn is_silent(samples: &[f32]) -> bool {
-    if samples.is_empty() {
-        return true;
-    }
-    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-    rms < SILENCE_RMS_THRESHOLD
-}
-
 /// Split text into words, normalising whitespace.
 #[allow(dead_code)]
 fn split_words(text: &str) -> Vec<String> {
@@ -291,26 +309,20 @@ mod tests {
     }
 
     #[test]
-    fn test_is_silent_zeros() {
+    fn test_vad_silence_no_speech() {
         let samples = vec![0.0f32; 16000];
-        assert!(is_silent(&samples));
+        assert!(!crate::transcription::vad::contains_speech(&samples));
     }
 
     #[test]
-    fn test_is_silent_low_noise() {
+    fn test_vad_low_noise_no_speech() {
         let samples = vec![0.001f32; 16000];
-        assert!(is_silent(&samples));
+        assert!(!crate::transcription::vad::contains_speech(&samples));
     }
 
     #[test]
-    fn test_is_silent_loud() {
-        let samples = vec![0.5f32; 16000];
-        assert!(!is_silent(&samples));
-    }
-
-    #[test]
-    fn test_is_silent_empty() {
-        assert!(is_silent(&[]));
+    fn test_vad_empty_no_speech() {
+        assert!(!crate::transcription::vad::contains_speech(&[]));
     }
 
     #[test]
@@ -361,7 +373,6 @@ mod tests {
         const { assert!(MAX_WINDOW_SECS > 0.0) };
         const { assert!(MAX_WINDOW_SECS <= 30.0) };
         const { assert!(POLL_INTERVAL_MS > 0) };
-        const { assert!(SILENCE_RMS_THRESHOLD > 0.0) };
         assert_eq!(TARGET_RATE, 16_000);
     }
 
@@ -380,19 +391,6 @@ mod tests {
                 assert_eq!(replace_chars, 3);
             }
         }
-    }
-
-    #[test]
-    fn test_is_silent_threshold_boundary() {
-        // Just below threshold
-        let val = SILENCE_RMS_THRESHOLD * 0.9;
-        let samples = vec![val; 1000];
-        assert!(is_silent(&samples));
-
-        // Just above threshold
-        let val = SILENCE_RMS_THRESHOLD * 1.1;
-        let samples = vec![val; 1000];
-        assert!(!is_silent(&samples));
     }
 
     #[test]

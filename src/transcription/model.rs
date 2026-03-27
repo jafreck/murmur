@@ -13,9 +13,17 @@ pub fn model_filename(model_size: &str) -> String {
 }
 
 /// Build the download URL for a given model size.
+///
+/// Standard models are hosted at `ggerganov/whisper.cpp` on HuggingFace.
+/// Distil-whisper models are hosted under the `distil-whisper` organisation
+/// in dedicated `{model}-ggml` repos.
 pub fn model_url(model_size: &str) -> String {
     let filename = model_filename(model_size);
-    format!("{BASE_URL}/{filename}")
+    if model_size.starts_with("distil-") {
+        format!("https://huggingface.co/distil-whisper/{model_size}-ggml/resolve/main/{filename}")
+    } else {
+        format!("{BASE_URL}/{filename}")
+    }
 }
 
 pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> {
@@ -200,6 +208,10 @@ mod tests {
         assert_eq!(model_filename("base.en"), "ggml-base.en.bin");
         assert_eq!(model_filename("tiny"), "ggml-tiny.bin");
         assert_eq!(model_filename("large-v3-turbo"), "ggml-large-v3-turbo.bin");
+        assert_eq!(
+            model_filename("distil-large-v3"),
+            "ggml-distil-large-v3.bin"
+        );
     }
 
     #[test]
@@ -208,5 +220,14 @@ mod tests {
         assert!(url.starts_with("https://"));
         assert!(url.contains("ggml-base.en.bin"));
         assert!(url.contains("huggingface"));
+    }
+
+    #[test]
+    fn test_distil_model_url() {
+        let url = model_url("distil-large-v3");
+        assert_eq!(
+            url,
+            "https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin"
+        );
     }
 }

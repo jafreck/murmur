@@ -48,6 +48,9 @@ clap = { version = "4", features = ["derive"] }
 # Error handling
 anyhow = "1"
 
+# Voice activity detection (Silero VAD via ONNX Runtime)
+voice_activity_detector = "0.2"
+
 # Logging
 log = "0.4"
 env_logger = "0.11"

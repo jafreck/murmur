@@ -140,6 +140,14 @@ murmur uses [OpenAI Whisper](https://github.com/openai/whisper) models running l
 | `large-v3-turbo` | 1.6 GB | Moderate | Great | Multilingual |
 | `large` | 3 GB | Slowest | Best | Highest accuracy |
 
+#### Distil-Whisper (faster alternatives)
+
+[Distil-Whisper](https://github.com/huggingface/distil-whisper) models are distilled versions that run significantly faster while maintaining near-original accuracy. English-only.
+
+| Model | Size | Speed | Accuracy | Best for |
+|---|---|---|---|---|
+| `distil-large-v3` | ~1.5 GB | Fast | Great | Best distilled quality |
+
 ## Privacy
 
 murmur is completely local. Audio is recorded to a temp file, transcribed by whisper.cpp on your CPU/GPU, and the temp file is deleted. No network requests are made except to download the Whisper model on first run.

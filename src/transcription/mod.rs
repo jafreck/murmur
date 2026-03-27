@@ -2,6 +2,7 @@ pub mod model;
 pub mod postprocess;
 pub mod streaming;
 pub mod transcriber;
+pub mod vad;
 
 pub use model::download;
 pub use postprocess::process;

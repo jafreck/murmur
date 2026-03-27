@@ -259,26 +259,20 @@ fn ggml_file_validation() {
 // ═══════════════════════════════════════════════════════════════════════
 
 #[test]
-fn is_silent_for_silence() {
+fn vad_detects_silence() {
     let samples = vec![0.0f32; 16_000];
-    assert!(streaming::is_silent(&samples));
+    assert!(!murmur::transcription::vad::contains_speech(&samples));
 }
 
 #[test]
-fn is_silent_for_loud_signal() {
-    let samples = helpers::sine_wave(440.0, 16_000, 0.5);
-    assert!(!streaming::is_silent(&samples));
+fn vad_detects_no_speech_in_empty() {
+    assert!(!murmur::transcription::vad::contains_speech(&[]));
 }
 
 #[test]
-fn is_silent_for_empty() {
-    assert!(streaming::is_silent(&[]));
-}
-
-#[test]
-fn is_silent_for_near_zero() {
+fn vad_detects_no_speech_near_zero() {
     let samples = vec![0.001f32; 1000];
-    assert!(streaming::is_silent(&samples));
+    assert!(!murmur::transcription::vad::contains_speech(&samples));
 }
 
 #[test]

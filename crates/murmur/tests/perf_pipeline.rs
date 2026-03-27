@@ -25,9 +25,10 @@ const BENCH_ITERS: usize = 50;
 const VAD_SILENCE_BUDGET_MS: u64 = 5;
 
 /// Maximum wall-clock time (ms) for a VAD call on 1 second of low-noise audio.
-/// Neural inference is significantly slower in debug builds.
+/// Neural inference is significantly slower in debug builds, and CI runners
+/// (especially with coverage instrumentation) add further overhead.
 #[cfg(debug_assertions)]
-const VAD_NOISE_BUDGET_MS: u64 = 200;
+const VAD_NOISE_BUDGET_MS: u64 = 600;
 #[cfg(not(debug_assertions))]
 const VAD_NOISE_BUDGET_MS: u64 = 20;
 

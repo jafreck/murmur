@@ -23,8 +23,6 @@ const POLL_INTERVAL_MS: u64 = 300;
 /// Maximum window size sent to Whisper, in seconds.
 /// Whisper natively handles up to 30s; leave headroom.
 const MAX_WINDOW_SECS: f32 = 28.0;
-/// RMS threshold below which audio is considered silence.
-const SILENCE_RMS_THRESHOLD: f32 = 0.005;
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -105,7 +103,7 @@ fn streaming_loop(
             buf[anchor..total_samples].to_vec()
         };
 
-        if is_silent(&window) {
+        if !super::vad::contains_speech(&window) {
             last_transcribed = total_samples;
             std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
             continue;
@@ -213,15 +211,6 @@ fn longest_suffix_prefix_match(a: &[String], b: &[String]) -> usize {
 
 // ── Utilities ──────────────────────────────────────────────────────────
 
-/// Check whether a chunk of audio is effectively silence.
-pub fn is_silent(samples: &[f32]) -> bool {
-    if samples.is_empty() {
-        return true;
-    }
-    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-    rms < SILENCE_RMS_THRESHOLD
-}
-
 /// Split text into words, normalising whitespace.
 #[allow(dead_code)]
 fn split_words(text: &str) -> Vec<String> {
@@ -291,26 +280,20 @@ mod tests {
     }
 
     #[test]
-    fn test_is_silent_zeros() {
+    fn test_vad_silence_no_speech() {
         let samples = vec![0.0f32; 16000];
-        assert!(is_silent(&samples));
+        assert!(!crate::transcription::vad::contains_speech(&samples));
     }
 
     #[test]
-    fn test_is_silent_low_noise() {
+    fn test_vad_low_noise_no_speech() {
         let samples = vec![0.001f32; 16000];
-        assert!(is_silent(&samples));
+        assert!(!crate::transcription::vad::contains_speech(&samples));
     }
 
     #[test]
-    fn test_is_silent_loud() {
-        let samples = vec![0.5f32; 16000];
-        assert!(!is_silent(&samples));
-    }
-
-    #[test]
-    fn test_is_silent_empty() {
-        assert!(is_silent(&[]));
+    fn test_vad_empty_no_speech() {
+        assert!(!crate::transcription::vad::contains_speech(&[]));
     }
 
     #[test]
@@ -361,7 +344,6 @@ mod tests {
         const { assert!(MAX_WINDOW_SECS > 0.0) };
         const { assert!(MAX_WINDOW_SECS <= 30.0) };
         const { assert!(POLL_INTERVAL_MS > 0) };
-        const { assert!(SILENCE_RMS_THRESHOLD > 0.0) };
         assert_eq!(TARGET_RATE, 16_000);
     }
 
@@ -380,19 +362,6 @@ mod tests {
                 assert_eq!(replace_chars, 3);
             }
         }
-    }
-
-    #[test]
-    fn test_is_silent_threshold_boundary() {
-        // Just below threshold
-        let val = SILENCE_RMS_THRESHOLD * 0.9;
-        let samples = vec![val; 1000];
-        assert!(is_silent(&samples));
-
-        // Just above threshold
-        let val = SILENCE_RMS_THRESHOLD * 1.1;
-        let samples = vec![val; 1000];
-        assert!(!is_silent(&samples));
     }
 
     #[test]

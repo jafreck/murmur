@@ -171,11 +171,18 @@ pub fn build_initial_prompt(ctx: &TranscriptionContext) -> Option<String> {
     // Truncate from the LEFT if too long — the end (most recent context) is most valuable
     if prompt.len() > MAX_PROMPT_CHARS {
         let start = prompt.len() - MAX_PROMPT_CHARS;
-        // Try to break at a word boundary
-        let adjusted_start = prompt[start..]
-            .find(' ')
-            .map(|i| start + i + 1)
-            .unwrap_or(start);
+        // Find the next word boundary (space) and start after it.
+        // If no space is found, the entire remaining text is one long token —
+        // skip forward to the next ", " or ". " delimiter to drop the
+        // partial term cleanly rather than cutting mid-word.
+        let adjusted_start = if let Some(i) = prompt[start..].find(' ') {
+            start + i + 1
+        } else if let Some(i) = prompt[start..].find(", ") {
+            start + i + 2
+        } else {
+            // No word boundary at all — return what we have (rare edge case)
+            start
+        };
         Some(prompt[adjusted_start..].to_string())
     } else {
         Some(prompt)

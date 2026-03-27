@@ -171,22 +171,57 @@ pub fn build_initial_prompt(ctx: &TranscriptionContext) -> Option<String> {
     // Truncate from the LEFT if too long — the end (most recent context) is most valuable
     if prompt.len() > MAX_PROMPT_CHARS {
         let start = prompt.len() - MAX_PROMPT_CHARS;
-        // Find the next word boundary (space) and start after it.
-        // If no space is found, the entire remaining text is one long token —
-        // skip forward to the next ", " or ". " delimiter to drop the
-        // partial term cleanly rather than cutting mid-word.
-        let adjusted_start = if let Some(i) = prompt[start..].find(' ') {
+        // Ensure we don't slice into the middle of a multi-byte UTF-8 character
+        let start = snap_to_char_boundary(&prompt, start);
+        // For CJK scripts (Chinese, Japanese, Korean), words aren't space-separated
+        // so any character boundary is a valid break point. For space-delimited
+        // scripts, find the next word boundary to avoid partial words.
+        let adjusted_start = if is_cjk_heavy(&prompt[start..]) {
+            start
+        } else if let Some(i) = prompt[start..].find(' ') {
             start + i + 1
         } else if let Some(i) = prompt[start..].find(", ") {
             start + i + 2
         } else {
-            // No word boundary at all — return what we have (rare edge case)
             start
         };
         Some(prompt[adjusted_start..].to_string())
     } else {
         Some(prompt)
     }
+}
+
+/// Snap a byte offset forward to the nearest UTF-8 character boundary.
+fn snap_to_char_boundary(s: &str, byte_offset: usize) -> usize {
+    let mut pos = byte_offset;
+    while pos < s.len() && !s.is_char_boundary(pos) {
+        pos += 1;
+    }
+    pos
+}
+
+/// Heuristic: check if text is predominantly CJK (no spaces between words).
+/// Looks at the first 100 characters — if most are CJK codepoints, treat
+/// the text as non-space-delimited.
+fn is_cjk_heavy(text: &str) -> bool {
+    let sample: String = text.chars().take(100).collect();
+    if sample.is_empty() {
+        return false;
+    }
+    let cjk_count = sample.chars().filter(|c| is_cjk_char(*c)).count();
+    // If more than 30% of chars are CJK, treat as CJK text
+    cjk_count * 100 / sample.chars().count() > 30
+}
+
+fn is_cjk_char(c: char) -> bool {
+    matches!(c,
+        '\u{4E00}'..='\u{9FFF}'   // CJK Unified Ideographs
+        | '\u{3400}'..='\u{4DBF}' // CJK Extension A
+        | '\u{3040}'..='\u{309F}' // Hiragana
+        | '\u{30A0}'..='\u{30FF}' // Katakana
+        | '\u{AC00}'..='\u{D7AF}' // Hangul Syllables
+        | '\u{F900}'..='\u{FAFF}' // CJK Compatibility Ideographs
+    )
 }
 
 pub struct Transcriber {
@@ -856,5 +891,74 @@ mod tests {
         // 500 chars ≈ 125-170 tokens, well within budget.
         assert!(MAX_PROMPT_CHARS <= 1000);
         assert!(MAX_PROMPT_CHARS >= 200);
+    }
+
+    // -- CJK / UTF-8 truncation --
+
+    #[test]
+    fn test_snap_to_char_boundary_ascii() {
+        let s = "hello world";
+        assert_eq!(snap_to_char_boundary(s, 0), 0);
+        assert_eq!(snap_to_char_boundary(s, 5), 5);
+    }
+
+    #[test]
+    fn test_snap_to_char_boundary_multibyte() {
+        let s = "héllo";
+        // 'é' is 2 bytes in UTF-8 — offset 1 is mid-character
+        assert!(s.is_char_boundary(0));
+        let snapped = snap_to_char_boundary(s, 2);
+        assert!(s.is_char_boundary(snapped));
+    }
+
+    #[test]
+    fn test_snap_to_char_boundary_cjk() {
+        let s = "你好世界";
+        // Each CJK char is 3 bytes. Offset 1 is mid-character.
+        let snapped = snap_to_char_boundary(s, 1);
+        assert!(s.is_char_boundary(snapped));
+        assert_eq!(snapped, 3); // snaps to start of second char
+    }
+
+    #[test]
+    fn test_is_cjk_heavy_chinese() {
+        assert!(is_cjk_heavy("你好世界这是一个测试"));
+    }
+
+    #[test]
+    fn test_is_cjk_heavy_japanese() {
+        assert!(is_cjk_heavy("こんにちは世界"));
+    }
+
+    #[test]
+    fn test_is_cjk_heavy_english() {
+        assert!(!is_cjk_heavy("hello world this is a test"));
+    }
+
+    #[test]
+    fn test_is_cjk_heavy_mixed() {
+        // Mostly English with a few CJK chars — should not be CJK-heavy
+        assert!(!is_cjk_heavy("hello world 你好 this is a test string"));
+    }
+
+    #[test]
+    fn test_is_cjk_heavy_empty() {
+        assert!(!is_cjk_heavy(""));
+    }
+
+    #[test]
+    fn test_truncation_preserves_cjk_chars() {
+        // Build a prompt with CJK surrounding text that exceeds MAX_PROMPT_CHARS
+        let cjk_text = "你好".repeat(300); // 600 CJK chars = 1800 bytes
+        let ctx = TranscriptionContext {
+            surrounding_text: Some(cjk_text),
+            ..Default::default()
+        };
+        let prompt = build_initial_prompt(&ctx).unwrap();
+        // Every character in the result should be valid
+        assert!(prompt.len() <= MAX_PROMPT_CHARS);
+        for c in prompt.chars() {
+            assert!(c.len_utf8() > 0);
+        }
     }
 }

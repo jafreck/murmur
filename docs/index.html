@@ -8,8 +8,8 @@
   <meta property="og:title" content="murmur — Local Voice Dictation">
   <meta property="og:description" content="Voice dictation that never leaves your machine. 100% on-device, no cloud, no accounts, no spying.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://jacobfreck.github.io/murmur/">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐕</text></svg>">
+  <meta property="og:url" content="https://jafreck.github.io/murmur/">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
   <style>
     :root {
       --bg: #0a0a0f;
@@ -312,6 +312,7 @@
       color: var(--text-dim);
       transition: all 0.2s;
       border-bottom: none;
+      white-space: nowrap;
     }
     .install-tab:first-child { border-radius: 10px 0 0 0; }
     .install-tab:last-child { border-radius: 0 10px 0 0; }
@@ -365,7 +366,7 @@
     <a href="#features">Features</a>
     <a href="#models">Models</a>
     <a href="#install">Install</a>
-    <a class="gh-btn" href="https://github.com/jacobfreck/murmur" target="_blank" rel="noopener">
+    <a class="gh-btn" href="https://github.com/jafreck/murmur" target="_blank" rel="noopener">
       <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
       GitHub
     </a>
@@ -379,12 +380,11 @@
   <p class="subtitle">Your voice, your machine, your data. murmur runs entirely on-device — no cloud, no accounts, no audio ever leaves your computer.</p>
   <div class="actions">
     <a class="btn-primary" href="#install">Get Started</a>
-    <a class="btn-secondary" href="https://github.com/jacobfreck/murmur" target="_blank" rel="noopener">View Source</a>
   </div>
 
   <div class="install-snippet">
     <span class="prompt">$</span>
-    <code id="install-cmd">curl -sSf https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.sh | bash</code>
+    <code id="install-cmd">curl -sSf https://raw.githubusercontent.com/jafreck/murmur/main/scripts/install.sh | bash</code>
     <button class="copy-btn" onclick="copyInstall()" aria-label="Copy install command">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
     </button>
@@ -447,6 +447,11 @@
       <div class="icon">🌍</div>
       <h3>Multilingual</h3>
       <p>English-optimized models for speed, or large-v3-turbo for 90+ languages. Switch models with a single command.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🧠</div>
+      <h3>Context Aware</h3>
+      <p>murmur detects the active application and adjusts formatting — Markdown in editors, plain text in chat, and more.</p>
     </div>
   </div>
 </section>
@@ -518,21 +523,21 @@
   </div>
   <div class="install-panel active" id="panel-macos">
 <span class="comment"># One-line install — downloads the right binary for your platform</span>
-curl -sSf https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.sh | bash
+curl -sSf https://raw.githubusercontent.com/jafreck/murmur/main/scripts/install.sh | bash
 
 <span class="comment"># Then start dictating</span>
 murmur start
   </div>
   <div class="install-panel" id="panel-windows">
 <span class="comment"># PowerShell — run as administrator</span>
-irm https://raw.githubusercontent.com/jacobfreck/murmur/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/jafreck/murmur/main/scripts/install.ps1 | iex
 
 <span class="comment"># Then start dictating</span>
 murmur start
   </div>
   <div class="install-panel" id="panel-source">
 <span class="comment"># Clone and build</span>
-git clone https://github.com/jacobfreck/murmur.git
+git clone https://github.com/jafreck/murmur.git
 cd murmur
 cargo build --release
 
@@ -553,11 +558,11 @@ murmur start
 <!-- FOOTER -->
 <footer>
   <div class="footer-links">
-    <a href="https://github.com/jacobfreck/murmur">GitHub</a>
-    <a href="https://github.com/jacobfreck/murmur/issues">Issues</a>
-    <a href="https://github.com/jacobfreck/murmur/blob/main/LICENSE">MIT License</a>
+    <a href="https://github.com/jafreck/murmur">GitHub</a>
+    <a href="https://github.com/jafreck/murmur/issues">Issues</a>
+    <a href="https://github.com/jafreck/murmur/blob/main/LICENSE">MIT License</a>
   </div>
-  <p>Built by <a href="https://github.com/jacobfreck">Jacob Freck</a> · Powered by <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a></p>
+  <p>Built by <a href="https://github.com/jafreck">Jacob Freck</a> · Powered by <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a></p>
 </footer>
 
 <script>

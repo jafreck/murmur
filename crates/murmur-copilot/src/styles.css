@@ -57,12 +57,52 @@ html, body {
   color: #fff;
 }
 
+.btn-stealth {
+  background: #6366f1;
+  color: #fff;
+  font-size: 12px;
+  padding: 5px 10px;
+}
+
+.btn-stealth.active {
+  background: #4f46e5;
+  box-shadow: 0 0 6px rgba(99, 102, 241, 0.5);
+}
+
 .status {
   margin-left: auto;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   opacity: 0.6;
+}
+
+/* ── Settings ─────────────────────────────────────────── */
+
+.settings {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  -webkit-app-region: no-drag;
+}
+
+.device-label {
+  font-size: 12px;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.device-select {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e0e0e0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
 }
 
 /* ── Transcript ───────────────────────────────────────── */

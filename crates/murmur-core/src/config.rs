@@ -216,6 +216,13 @@ pub struct Config {
     /// Directory for saving dictation notes (default: data_dir/murmur/notes)
     #[serde(default)]
     pub notes_dir: Option<std::path::PathBuf>,
+    /// Input device name for system audio capture (e.g. "BlackHole 2ch").
+    /// When set, meeting sessions capture both mic and system audio.
+    #[serde(default)]
+    pub system_audio_device: Option<String>,
+    /// Hide the overlay window from screen capture and screen sharing.
+    #[serde(default)]
+    pub stealth_mode: bool,
 }
 
 fn default_true() -> bool {
@@ -251,6 +258,8 @@ impl Default for Config {
             wake_word: default_wake_word(),
             stop_phrase: default_stop_phrase(),
             notes_dir: None,
+            system_audio_device: None,
+            stealth_mode: false,
         }
     }
 }

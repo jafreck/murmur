@@ -1,9 +1,10 @@
 use std::sync::{mpsc, Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use log::info;
+use log::{info, warn};
 use murmur_core::{
-    audio::AudioRecorder,
+    audio::{AudioRecorder, SystemAudioCapturer},
     config::Config,
     transcription::{start_streaming, streaming::StreamingHandle, StreamingEvent, Transcriber},
 };
@@ -16,14 +17,42 @@ pub enum SessionState {
     Stopped,
 }
 
+/// Identifies who is speaking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Speaker {
+    User,
+    Remote,
+}
+
+/// A single labelled transcript fragment.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TranscriptEntry {
+    pub speaker: Speaker,
+    pub text: String,
+    pub timestamp_ms: u64,
+}
+
 /// Manages a single meeting's audio capture and streaming transcription.
+///
+/// Supports an optional second audio stream (system audio) so both the
+/// user's microphone and the remote participants' audio are transcribed.
 pub struct MeetingSession {
     state: SessionState,
     recorder: AudioRecorder,
+    system_capturer: Option<SystemAudioCapturer>,
     transcriber: Arc<Transcriber>,
-    streaming_handle: Option<StreamingHandle>,
-    transcript: Arc<Mutex<String>>,
+    mic_streaming: Option<StreamingHandle>,
+    sys_streaming: Option<StreamingHandle>,
+    transcript: Arc<Mutex<Vec<TranscriptEntry>>>,
     config: Config,
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 impl MeetingSession {
@@ -47,12 +76,25 @@ impl MeetingSession {
         let mut recorder = AudioRecorder::with_noise_suppression(config.noise_suppression);
         recorder.warm()?;
 
+        // Set up system audio capturer if a device is configured.
+        let system_capturer = config.system_audio_device.as_deref().and_then(|name| {
+            match SystemAudioCapturer::new(name) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    warn!("could not open system audio device '{name}': {e}");
+                    None
+                }
+            }
+        });
+
         Ok(Self {
             state: SessionState::Idle,
             recorder,
+            system_capturer,
             transcriber,
-            streaming_handle: None,
-            transcript: Arc::new(Mutex::new(String::new())),
+            mic_streaming: None,
+            sys_streaming: None,
+            transcript: Arc::new(Mutex::new(Vec::new())),
             config,
         })
     }
@@ -61,52 +103,129 @@ impl MeetingSession {
         self.state
     }
 
-    /// Start microphone capture and streaming transcription.
-    /// Returns a receiver that yields transcript text updates.
-    pub fn start(&mut self) -> Result<mpsc::Receiver<TranscriptUpdate>> {
-        self.recorder.start_in_memory()?;
-        let sample_buffer = self.recorder.sample_buffer();
+    /// Configure (or clear) the system audio device at runtime.
+    pub fn set_system_audio_device(&mut self, device_name: Option<&str>) {
+        // Stop any existing system capture.
+        if let Some(ref mut cap) = self.system_capturer {
+            cap.stop();
+        }
 
-        let (streaming_tx, streaming_rx) = mpsc::channel::<StreamingEvent>();
-        let handle = start_streaming(
-            sample_buffer,
+        self.system_capturer = device_name.and_then(|name| match SystemAudioCapturer::new(name) {
+            Ok(c) => {
+                info!("system audio device set to '{name}'");
+                Some(c)
+            }
+            Err(e) => {
+                warn!("could not open system audio device '{name}': {e}");
+                None
+            }
+        });
+    }
+
+    /// Start microphone (and optionally system audio) capture with streaming
+    /// transcription. Returns a receiver that yields transcript updates.
+    pub fn start(&mut self) -> Result<mpsc::Receiver<TranscriptUpdate>> {
+        if self.state == SessionState::Recording {
+            anyhow::bail!("meeting session already recording");
+        }
+
+        // ── Microphone stream ────────────────────────────────────────────
+        self.recorder.start_in_memory()?;
+        let mic_samples = self.recorder.sample_buffer();
+
+        let (mic_tx, mic_rx) = mpsc::channel::<StreamingEvent>();
+        let mic_handle = start_streaming(
+            mic_samples,
             Arc::clone(&self.transcriber),
             self.config.translate_to_english,
             self.config.filler_word_removal,
-            streaming_tx,
+            mic_tx,
         );
-        self.streaming_handle = Some(handle);
+        self.mic_streaming = Some(mic_handle);
 
-        // Forward streaming events into simpler transcript updates while
-        // also accumulating the full transcript text.
+        // ── System audio stream (optional) ───────────────────────────────
+        let sys_rx_opt = if let Some(ref mut capturer) = self.system_capturer {
+            match capturer.start() {
+                Ok(sys_samples) => {
+                    let (sys_tx, sys_rx) = mpsc::channel::<StreamingEvent>();
+                    let sys_handle = start_streaming(
+                        sys_samples,
+                        Arc::clone(&self.transcriber),
+                        self.config.translate_to_english,
+                        self.config.filler_word_removal,
+                        sys_tx,
+                    );
+                    self.sys_streaming = Some(sys_handle);
+                    Some(sys_rx)
+                }
+                Err(e) => {
+                    warn!("failed to start system audio capture: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // ── Merge streams into labelled transcript updates ───────────────
         let (update_tx, update_rx) = mpsc::channel::<TranscriptUpdate>();
         let transcript = Arc::clone(&self.transcript);
+
+        // Mic forwarder
+        let update_tx_mic = update_tx.clone();
+        let transcript_mic = Arc::clone(&transcript);
         std::thread::spawn(move || {
-            for event in streaming_rx {
-                match event {
-                    StreamingEvent::PartialText {
-                        text,
-                        replace_chars,
-                    } => {
-                        {
-                            let mut buf = transcript.lock().unwrap();
-                            if replace_chars > 0 {
-                                let new_len = buf.len().saturating_sub(replace_chars);
-                                buf.truncate(new_len);
-                            }
-                            buf.push_str(&text);
-                        }
-                        let _ = update_tx.send(TranscriptUpdate {
+            for event in mic_rx {
+                if let StreamingEvent::PartialText {
+                    text,
+                    replace_chars,
+                } = event
+                {
+                    {
+                        let mut entries = transcript_mic.lock().unwrap();
+                        entries.push(TranscriptEntry {
+                            speaker: Speaker::User,
                             text: text.clone(),
-                            replace_chars,
+                            timestamp_ms: now_ms(),
                         });
                     }
-                    StreamingEvent::SpeechDetected => {
-                        // VAD heartbeat — no action needed for transcript display
-                    }
+                    let _ = update_tx_mic.send(TranscriptUpdate {
+                        speaker: Speaker::User,
+                        text,
+                        replace_chars,
+                    });
                 }
             }
         });
+
+        // System audio forwarder (if active)
+        if let Some(sys_rx) = sys_rx_opt {
+            let update_tx_sys = update_tx;
+            let transcript_sys = Arc::clone(&transcript);
+            std::thread::spawn(move || {
+                for event in sys_rx {
+                    if let StreamingEvent::PartialText {
+                        text,
+                        replace_chars,
+                    } = event
+                    {
+                        {
+                            let mut entries = transcript_sys.lock().unwrap();
+                            entries.push(TranscriptEntry {
+                                speaker: Speaker::Remote,
+                                text: text.clone(),
+                                timestamp_ms: now_ms(),
+                            });
+                        }
+                        let _ = update_tx_sys.send(TranscriptUpdate {
+                            speaker: Speaker::Remote,
+                            text,
+                            replace_chars,
+                        });
+                    }
+                }
+            });
+        }
 
         self.state = SessionState::Recording;
         info!("meeting started — streaming transcription active");
@@ -114,22 +233,29 @@ impl MeetingSession {
     }
 
     /// Stop recording and streaming. Returns the accumulated transcript.
-    pub fn stop(&mut self) -> String {
-        if let Some(handle) = self.streaming_handle.take() {
+    pub fn stop(&mut self) -> Vec<TranscriptEntry> {
+        if let Some(handle) = self.mic_streaming.take() {
+            handle.stop_and_join();
+        }
+        if let Some(handle) = self.sys_streaming.take() {
             handle.stop_and_join();
         }
         self.recorder.stop_samples();
+        if let Some(ref mut capturer) = self.system_capturer {
+            capturer.stop();
+        }
         self.state = SessionState::Stopped;
         info!("meeting stopped");
 
-        let transcript = self.transcript.lock().unwrap();
-        transcript.clone()
+        let entries = self.transcript.lock().unwrap();
+        entries.clone()
     }
 }
 
 /// A simplified transcript update sent to the frontend.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TranscriptUpdate {
+    pub speaker: Speaker,
     pub text: String,
     pub replace_chars: usize,
 }

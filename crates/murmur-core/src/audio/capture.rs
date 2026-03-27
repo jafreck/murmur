@@ -476,7 +476,7 @@ impl AudioRecorder {
 
 /// Simple linear interpolation resampler.
 /// Good enough for speech; use `rubato` crate for higher quality if needed.
-fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+pub(crate) fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if from_rate == to_rate {
         return input.to_vec();
     }

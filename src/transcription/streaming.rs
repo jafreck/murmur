@@ -35,22 +35,48 @@ pub enum StreamingEvent {
     PartialText { text: String, replace_chars: usize },
 }
 
+/// Handle returned by [`start_streaming`] to control the streaming thread.
+///
+/// Dropping the handle sends a stop signal (by disconnecting the channel),
+/// but does **not** block until the thread exits. Call [`stop_and_join`]
+/// when you need to guarantee the thread has exited before reusing the
+/// `Transcriber` (e.g. before starting a final transcription pass).
+pub struct StreamingHandle {
+    stop_tx: mpsc::Sender<()>,
+    join_handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl StreamingHandle {
+    /// Signal the streaming thread to stop and block until it exits.
+    ///
+    /// This prevents concurrent access to the shared `WhisperContext`
+    /// between the streaming thread and a subsequent transcription thread.
+    pub fn stop_and_join(mut self) {
+        let _ = self.stop_tx.send(());
+        if let Some(handle) = self.join_handle.take() {
+            if let Err(e) = handle.join() {
+                log::error!("Streaming thread panicked: {e:?}");
+            }
+        }
+    }
+}
+
 /// Start streaming transcription in a background thread.
 ///
 /// Reads from `sample_buffer` (the AudioRecorder's shared buffer), transcribes
 /// overlapping chunks, and sends incremental text via `tx`.
 ///
-/// Returns a handle that, when dropped or sent `()`, signals the thread to stop.
+/// Returns a [`StreamingHandle`] that can stop and join the thread.
 pub fn start_streaming(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
     transcriber: Arc<Transcriber>,
     translate: bool,
     spoken_punctuation: bool,
     tx: mpsc::Sender<StreamingEvent>,
-) -> mpsc::Sender<()> {
+) -> StreamingHandle {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
 
-    std::thread::spawn(move || {
+    let join_handle = std::thread::spawn(move || {
         streaming_loop(
             sample_buffer,
             transcriber,
@@ -61,7 +87,10 @@ pub fn start_streaming(
         );
     });
 
-    stop_tx
+    StreamingHandle {
+        stop_tx,
+        join_handle: Some(join_handle),
+    }
 }
 
 // ── Internal ───────────────────────────────────────────────────────────

@@ -35,12 +35,24 @@ export function initApp(): void {
   const statusEl = document.getElementById("status") as HTMLSpanElement;
   const transcriptEl = document.getElementById("transcript") as HTMLElement;
   const appEl = document.getElementById("app") as HTMLElement;
+  const llmResponseEl = document.getElementById("llm-response") as HTMLElement;
+  const llmContentEl = document.getElementById("llm-content") as HTMLElement;
 
   const display = new TranscriptDisplay(transcriptEl);
 
   let fadeTimer: ReturnType<typeof setTimeout> | null = null;
   let sleepTimer: ReturnType<typeof setTimeout> | null = null;
   let isRecording = false;
+
+  // ── Focused mode ─────────────────────────────────────────────────
+  appEl.addEventListener("click", () => {
+    document.body.classList.toggle("focused");
+  });
+
+  // ── Auto-LLM state ──────────────────────────────────────────────
+  let accumulatedText = "";
+  let lastAskedQuestion = "";
+  let askInFlight = false;
 
   function setRecording() {
     isRecording = true;
@@ -80,16 +92,59 @@ export function initApp(): void {
     }, SLEEP_TIMEOUT_MS);
   }
 
+  // ── Auto-LLM helpers ──────────────────────────────────────────────
+  function extractQuestion(text: string): string | null {
+    const sentences = text.match(/[^.!?\n]*\?/g);
+    if (!sentences || sentences.length === 0) return null;
+    return sentences[sentences.length - 1].trim();
+  }
+
+  async function maybeAskLlm(): Promise<void> {
+    if (askInFlight) return;
+
+    const question = extractQuestion(accumulatedText);
+    if (!question || question === lastAskedQuestion) return;
+
+    lastAskedQuestion = question;
+    askInFlight = true;
+
+    try {
+      const result = (await invoke("ask_question", { question })) as
+        | string
+        | null;
+      if (result) {
+        llmContentEl.textContent = result;
+        llmResponseEl.classList.remove("hidden");
+      }
+    } catch {
+      /* LLM unavailable — silently ignore */
+    } finally {
+      askInFlight = false;
+    }
+  }
+
   // ── Real-time transcript updates ──────────────────────────────────
   listen("transcript-update", (event) => {
     const payload = event.payload as TranscriptUpdate;
     display.applyUpdate(payload);
+
+    // Build accumulated text independently of replace_chars display logic
+    if (payload.replace_chars > 0) {
+      accumulatedText = accumulatedText.slice(0, -payload.replace_chars);
+    }
+    accumulatedText += payload.text;
+
+    maybeAskLlm();
     resetTimers();
   });
 
   // ── Wake/sleep voice events ───────────────────────────────────────
   listen("copilot-wake", async () => {
     display.clear();
+    accumulatedText = "";
+    lastAskedQuestion = "";
+    llmResponseEl.classList.add("hidden");
+    llmContentEl.textContent = "";
     try {
       await invoke("start_meeting");
       setRecording();

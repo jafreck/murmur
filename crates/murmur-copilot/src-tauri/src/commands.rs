@@ -178,6 +178,29 @@ pub async fn extract_action_items(state: State<'_, AppState>) -> Result<Option<S
     .map_err(|e| e.to_string())?
 }
 
+/// Answer a free-form question using the current transcript as context.
+#[tauri::command]
+pub async fn ask_question(
+    state: State<'_, AppState>,
+    question: String,
+) -> Result<Option<String>, String> {
+    let transcript_text = {
+        let session_guard = state.session.lock().map_err(|e| e.to_string())?;
+        match session_guard.as_ref() {
+            Some(session) => session.transcript_text(),
+            None => String::new(),
+        }
+    };
+
+    let llm = state.llm.clone();
+    tokio::task::spawn_blocking(move || {
+        let llm = llm.lock().map_err(|e| e.to_string())?;
+        Ok(llm.ask(&question, &transcript_text))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ── Session management commands ──────────────────────────────────────────────
 
 /// Returns a list of saved meeting sessions (lightweight summaries).

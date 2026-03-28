@@ -2,7 +2,7 @@ use log::{info, warn};
 use murmur_core::llm::{
     ollama::OllamaProvider,
     prompt::{action_items_prompt, suggestion_prompt, summary_prompt},
-    LlmProvider,
+    ChatMessage, LlmProvider, Role,
 };
 
 /// Manages the LLM lifecycle for the copilot.
@@ -70,6 +70,35 @@ impl LlmManager {
             Ok(response) => Some(response),
             Err(e) => {
                 warn!("LLM action items extraction failed: {e}");
+                None
+            }
+        }
+    }
+
+    /// Answer a free-form question using recent transcript as context.
+    pub fn ask(&self, question: &str, context: &str) -> Option<String> {
+        let provider = self.provider.as_ref()?;
+        let messages = vec![
+            ChatMessage {
+                role: Role::System,
+                content: "You are a helpful voice assistant. Answer concisely. \
+                          The user has been dictating and asked a question. \
+                          Here is the recent transcript for context."
+                    .to_string(),
+            },
+            ChatMessage {
+                role: Role::User,
+                content: context.to_string(),
+            },
+            ChatMessage {
+                role: Role::User,
+                content: question.to_string(),
+            },
+        ];
+        match provider.generate(&messages) {
+            Ok(response) => Some(response),
+            Err(e) => {
+                warn!("LLM ask failed: {e}");
                 None
             }
         }

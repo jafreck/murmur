@@ -86,3 +86,30 @@ html, body {
   background: rgba(255, 255, 255, 0.15);
   border-radius: 2px;
 }
+
+/* ── Focused Mode ─────────────────────────────────────── */
+
+body.focused {
+  background: rgba(10, 10, 16, 0.70);
+}
+
+/* ── LLM Response ─────────────────────────────────────── */
+
+.llm-response {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 10px 0;
+  -webkit-app-region: no-drag;
+}
+
+.llm-content {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: rgba(150, 220, 255, 0.9);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.hidden {
+  display: none;
+}

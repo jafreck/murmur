@@ -49,6 +49,7 @@ fn main() {
             commands::generate_summary,
             commands::get_llm_status,
             commands::extract_action_items,
+            commands::ask_question,
             commands::list_sessions,
             commands::get_session,
             commands::delete_session,

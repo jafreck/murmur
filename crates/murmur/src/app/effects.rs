@@ -92,6 +92,75 @@ pub(crate) fn decide_transcription(
     TranscribeDecision::Transcribe
 }
 
+/// Whether to record to a file or keep audio in memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecordingMode {
+    InMemory,
+    File,
+}
+
+/// Choose the recording mode based on the max-recordings setting.
+///
+/// When `max_recordings` is 0 the user opted out of persisting WAV files,
+/// so we capture into an in-memory sample buffer instead.
+pub(crate) fn recording_mode(max_recordings: u32) -> RecordingMode {
+    if max_recordings == 0 {
+        RecordingMode::InMemory
+    } else {
+        RecordingMode::File
+    }
+}
+
+/// Apply the post-processing pipeline to raw transcription output.
+///
+/// The pipeline conditionally removes filler words and converts spoken
+/// punctuation, then always normalises spacing after punctuation marks.
+pub(crate) fn postprocess_transcription(
+    raw: &str,
+    filler_word_removal: bool,
+    spoken_punctuation: bool,
+) -> String {
+    let mut text = raw.to_string();
+    if filler_word_removal {
+        text = postprocess::remove_filler_words(&text);
+    }
+    if spoken_punctuation {
+        text = postprocess::process(&text);
+    }
+    postprocess::ensure_space_after_punctuation(&text)
+}
+
+/// The tray state to show after exiting hotkey-capture mode.
+pub(crate) fn tray_state_after_hotkey_capture(has_transcriber: bool) -> TrayState {
+    if has_transcriber {
+        TrayState::Idle
+    } else {
+        TrayState::Loading
+    }
+}
+
+/// Whether the streaming pipeline has everything it needs to start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StreamingReadiness {
+    NoTranscriber,
+    NoWorker,
+    Ready,
+}
+
+/// Check whether the streaming pipeline can be started.
+pub(crate) fn check_streaming_readiness(
+    has_transcriber: bool,
+    has_worker: bool,
+) -> StreamingReadiness {
+    if !has_transcriber {
+        StreamingReadiness::NoTranscriber
+    } else if !has_worker {
+        StreamingReadiness::NoWorker
+    } else {
+        StreamingReadiness::Ready
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 pub struct EffectContext<'a> {
@@ -119,10 +188,9 @@ pub fn apply_effect(
         AppEffect::None => {}
         AppEffect::StartRecording(path) => {
             info!("Recording...");
-            let result = if ctx.state.max_recordings == 0 {
-                ctx.recorder.start_in_memory()
-            } else {
-                ctx.recorder.start(&path)
+            let result = match recording_mode(ctx.state.max_recordings) {
+                RecordingMode::InMemory => ctx.recorder.start_in_memory(),
+                RecordingMode::File => ctx.recorder.start(&path),
             };
             if let Err(e) = result {
                 error!("Failed to start recording: {e}");
@@ -223,11 +291,8 @@ pub fn apply_effect(
             } else {
                 error!("Invalid captured key: {key_name}");
             }
-            ctx.tray.set_state(if ctx.transcriber.is_some() {
-                TrayState::Idle
-            } else {
-                TrayState::Loading
-            });
+            ctx.tray
+                .set_state(tray_state_after_hotkey_capture(ctx.transcriber.is_some()));
         }
         AppEffect::UpdateNoiseSuppression(enabled) => {
             ctx.recorder.set_noise_suppression(enabled);
@@ -368,14 +433,11 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
                 std::thread::spawn(move || {
                     match transcriber.transcribe_samples(&samples, translate_to_english) {
                         Ok(raw) => {
-                            let mut text = raw;
-                            if filler_word_removal {
-                                text = postprocess::remove_filler_words(&text);
-                            }
-                            if spoken_punctuation {
-                                text = postprocess::process(&text);
-                            }
-                            text = postprocess::ensure_space_after_punctuation(&text);
+                            let text = postprocess_transcription(
+                                &raw,
+                                filler_word_removal,
+                                spoken_punctuation,
+                            );
                             if !text.is_empty() {
                                 let _ = tx.send(AppMessage::TranscriptionDone(text));
                             }
@@ -406,14 +468,11 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
                     RecordingStore::prune(max_recordings);
                     match result {
                         Ok(raw) => {
-                            let mut text = raw;
-                            if filler_word_removal {
-                                text = postprocess::remove_filler_words(&text);
-                            }
-                            if spoken_punctuation {
-                                text = postprocess::process(&text);
-                            }
-                            text = postprocess::ensure_space_after_punctuation(&text);
+                            let text = postprocess_transcription(
+                                &raw,
+                                filler_word_removal,
+                                spoken_punctuation,
+                            );
                             if !text.is_empty() {
                                 let _ = tx.send(AppMessage::TranscriptionDone(text));
                             }
@@ -430,10 +489,19 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
 }
 
 fn start_streaming(ctx: &mut EffectContext<'_>) {
-    let Some(transcriber) = ctx.transcriber.as_ref().map(Arc::clone) else {
-        info!("Model not loaded yet — cannot start streaming");
-        return;
-    };
+    match check_streaming_readiness(ctx.transcriber.is_some(), ctx.streaming_worker.is_some()) {
+        StreamingReadiness::NoTranscriber => {
+            info!("Model not loaded yet — cannot start streaming");
+            return;
+        }
+        StreamingReadiness::NoWorker => {
+            log::error!("No whisper worker available — cannot start streaming");
+            return;
+        }
+        StreamingReadiness::Ready => {}
+    }
+
+    let transcriber = ctx.transcriber.as_ref().map(Arc::clone).unwrap();
     info!("Starting streaming transcription...");
     let sample_buffer = ctx.recorder.sample_buffer();
     let tx_app = ctx.tx.clone();
@@ -478,13 +546,7 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
         }
     });
 
-    let worker = match ctx.streaming_worker.take() {
-        Some(w) => w,
-        None => {
-            log::error!("No whisper worker available — cannot start streaming");
-            return;
-        }
-    };
+    let worker = ctx.streaming_worker.take().unwrap();
 
     let handle = streaming::start_streaming(
         sample_buffer,
@@ -892,6 +954,140 @@ mod tests {
         assert_eq!(
             decide_transcription(true, 0, true, false),
             TranscribeDecision::NoAudio
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // recording_mode
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn recording_mode_in_memory_when_zero() {
+        assert_eq!(recording_mode(0), RecordingMode::InMemory);
+    }
+
+    #[test]
+    fn recording_mode_file_when_nonzero() {
+        assert_eq!(recording_mode(1), RecordingMode::File);
+        assert_eq!(recording_mode(100), RecordingMode::File);
+    }
+
+    // -----------------------------------------------------------------------
+    // postprocess_transcription
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn postprocess_passthrough() {
+        // With both flags off, only ensure_space_after_punctuation runs
+        assert_eq!(
+            postprocess_transcription("hello world", false, false),
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn postprocess_space_after_punctuation_always_applied() {
+        // Even with both flags off the spacing normaliser runs
+        assert_eq!(
+            postprocess_transcription("hello,world", false, false),
+            "hello, world"
+        );
+    }
+
+    #[test]
+    fn postprocess_filler_removal_only() {
+        let result = postprocess_transcription("um hello um world", true, false);
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn postprocess_spoken_punctuation_only() {
+        let result = postprocess_transcription("hello period", false, true);
+        assert!(result.contains('.'), "expected '.' in: {result}");
+        assert!(
+            !result.contains("period"),
+            "spoken word should be replaced: {result}"
+        );
+    }
+
+    #[test]
+    fn postprocess_both_enabled() {
+        let result = postprocess_transcription("um hello comma world period", true, true);
+        assert!(!result.contains("um"), "filler should be removed: {result}");
+        assert!(result.contains(','), "comma should be present: {result}");
+        assert!(result.contains('.'), "period should be present: {result}");
+    }
+
+    #[test]
+    fn postprocess_empty_text() {
+        assert_eq!(postprocess_transcription("", false, false), "");
+        assert_eq!(postprocess_transcription("", true, true), "");
+    }
+
+    #[test]
+    fn postprocess_only_fillers_produces_empty() {
+        let result = postprocess_transcription("um uh er", true, false);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn postprocess_filler_removal_preserves_real_words() {
+        let result = postprocess_transcription("I think so", true, false);
+        assert_eq!(result, "I think so");
+    }
+
+    // -----------------------------------------------------------------------
+    // tray_state_after_hotkey_capture
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tray_after_hotkey_idle_when_transcriber_loaded() {
+        assert_eq!(tray_state_after_hotkey_capture(true), TrayState::Idle);
+    }
+
+    #[test]
+    fn tray_after_hotkey_loading_when_no_transcriber() {
+        assert_eq!(tray_state_after_hotkey_capture(false), TrayState::Loading);
+    }
+
+    // -----------------------------------------------------------------------
+    // check_streaming_readiness
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn streaming_readiness_no_transcriber() {
+        assert_eq!(
+            check_streaming_readiness(false, false),
+            StreamingReadiness::NoTranscriber
+        );
+        assert_eq!(
+            check_streaming_readiness(false, true),
+            StreamingReadiness::NoTranscriber
+        );
+    }
+
+    #[test]
+    fn streaming_readiness_no_worker() {
+        assert_eq!(
+            check_streaming_readiness(true, false),
+            StreamingReadiness::NoWorker
+        );
+    }
+
+    #[test]
+    fn streaming_readiness_ready() {
+        assert_eq!(
+            check_streaming_readiness(true, true),
+            StreamingReadiness::Ready
+        );
+    }
+
+    #[test]
+    fn streaming_readiness_no_transcriber_takes_priority() {
+        // Even when worker is present, no transcriber wins
+        assert_eq!(
+            check_streaming_readiness(false, true),
+            StreamingReadiness::NoTranscriber
         );
     }
 }

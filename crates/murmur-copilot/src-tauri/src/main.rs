@@ -20,7 +20,6 @@ fn main() {
     tauri::Builder::default()
         .manage(commands::AppState {
             session: std::sync::Mutex::new(None),
-            stealth_enabled: std::sync::Mutex::new(config.stealth_mode),
             llm: std::sync::Arc::new(std::sync::Mutex::new(llm_manager)),
             session_store: std::sync::Mutex::new(session_store),
             auto_summary: config.auto_summary,
@@ -36,7 +35,6 @@ fn main() {
             commands::get_status,
             commands::list_audio_devices,
             commands::set_system_audio_device,
-            commands::toggle_stealth,
             commands::get_suggestion,
             commands::generate_summary,
             commands::get_llm_status,

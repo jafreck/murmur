@@ -1,17 +1,15 @@
 use std::sync::{Arc, Mutex};
 
 use log::info;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::llm::LlmManager;
 use crate::meeting::{MeetingSession, SessionState, TranscriptEntry};
-use crate::overlay;
 use crate::session::{SavedSession, SessionStore, SessionSummary};
 
 /// Application-level state managed by Tauri.
 pub struct AppState {
     pub session: Mutex<Option<MeetingSession>>,
-    pub stealth_enabled: Mutex<bool>,
     pub llm: Arc<Mutex<LlmManager>>,
     pub session_store: Mutex<SessionStore>,
     #[allow(dead_code)]
@@ -90,25 +88,6 @@ pub fn set_system_audio_device(
         Some(name) => Ok(format!("system audio device set to '{name}'")),
         None => Ok("system audio device cleared".into()),
     }
-}
-
-/// Toggle stealth mode on/off. Returns the new state.
-#[tauri::command]
-pub fn toggle_stealth(state: State<'_, AppState>, app: AppHandle) -> Result<bool, String> {
-    let mut stealth = state.stealth_enabled.lock().map_err(|e| e.to_string())?;
-    let new_state = !*stealth;
-    *stealth = new_state;
-
-    if let Some(window) = app.get_webview_window("overlay") {
-        if new_state {
-            overlay::apply_stealth_mode(&window);
-        } else {
-            overlay::remove_stealth_mode(&window);
-        }
-    }
-
-    info!("stealth mode toggled to {new_state}");
-    Ok(new_state)
 }
 
 /// Get an AI-generated suggestion based on the current meeting transcript.

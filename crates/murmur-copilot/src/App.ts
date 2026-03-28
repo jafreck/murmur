@@ -41,7 +41,6 @@ function listen(
 export function initApp(): void {
   const btnStart = document.getElementById("btn-start") as HTMLButtonElement;
   const btnStop = document.getElementById("btn-stop") as HTMLButtonElement;
-  const btnStealth = document.getElementById("btn-stealth") as HTMLButtonElement;
   const btnSuggest = document.getElementById("btn-suggest") as HTMLButtonElement;
   const btnHistory = document.getElementById("btn-history") as HTMLButtonElement;
   const statusEl = document.getElementById("status") as HTMLSpanElement;
@@ -153,17 +152,6 @@ export function initApp(): void {
       suggestionContent.textContent = `Error: ${err}`;
     } finally {
       btnSuggest.disabled = false;
-    }
-  });
-
-  // ── Stealth toggle ─────────────────────────────────────────────────
-  btnStealth.addEventListener("click", async () => {
-    try {
-      const enabled = (await invoke("toggle_stealth")) as boolean;
-      btnStealth.textContent = enabled ? "👁 Stealth: ON" : "👁 Stealth: OFF";
-      btnStealth.classList.toggle("active", enabled);
-    } catch (err) {
-      statusEl.textContent = `error: ${err}`;
     }
   });
 

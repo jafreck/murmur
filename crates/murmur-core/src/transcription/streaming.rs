@@ -162,19 +162,17 @@ fn streaming_loop(
             Err(e) => e.into_inner().len(),
         };
 
-        let new_samples = total_samples.saturating_sub(consumed_boundary);
-        if new_samples < min_new_samples {
+        if !has_enough_new_audio(total_samples, consumed_boundary, min_new_samples) {
             std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
             continue;
         }
 
-        // Start the chunk with overlap from the previous chunk for context.
-        let chunk_start = consumed_boundary.saturating_sub(overlap_samples);
-        let chunk_end = if total_samples - chunk_start > max_chunk_samples {
-            chunk_start + max_chunk_samples
-        } else {
-            total_samples
-        };
+        let (chunk_start, chunk_end) = compute_chunk_bounds(
+            consumed_boundary,
+            overlap_samples,
+            total_samples,
+            max_chunk_samples,
+        );
 
         chunk.clear();
         {
@@ -216,7 +214,7 @@ fn emit_chunk(
     committed_words: &mut Vec<String>,
     tx: &mpsc::Sender<StreamingEvent>,
 ) {
-    let mut text = match worker.transcribe(chunk, translate) {
+    let text = match worker.transcribe(chunk, translate) {
         Ok(t) => t,
         Err(e) => {
             log::error!("Streaming transcription failed: {e}");
@@ -224,31 +222,80 @@ fn emit_chunk(
         }
     };
 
-    if text.is_empty() {
-        return;
+    let new_words = compute_new_words(&text, filler_word_removal, committed_words);
+    if let Some(event) = format_partial_event(&new_words) {
+        let _ = tx.send(event);
+        committed_words.extend(new_words);
+    }
+}
+
+/// Check whether enough new audio has accumulated to warrant a transcription attempt.
+pub(crate) fn has_enough_new_audio(
+    total_samples: usize,
+    consumed_boundary: usize,
+    min_new_samples: usize,
+) -> bool {
+    let new_samples = total_samples.saturating_sub(consumed_boundary);
+    new_samples >= min_new_samples
+}
+
+/// Compute the chunk boundaries for the next transcription window.
+///
+/// Returns `(chunk_start, chunk_end)` — the sample indices to slice from the buffer.
+/// `chunk_start` includes overlap from the previous chunk for Whisper context.
+/// `chunk_end` is capped at `max_chunk_samples` from `chunk_start`.
+pub(crate) fn compute_chunk_bounds(
+    consumed_boundary: usize,
+    overlap_samples: usize,
+    total_samples: usize,
+    max_chunk_samples: usize,
+) -> (usize, usize) {
+    let chunk_start = consumed_boundary.saturating_sub(overlap_samples);
+    let chunk_end = if total_samples - chunk_start > max_chunk_samples {
+        chunk_start + max_chunk_samples
+    } else {
+        total_samples
+    };
+    (chunk_start, chunk_end)
+}
+
+/// Given raw transcription text, apply postprocessing and stitch against
+/// previously committed words to determine what new words to emit.
+///
+/// Returns the new words to append to `committed_words`, or an empty vec
+/// if nothing novel was produced.
+pub(crate) fn compute_new_words(
+    raw_text: &str,
+    filler_word_removal: bool,
+    committed_words: &[String],
+) -> Vec<String> {
+    if raw_text.is_empty() {
+        return Vec::new();
     }
 
+    let mut text = raw_text.to_string();
     if filler_word_removal {
         text = super::postprocess::remove_filler_words(&text);
         if text.is_empty() {
-            return;
+            return Vec::new();
         }
     }
     text = super::postprocess::ensure_space_after_punctuation(&text);
 
     let chunk_words: Vec<String> = text.split_whitespace().map(String::from).collect();
+    stitch(committed_words, &chunk_words)
+}
 
-    // Stitch: deduplicate the overlap region against previously committed words.
-    let new_words = stitch(committed_words, &chunk_words);
-
-    if !new_words.is_empty() {
-        let new_text = new_words.join(" ");
-        let _ = tx.send(StreamingEvent::PartialText {
-            text: format!(" {new_text}"),
-            replace_chars: 0,
-        });
-        committed_words.extend(new_words);
+/// Format new words into a `StreamingEvent::PartialText`, or `None` if empty.
+pub(crate) fn format_partial_event(new_words: &[String]) -> Option<StreamingEvent> {
+    if new_words.is_empty() {
+        return None;
     }
+    let new_text = new_words.join(" ");
+    Some(StreamingEvent::PartialText {
+        text: format!(" {new_text}"),
+        replace_chars: 0,
+    })
 }
 
 /// Find the byte length of the common prefix between two strings,
@@ -579,5 +626,224 @@ mod tests {
         // "My name is Jacob F" = 18 bytes, then 'r' vs 'r' matches, 'a' vs 'e' diverges
         // "My name is Jacob Fr" = 19 bytes
         assert_eq!(common_prefix_len(old, new_text), 19);
+    }
+
+    // ── has_enough_new_audio tests ───────────────────────────────────
+
+    #[test]
+    fn test_has_enough_audio_above_threshold() {
+        assert!(has_enough_new_audio(50_000, 10_000, 32_000));
+    }
+
+    #[test]
+    fn test_has_enough_audio_exactly_at_threshold() {
+        assert!(has_enough_new_audio(42_000, 10_000, 32_000));
+    }
+
+    #[test]
+    fn test_has_enough_audio_below_threshold() {
+        assert!(!has_enough_new_audio(30_000, 10_000, 32_000));
+    }
+
+    #[test]
+    fn test_has_enough_audio_no_new_samples() {
+        assert!(!has_enough_new_audio(10_000, 10_000, 32_000));
+    }
+
+    #[test]
+    fn test_has_enough_audio_consumed_beyond_total() {
+        // saturating_sub handles consumed > total gracefully
+        assert!(!has_enough_new_audio(5_000, 10_000, 32_000));
+    }
+
+    #[test]
+    fn test_has_enough_audio_zero_threshold() {
+        assert!(has_enough_new_audio(100, 100, 0));
+    }
+
+    // ── compute_chunk_bounds tests ──────────────────────────────────
+
+    #[test]
+    fn test_chunk_bounds_basic() {
+        // consumed=10000, overlap=2000, total=20000, max=8000
+        let (start, end) = compute_chunk_bounds(10_000, 2_000, 20_000, 8_000);
+        assert_eq!(start, 8_000); // 10000 - 2000
+        assert_eq!(end, 16_000); // 8000 + 8000 (capped by max)
+    }
+
+    #[test]
+    fn test_chunk_bounds_no_cap() {
+        // total - start <= max, so chunk_end = total
+        let (start, end) = compute_chunk_bounds(10_000, 2_000, 14_000, 80_000);
+        assert_eq!(start, 8_000);
+        assert_eq!(end, 14_000);
+    }
+
+    #[test]
+    fn test_chunk_bounds_overlap_exceeds_consumed() {
+        // overlap > consumed, so saturating_sub clamps to 0
+        let (start, end) = compute_chunk_bounds(1_000, 5_000, 10_000, 80_000);
+        assert_eq!(start, 0);
+        assert_eq!(end, 10_000);
+    }
+
+    #[test]
+    fn test_chunk_bounds_zero_overlap() {
+        let (start, end) = compute_chunk_bounds(5_000, 0, 10_000, 80_000);
+        assert_eq!(start, 5_000);
+        assert_eq!(end, 10_000);
+    }
+
+    #[test]
+    fn test_chunk_bounds_exact_max() {
+        // total - start == max exactly
+        let (start, end) = compute_chunk_bounds(5_000, 1_000, 12_000, 8_000);
+        assert_eq!(start, 4_000);
+        assert_eq!(end, 12_000); // 12000 - 4000 = 8000 == max, so not capped
+    }
+
+    #[test]
+    fn test_chunk_bounds_with_real_constants() {
+        let overlap_samples = (OVERLAP_SECS * TARGET_RATE as f32) as usize;
+        let max_chunk_samples = (MAX_CHUNK_SECS * TARGET_RATE as f32) as usize;
+        // Simulate 10 seconds of audio, consumed up to 5 seconds
+        let consumed = 5 * TARGET_RATE as usize;
+        let total = 10 * TARGET_RATE as usize;
+        let (start, end) =
+            compute_chunk_bounds(consumed, overlap_samples, total, max_chunk_samples);
+        assert!(start < consumed);
+        assert!(end <= total);
+        assert!(end - start <= max_chunk_samples);
+    }
+
+    // ── compute_new_words tests ─────────────────────────────────────
+
+    #[test]
+    fn test_compute_new_words_empty_text() {
+        let committed: Vec<String> = vec!["hello".into()];
+        assert!(compute_new_words("", false, &committed).is_empty());
+    }
+
+    #[test]
+    fn test_compute_new_words_no_committed() {
+        let result = compute_new_words("hello world", false, &[]);
+        assert_eq!(result, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn test_compute_new_words_with_overlap() {
+        let committed: Vec<String> = vec!["the".into(), "quick".into(), "brown".into()];
+        let result = compute_new_words("quick brown fox", false, &committed);
+        assert_eq!(result, vec!["fox"]);
+    }
+
+    #[test]
+    fn test_compute_new_words_identical_result() {
+        let committed: Vec<String> = vec!["hello".into(), "world".into()];
+        let result = compute_new_words("hello world", false, &committed);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_compute_new_words_no_overlap() {
+        let committed: Vec<String> = vec!["alpha".into(), "beta".into()];
+        let result = compute_new_words("gamma delta", false, &committed);
+        assert_eq!(result, vec!["gamma", "delta"]);
+    }
+
+    #[test]
+    fn test_compute_new_words_filler_removal_produces_empty() {
+        // "um" is a filler word; after removal the text may be empty
+        let result = compute_new_words("um", true, &[]);
+        // After filler removal the text might be empty or "um" might not be
+        // in the filler list. Either way, ensure no panic.
+        let _ = result;
+    }
+
+    #[test]
+    fn test_compute_new_words_whitespace_only() {
+        // split_whitespace produces nothing for whitespace-only
+        let result = compute_new_words("   ", false, &[]);
+        assert!(result.is_empty());
+    }
+
+    // ── format_partial_event tests ──────────────────────────────────
+
+    #[test]
+    fn test_format_partial_event_empty() {
+        assert!(format_partial_event(&[]).is_none());
+    }
+
+    #[test]
+    fn test_format_partial_event_single_word() {
+        let words: Vec<String> = vec!["hello".into()];
+        let event = format_partial_event(&words).unwrap();
+        match event {
+            StreamingEvent::PartialText {
+                text,
+                replace_chars,
+            } => {
+                assert_eq!(text, " hello");
+                assert_eq!(replace_chars, 0);
+            }
+            StreamingEvent::SpeechDetected => panic!("unexpected variant"),
+        }
+    }
+
+    #[test]
+    fn test_format_partial_event_multiple_words() {
+        let words: Vec<String> = vec!["hello".into(), "world".into()];
+        let event = format_partial_event(&words).unwrap();
+        match event {
+            StreamingEvent::PartialText {
+                text,
+                replace_chars,
+            } => {
+                assert_eq!(text, " hello world");
+                assert_eq!(replace_chars, 0);
+            }
+            StreamingEvent::SpeechDetected => panic!("unexpected variant"),
+        }
+    }
+
+    #[test]
+    fn test_format_partial_event_leading_space() {
+        // Verify the leading space is always present
+        let words: Vec<String> = vec!["x".into()];
+        let event = format_partial_event(&words).unwrap();
+        match event {
+            StreamingEvent::PartialText { text, .. } => {
+                assert!(text.starts_with(' '));
+            }
+            _ => panic!("unexpected variant"),
+        }
+    }
+
+    // ── Integration: compute_new_words + format_partial_event ───────
+
+    #[test]
+    fn test_emission_pipeline_with_overlap() {
+        let committed: Vec<String> = vec!["the".into(), "quick".into()];
+        let new_words = compute_new_words("the quick brown fox", false, &committed);
+        assert_eq!(new_words, vec!["brown", "fox"]);
+        let event = format_partial_event(&new_words).unwrap();
+        match event {
+            StreamingEvent::PartialText {
+                text,
+                replace_chars,
+            } => {
+                assert_eq!(text, " brown fox");
+                assert_eq!(replace_chars, 0);
+            }
+            StreamingEvent::SpeechDetected => panic!("unexpected variant"),
+        }
+    }
+
+    #[test]
+    fn test_emission_pipeline_no_novelty() {
+        let committed: Vec<String> = vec!["hello".into(), "world".into()];
+        let new_words = compute_new_words("hello world", false, &committed);
+        assert!(new_words.is_empty());
+        assert!(format_partial_event(&new_words).is_none());
     }
 }

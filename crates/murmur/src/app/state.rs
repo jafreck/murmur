@@ -224,7 +224,9 @@ impl AppState {
         self.streaming_chars_emitted = 0;
         self.last_speech_at = Some(std::time::Instant::now());
         let path = self.recording_output_path();
-        let mut effects = vec![AppEffect::StartRecording(path)];
+        // Set tray state first so the icon updates immediately.
+        let mut effects = vec![AppEffect::SetTrayState(TrayState::Recording)];
+        effects.push(AppEffect::StartRecording(path));
         if self.streaming {
             effects.push(AppEffect::StartStreaming);
         }
@@ -235,7 +237,6 @@ impl AppState {
         if self.is_notes_mode() {
             effects.push(AppEffect::PauseWakeWord);
         }
-        effects.push(AppEffect::SetTrayState(TrayState::Recording));
         effects
     }
 
@@ -243,12 +244,12 @@ impl AppState {
         self.is_pressed = false;
         self.wake_word_initiated = false;
         self.last_speech_at = None;
-        let mut effects = vec![];
+        // Set tray state first so the icon updates immediately.
+        let mut effects = vec![AppEffect::SetTrayState(TrayState::Transcribing)];
         if self.streaming {
             effects.push(AppEffect::StopStreaming);
         }
         effects.push(AppEffect::StopAndTranscribe);
-        effects.push(AppEffect::SetTrayState(TrayState::Transcribing));
         effects
     }
 

@@ -8,12 +8,12 @@ use crate::audio::AudioRecorder;
 use crate::config::Config;
 use crate::input::hotkey::{CaptureFlag, SharedHotkeyConfig};
 use crate::input::inserter::TextInserter;
-use crate::input::wake_word::WakeWordHandle;
 use crate::notes::NotesManager;
 use crate::transcription::transcriber::Transcriber;
 use crate::transcription::{model, postprocess, streaming};
 use crate::ui::overlay::OverlayHandle;
 use crate::ui::tray::{TrayController, TrayState};
+use murmur_core::input::wake_word::WakeWordHandle;
 
 use super::{AppEffect, AppMessage, AppState};
 
@@ -536,7 +536,7 @@ fn start_wake_word(ctx: &mut EffectContext<'_>) {
 
     // Forward wake word events to app messages
     std::thread::spawn(move || {
-        use crate::input::wake_word::WakeWordEvent;
+        use murmur_core::input::wake_word::WakeWordEvent;
         while let Ok(event) = event_rx.recv() {
             let msg = match event {
                 WakeWordEvent::WakeWordDetected => AppMessage::WakeWordDetected,
@@ -548,7 +548,7 @@ fn start_wake_word(ctx: &mut EffectContext<'_>) {
         }
     });
 
-    match crate::input::wake_word::start_detector(wake_phrase, stop_phrase, event_tx) {
+    match murmur_core::input::wake_word::start_detector(wake_phrase, stop_phrase, event_tx) {
         Ok(handle) => {
             info!("Wake word detector started");
             *ctx.wake_word = Some(handle);

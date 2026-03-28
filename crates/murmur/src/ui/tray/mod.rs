@@ -10,6 +10,16 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::config::{self, Config, InputMode};
 
+#[cfg(target_os = "macos")]
+mod native_icon_cache;
+#[cfg(target_os = "macos")]
+use native_icon_cache::NativeIconCache;
+
+#[cfg(target_os = "linux")]
+mod linux_icon_cache;
+#[cfg(target_os = "linux")]
+use linux_icon_cache::LinuxIconCache;
+
 /// How often (in milliseconds) the pulsing animation updates the icon.
 const PULSE_FRAME_INTERVAL_MS: u128 = 100;
 
@@ -18,6 +28,9 @@ const PULSE_PERIOD_SECS: f64 = 1.5;
 
 /// Minimum opacity scale during the pulse (0.0–1.0).
 const PULSE_ALPHA_MIN: f64 = 0.25;
+
+/// Number of discrete frames in one pulse cycle.
+const PULSE_FRAME_COUNT: usize = 15;
 
 /// Whether the given state should show a pulsing animation.
 fn is_pulsing_state(state: &TrayState) -> bool {
@@ -305,14 +318,29 @@ pub struct TrayController {
     status_item: MenuItem,
     hotkey_item: MenuItem,
 
-    #[allow(dead_code)]
     idle_icon: Icon,
-    #[allow(dead_code)]
     recording_icon: Icon,
-    #[allow(dead_code)]
     transcribing_icon: Icon,
-    #[allow(dead_code)]
     loading_icon: Icon,
+
+    /// Pre-rendered pulse animation frames for the Loading state.
+    loading_pulse_frames: Vec<Icon>,
+    /// Pre-rendered pulse animation frames for the Downloading state.
+    downloading_pulse_frames: Vec<Icon>,
+
+    /// Pre-decoded PNG pixel data kept for rebuilding icons on appearance change.
+    decoded_icon: DecodedIcon,
+
+    /// Cached dark-mode flag to avoid spawning a subprocess on every icon update.
+    cached_dark_mode: bool,
+
+    /// macOS: pre-built NSImage cache for zero-cost icon swaps.
+    #[cfg(target_os = "macos")]
+    native_cache: Option<NativeIconCache>,
+
+    /// Linux: pre-written PNG file cache for AppIndicator.
+    #[cfg(target_os = "linux")]
+    linux_cache: Option<LinuxIconCache>,
 
     /// When set, the icon pulses to indicate a busy/unavailable state.
     animation_start: Option<Instant>,
@@ -439,26 +467,40 @@ impl TrayController {
             mode_ids,
         );
 
-        let colors = StateColors::for_current_appearance();
-        let idle_icon = make_icon(colors.idle.0, colors.idle.1, colors.idle.2, colors.idle.3)?;
-        let recording_icon = make_icon(
+        let dark_mode = is_dark_mode();
+        let colors = StateColors::for_appearance(dark_mode);
+        let decoded = decode_icon_png()?;
+        let idle_icon = make_icon_from_decoded(
+            &decoded,
+            colors.idle.0,
+            colors.idle.1,
+            colors.idle.2,
+            colors.idle.3,
+        )?;
+        let recording_icon = make_icon_from_decoded(
+            &decoded,
             colors.recording.0,
             colors.recording.1,
             colors.recording.2,
             colors.recording.3,
         )?;
-        let transcribing_icon = make_icon(
+        let transcribing_icon = make_icon_from_decoded(
+            &decoded,
             colors.transcribing.0,
             colors.transcribing.1,
             colors.transcribing.2,
             colors.transcribing.3,
         )?;
-        let loading_icon = make_icon(
+        let loading_icon = make_icon_from_decoded(
+            &decoded,
             colors.loading.0,
             colors.loading.1,
             colors.loading.2,
             colors.loading.3,
         )?;
+
+        let loading_pulse_frames = build_pulse_frames(&decoded, colors.loading);
+        let downloading_pulse_frames = build_pulse_frames(&decoded, colors.transcribing);
 
         let tray = TrayIconBuilder::new()
             .with_icon(idle_icon.clone())
@@ -466,6 +508,24 @@ impl TrayController {
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(true)
             .build()?;
+
+        #[cfg(target_os = "macos")]
+        let native_cache = match NativeIconCache::new(&tray, &decoded, &colors) {
+            Ok(cache) => Some(cache),
+            Err(e) => {
+                log::warn!("Native icon cache unavailable, falling back to tray-icon: {e}");
+                None
+            }
+        };
+
+        #[cfg(target_os = "linux")]
+        let linux_cache = match LinuxIconCache::new(&decoded, &colors) {
+            Ok(cache) => Some(cache),
+            Err(e) => {
+                log::warn!("Linux icon cache unavailable, falling back to tray-icon: {e}");
+                None
+            }
+        };
 
         let controller = Self {
             tray,
@@ -486,6 +546,14 @@ impl TrayController {
             recording_icon,
             transcribing_icon,
             loading_icon,
+            loading_pulse_frames,
+            downloading_pulse_frames,
+            decoded_icon: decoded,
+            cached_dark_mode: dark_mode,
+            #[cfg(target_os = "macos")]
+            native_cache,
+            #[cfg(target_os = "linux")]
+            linux_cache,
             animation_start: None,
             last_animation_frame: None,
         };
@@ -500,12 +568,18 @@ impl TrayController {
     pub fn set_state(&mut self, state: TrayState) {
         let (tooltip, label) = state_display(&state);
 
-        // Re-check appearance on every state change so icons adapt when
-        // the user switches between dark and light mode.
-        let colors = StateColors::for_current_appearance();
-        let color = colors.color_for(state_icon_key(&state));
-        if let Ok(icon) = make_icon(color.0, color.1, color.2, color.3) {
-            let _ = self.tray.set_icon(Some(icon));
+        // Use platform-native caches when available; fall back to the
+        // tray-icon crate path (which re-encodes/re-writes on every call).
+        let used_cache = self.try_set_icon_cached(&state);
+
+        if !used_cache {
+            let icon = match &state {
+                TrayState::Idle => &self.idle_icon,
+                TrayState::Recording | TrayState::Error => &self.recording_icon,
+                TrayState::Transcribing | TrayState::Downloading => &self.transcribing_icon,
+                TrayState::Loading => &self.loading_icon,
+            };
+            let _ = self.tray.set_icon(Some(icon.clone()));
         }
 
         // Start or stop pulsing animation based on the new state.
@@ -524,6 +598,115 @@ impl TrayController {
         self.state = state;
     }
 
+    /// Re-check the system appearance and rebuild all cached icons if it changed.
+    /// Call this periodically (e.g. every few seconds) from the main loop,
+    /// not on every state transition.
+    pub fn refresh_appearance(&mut self) {
+        let dark = is_dark_mode();
+        if dark == self.cached_dark_mode {
+            return;
+        }
+        self.cached_dark_mode = dark;
+        let colors = StateColors::for_appearance(dark);
+        if let Ok(i) = make_icon_from_decoded(
+            &self.decoded_icon,
+            colors.idle.0,
+            colors.idle.1,
+            colors.idle.2,
+            colors.idle.3,
+        ) {
+            self.idle_icon = i;
+        }
+        if let Ok(i) = make_icon_from_decoded(
+            &self.decoded_icon,
+            colors.recording.0,
+            colors.recording.1,
+            colors.recording.2,
+            colors.recording.3,
+        ) {
+            self.recording_icon = i;
+        }
+        if let Ok(i) = make_icon_from_decoded(
+            &self.decoded_icon,
+            colors.transcribing.0,
+            colors.transcribing.1,
+            colors.transcribing.2,
+            colors.transcribing.3,
+        ) {
+            self.transcribing_icon = i;
+        }
+        if let Ok(i) = make_icon_from_decoded(
+            &self.decoded_icon,
+            colors.loading.0,
+            colors.loading.1,
+            colors.loading.2,
+            colors.loading.3,
+        ) {
+            self.loading_icon = i;
+        }
+        self.loading_pulse_frames = build_pulse_frames(&self.decoded_icon, colors.loading);
+        self.downloading_pulse_frames = build_pulse_frames(&self.decoded_icon, colors.transcribing);
+        #[cfg(target_os = "macos")]
+        {
+            match NativeIconCache::new(&self.tray, &self.decoded_icon, &colors) {
+                Ok(cache) => self.native_cache = Some(cache),
+                Err(e) => {
+                    log::warn!("Failed to rebuild native icon cache: {e}");
+                    self.native_cache = None;
+                }
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            match LinuxIconCache::new(&self.decoded_icon, &colors) {
+                Ok(cache) => self.linux_cache = Some(cache),
+                Err(e) => {
+                    log::warn!("Failed to rebuild Linux icon cache: {e}");
+                    self.linux_cache = None;
+                }
+            }
+        }
+        // Re-apply the current state with the new icons.
+        self.set_state(self.state.clone());
+    }
+
+    /// Try to set the icon using a platform-native cache.
+    /// Returns `true` if a cache was used, `false` to fall back to tray-icon.
+    fn try_set_icon_cached(&self, _state: &TrayState) -> bool {
+        #[cfg(target_os = "macos")]
+        if let Some(ref cache) = self.native_cache {
+            cache.set_icon_for_state(_state);
+            return true;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(ref cache) = self.linux_cache {
+            // SAFETY: the app_indicator pointer is valid for the lifetime of
+            // self.tray, which outlives every call to this method.
+            unsafe {
+                cache.set_icon_for_state(self.tray.app_indicator(), _state);
+            }
+            return true;
+        }
+        false
+    }
+
+    /// Try to set a pulse animation frame using a platform-native cache.
+    /// Returns `true` if a cache was used.
+    fn try_set_pulse_cached(&self, _state: &TrayState, _frame_idx: usize) -> bool {
+        #[cfg(target_os = "macos")]
+        if let Some(ref cache) = self.native_cache {
+            return cache.set_pulse_frame(_state, _frame_idx);
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(ref cache) = self.linux_cache {
+            // SAFETY: same as try_set_icon_cached.
+            unsafe {
+                return cache.set_pulse_frame(self.tray.app_indicator(), _state, _frame_idx);
+            }
+        }
+        false
+    }
+
     /// Advance the pulsing animation by one frame (if active).
     ///
     /// Call this every iteration of the main event loop. The method
@@ -535,25 +718,33 @@ impl TrayController {
         };
 
         if let Some(last) = self.last_animation_frame {
-            if should_throttle_frame(last.elapsed().as_millis(), PULSE_FRAME_INTERVAL_MS) {
+            if last.elapsed().as_millis() < PULSE_FRAME_INTERVAL_MS {
                 return;
             }
         }
 
         let elapsed = start.elapsed().as_secs_f64();
-        let scale = compute_pulse_alpha(elapsed, PULSE_PERIOD_SECS, PULSE_ALPHA_MIN);
+        let cycle_progress = (elapsed / PULSE_PERIOD_SECS).fract();
 
-        let colors = StateColors::for_current_appearance();
-        let base = match &self.state {
-            TrayState::Loading => colors.loading,
-            TrayState::Downloading => colors.transcribing,
+        let idx = (cycle_progress * PULSE_FRAME_COUNT as f64) as usize % PULSE_FRAME_COUNT;
+        if self.try_set_pulse_cached(&self.state.clone(), idx) {
+            self.last_animation_frame = Some(Instant::now());
+            return;
+        }
+
+        let frames = match &self.state {
+            TrayState::Loading => &self.loading_pulse_frames,
+            TrayState::Downloading => &self.downloading_pulse_frames,
             _ => return,
         };
-        let a = (base.3 as f64 * scale).round().min(255.0) as u8;
 
-        if let Ok(icon) = make_icon(base.0, base.1, base.2, a) {
-            let _ = self.tray.set_icon(Some(icon));
+        if frames.is_empty() {
+            return;
         }
+
+        let idx = (cycle_progress * frames.len() as f64) as usize % frames.len();
+
+        let _ = self.tray.set_icon(Some(frames[idx].clone()));
 
         self.last_animation_frame = Some(Instant::now());
     }
@@ -612,25 +803,81 @@ impl TrayController {
 }
 
 /// The murmur icon PNG, embedded at compile time.
-const ICON_PNG: &[u8] = include_bytes!("../../assets/icons/murmur.png");
+const ICON_PNG: &[u8] = include_bytes!("../../../assets/icons/murmur.png");
 
+/// Pre-decoded PNG pixel data so we can tint without re-decoding.
+#[derive(Clone)]
+pub struct DecodedIcon {
+    pub pixels: Vec<u8>,
+    pub stride: usize,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Decode the embedded icon PNG once and return the raw pixel data.
+pub fn decode_icon_png() -> Result<DecodedIcon> {
+    let cursor = std::io::Cursor::new(ICON_PNG);
+    let decoder = png::Decoder::new(cursor);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| anyhow::anyhow!("PNG decode: {e}"))?;
+    let mut buf = vec![0u8; reader.output_buffer_size().expect("PNG info missing")];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| anyhow::anyhow!("PNG frame: {e}"))?;
+    let stride = match info.color_type {
+        png::ColorType::Rgba => 4,
+        png::ColorType::Rgb => 3,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Grayscale => 1,
+        other => anyhow::bail!("Unsupported PNG colour type: {other:?}"),
+    };
+    Ok(DecodedIcon {
+        pixels: buf[..info.buffer_size()].to_vec(),
+        stride,
+        width: info.width,
+        height: info.height,
+    })
+}
+
+/// Build an Icon by tinting pre-decoded pixel data (no PNG decoding).
+fn make_icon_from_decoded(decoded: &DecodedIcon, r: u8, g: u8, b: u8, a: u8) -> Result<Icon> {
+    let rgba = tint_pixels(&decoded.pixels, decoded.stride, r, g, b, a);
+    Icon::from_rgba(rgba, decoded.width, decoded.height)
+        .map_err(|e| anyhow::anyhow!("Icon error: {e}"))
+}
+
+/// Pre-render all frames of a pulse animation for a given base colour.
+fn build_pulse_frames(decoded: &DecodedIcon, base: (u8, u8, u8, u8)) -> Vec<Icon> {
+    (0..PULSE_FRAME_COUNT)
+        .filter_map(|i| {
+            let phase_angle = (i as f64 / PULSE_FRAME_COUNT as f64) * std::f64::consts::TAU;
+            let phase = phase_angle.sin();
+            let scale = PULSE_ALPHA_MIN + (1.0 - PULSE_ALPHA_MIN) * (phase + 1.0) / 2.0;
+            let a = (base.3 as f64 * scale).round().min(255.0) as u8;
+            make_icon_from_decoded(decoded, base.0, base.1, base.2, a).ok()
+        })
+        .collect()
+}
+
+/// Build an icon by decoding the embedded PNG and tinting (used in tests).
+#[cfg(test)]
 fn make_icon(r: u8, g: u8, b: u8, a: u8) -> Result<Icon> {
     let (rgba, width, height) = tint_png_rgba(ICON_PNG, r, g, b, a)?;
     Icon::from_rgba(rgba, width, height).map_err(|e| anyhow::anyhow!("Icon error: {e}"))
 }
 
 /// RGBA colour for each tray state, tuned for dark and light menu bars.
-pub(crate) struct StateColors {
-    pub(crate) idle: (u8, u8, u8, u8),
-    pub(crate) recording: (u8, u8, u8, u8),
-    pub(crate) transcribing: (u8, u8, u8, u8),
-    pub(crate) loading: (u8, u8, u8, u8),
+struct StateColors {
+    idle: (u8, u8, u8, u8),
+    recording: (u8, u8, u8, u8),
+    transcribing: (u8, u8, u8, u8),
+    loading: (u8, u8, u8, u8),
 }
 
 impl StateColors {
-    /// Return the colour palette for the given appearance.
-    pub(crate) fn for_appearance(is_dark: bool) -> Self {
-        if is_dark {
+    fn for_appearance(dark: bool) -> Self {
+        if dark {
             // Light icons for dark menu bar
             Self {
                 idle: (255, 255, 255, 200),
@@ -646,20 +893,6 @@ impl StateColors {
                 transcribing: (180, 140, 0, 220),
                 loading: (100, 100, 100, 160),
             }
-        }
-    }
-
-    fn for_current_appearance() -> Self {
-        Self::for_appearance(is_dark_mode())
-    }
-
-    /// Look up the RGBA colour for an [`IconKey`].
-    pub(crate) fn color_for(&self, key: IconKey) -> (u8, u8, u8, u8) {
-        match key {
-            IconKey::Idle => self.idle,
-            IconKey::Recording => self.recording,
-            IconKey::Transcribing => self.transcribing,
-            IconKey::Loading => self.loading,
         }
     }
 }
@@ -1158,6 +1391,27 @@ mod tests {
         assert!(tint_png_rgba(b"not a png", 255, 0, 0, 255).is_err());
     }
 
+    // -- decode_icon_png / make_icon_from_decoded --
+
+    #[test]
+    fn decode_icon_png_succeeds() {
+        let decoded = decode_icon_png().unwrap();
+        assert!(decoded.width > 0 && decoded.height > 0);
+        assert_eq!(
+            decoded.pixels.len(),
+            (decoded.width as usize * decoded.height as usize) * decoded.stride
+        );
+    }
+
+    #[test]
+    fn make_icon_from_decoded_matches_make_icon() {
+        let decoded = decode_icon_png().unwrap();
+        let from_decoded = make_icon_from_decoded(&decoded, 255, 80, 80, 230);
+        let from_raw = make_icon(255, 80, 80, 230);
+        assert!(from_decoded.is_ok());
+        assert!(from_raw.is_ok());
+    }
+
     // -- constants --
 
     #[test]
@@ -1199,134 +1453,5 @@ mod tests {
         // Menu bar icons need ≥ 36px for 2× Retina at 18pt display size
         assert!(w >= 36, "icon width {w} too small for Retina");
         assert!(h >= 36, "icon height {h} too small for Retina");
-    }
-
-    // -- compute_pulse_alpha --
-
-    #[test]
-    fn compute_pulse_alpha_at_zero() {
-        // At t=0 sin=0, so alpha is the midpoint between min and 1.0
-        let alpha = compute_pulse_alpha(0.0, 1.5, PULSE_ALPHA_MIN);
-        let expected = PULSE_ALPHA_MIN + (1.0 - PULSE_ALPHA_MIN) * 0.5;
-        assert!((alpha - expected).abs() < 1e-10);
-    }
-
-    #[test]
-    fn compute_pulse_alpha_at_quarter_period() {
-        // At t = period/4, sin(π/2) = 1 → alpha should be 1.0
-        let alpha = compute_pulse_alpha(0.375, 1.5, PULSE_ALPHA_MIN);
-        assert!((alpha - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn compute_pulse_alpha_at_three_quarter_period() {
-        // At t = 3*period/4, sin(3π/2) = -1 → alpha should be alpha_min
-        let alpha = compute_pulse_alpha(1.125, 1.5, PULSE_ALPHA_MIN);
-        assert!((alpha - PULSE_ALPHA_MIN).abs() < 1e-10);
-    }
-
-    #[test]
-    fn compute_pulse_alpha_stays_in_range() {
-        for i in 0..100 {
-            let elapsed = i as f64 * 0.05;
-            let alpha = compute_pulse_alpha(elapsed, 1.5, 0.25);
-            assert!(
-                alpha >= 0.25 - 1e-10,
-                "alpha {alpha} below min at t={elapsed}"
-            );
-            assert!(
-                alpha <= 1.0 + 1e-10,
-                "alpha {alpha} above max at t={elapsed}"
-            );
-        }
-    }
-
-    #[test]
-    fn compute_pulse_alpha_wraps_across_periods() {
-        let a1 = compute_pulse_alpha(0.0, 1.5, 0.25);
-        let a2 = compute_pulse_alpha(1.5, 1.5, 0.25);
-        assert!((a1 - a2).abs() < 1e-10, "should repeat after one period");
-    }
-
-    #[test]
-    fn compute_pulse_alpha_zero_min() {
-        // With min=0, peak should still be 1.0
-        let alpha = compute_pulse_alpha(0.375, 1.5, 0.0);
-        assert!((alpha - 1.0).abs() < 1e-10);
-    }
-
-    // -- should_throttle_frame --
-
-    #[test]
-    fn should_throttle_below_interval() {
-        assert!(should_throttle_frame(50, 100));
-    }
-
-    #[test]
-    fn should_not_throttle_at_interval() {
-        assert!(!should_throttle_frame(100, 100));
-    }
-
-    #[test]
-    fn should_not_throttle_above_interval() {
-        assert!(!should_throttle_frame(150, 100));
-    }
-
-    #[test]
-    fn should_throttle_zero_elapsed() {
-        assert!(should_throttle_frame(0, 100));
-    }
-
-    // -- state_icon_key --
-
-    #[test]
-    fn state_icon_key_all_variants() {
-        assert_eq!(state_icon_key(&TrayState::Idle), IconKey::Idle);
-        assert_eq!(state_icon_key(&TrayState::Recording), IconKey::Recording);
-        assert_eq!(state_icon_key(&TrayState::Error), IconKey::Recording);
-        assert_eq!(
-            state_icon_key(&TrayState::Transcribing),
-            IconKey::Transcribing
-        );
-        assert_eq!(
-            state_icon_key(&TrayState::Downloading),
-            IconKey::Transcribing
-        );
-        assert_eq!(state_icon_key(&TrayState::Loading), IconKey::Loading);
-    }
-
-    // -- StateColors::for_appearance --
-
-    #[test]
-    fn state_colors_for_appearance_dark() {
-        let dark = StateColors::for_appearance(true);
-        assert_eq!(dark.idle, (255, 255, 255, 200));
-    }
-
-    #[test]
-    fn state_colors_for_appearance_light() {
-        let light = StateColors::for_appearance(false);
-        assert_eq!(light.idle, (30, 80, 200, 220));
-    }
-
-    #[test]
-    fn state_colors_for_appearance_differ() {
-        let dark = StateColors::for_appearance(true);
-        let light = StateColors::for_appearance(false);
-        assert_ne!(dark.idle, light.idle);
-        assert_ne!(dark.recording, light.recording);
-        assert_ne!(dark.transcribing, light.transcribing);
-        assert_ne!(dark.loading, light.loading);
-    }
-
-    // -- StateColors::color_for --
-
-    #[test]
-    fn state_colors_color_for_all_keys() {
-        let colors = StateColors::for_appearance(true);
-        assert_eq!(colors.color_for(IconKey::Idle), colors.idle);
-        assert_eq!(colors.color_for(IconKey::Recording), colors.recording);
-        assert_eq!(colors.color_for(IconKey::Transcribing), colors.transcribing);
-        assert_eq!(colors.color_for(IconKey::Loading), colors.loading);
     }
 }

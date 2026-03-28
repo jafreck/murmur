@@ -3363,6 +3363,7 @@ dependencies = [
  "enigo",
  "env_logger",
  "hound",
+ "libappindicator",
  "log",
  "murmur-core",
  "objc2 0.6.4",

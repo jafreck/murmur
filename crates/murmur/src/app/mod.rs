@@ -163,6 +163,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
 
     // Load the model on a background thread so the tray appears immediately.
     let mut transcriber: Option<Arc<Transcriber>> = None;
+    let mut streaming_worker: Option<murmur_core::transcription::SubprocessTranscriber> = None;
     {
         let model_size = config.model_size.clone();
         let language = config.language.clone();
@@ -276,6 +277,20 @@ pub fn run(notes_mode: bool) -> Result<()> {
             // so handle it directly instead of going through the state machine.
             if let AppMessage::TranscriberReady(new_t, generation) = msg {
                 if generation == state.reload_generation {
+                    // Pre-spawn the whisper worker subprocess so streaming
+                    // starts instantly without model-loading delay.
+                    match murmur_core::transcription::SubprocessTranscriber::new(
+                        new_t.model_path(),
+                        new_t.language(),
+                    ) {
+                        Ok(w) => {
+                            streaming_worker = Some(w);
+                            info!("Whisper worker subprocess ready");
+                        }
+                        Err(e) => {
+                            error!("Failed to spawn whisper worker: {e}");
+                        }
+                    }
                     transcriber = Some(new_t);
                     tray.set_state(crate::ui::tray::TrayState::Idle);
                     info!("Transcriber ready");
@@ -338,6 +353,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
                         state: &mut state,
                         tx: &tx,
                         streaming_stop: &mut streaming_stop,
+                        streaming_worker: &mut streaming_worker,
                         hotkey_config: &hotkey_config,
                         capture_flag: &capture_flag,
                         overlay: &mut overlay,
@@ -379,6 +395,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
                     state: &mut state,
                     tx: &tx,
                     streaming_stop: &mut streaming_stop,
+                    streaming_worker: &mut streaming_worker,
                     hotkey_config: &hotkey_config,
                     capture_flag: &capture_flag,
                     overlay: &mut overlay,

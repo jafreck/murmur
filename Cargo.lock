@@ -3406,6 +3406,7 @@ dependencies = [
  "arboard",
  "cpal",
  "dirs",
+ "env_logger",
  "hound",
  "log",
  "nnnoiseless",

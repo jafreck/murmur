@@ -48,6 +48,33 @@ impl SharedCaptureState {
             dropped_samples: AtomicU64::new(0),
         }
     }
+
+    /// Dispatch processed audio samples to the appropriate buffer.
+    /// Called from the audio callback after mixing/resampling/denoising.
+    fn dispatch_samples(&self, samples: &[f32]) {
+        if self.recording.load(Ordering::Acquire) {
+            if let Ok(mut buf) = self.samples.try_lock() {
+                buf.extend_from_slice(samples);
+            } else {
+                self.dropped_samples
+                    .fetch_add(samples.len() as u64, Ordering::Relaxed);
+            }
+            if let Ok(mut guard) = self.writer.try_lock() {
+                if let Some(ref mut w) = *guard {
+                    for &sample in samples {
+                        let _ = w.write_sample(f32_to_i16(sample));
+                    }
+                }
+            }
+        } else if let Ok(mut ring) = self.pre_roll.try_lock() {
+            for &s in samples {
+                if ring.len() >= PRE_ROLL_SAMPLES {
+                    ring.pop_front();
+                }
+                ring.push_back(s);
+            }
+        }
+    }
 }
 
 /// nnnoiseless operates on 480-sample frames at 48 kHz.
@@ -270,30 +297,7 @@ impl AudioRecorder {
                             // Copy out to avoid holding the lock across buffer writes.
                             let owned: Vec<f32> = denoised.to_vec();
                             drop(d);
-                            // Use a block to handle the owned data
-                            if shared.recording.load(Ordering::Acquire) {
-                                if let Ok(mut buf) = shared.samples.try_lock() {
-                                    buf.extend_from_slice(&owned);
-                                } else {
-                                    shared
-                                        .dropped_samples
-                                        .fetch_add(owned.len() as u64, Ordering::Relaxed);
-                                }
-                                if let Ok(mut guard) = shared.writer.try_lock() {
-                                    if let Some(ref mut w) = *guard {
-                                        for &sample in &owned {
-                                            let _ = w.write_sample(f32_to_i16(sample));
-                                        }
-                                    }
-                                }
-                            } else if let Ok(mut ring) = shared.pre_roll.try_lock() {
-                                for &s in &owned {
-                                    if ring.len() >= PRE_ROLL_SAMPLES {
-                                        ring.pop_front();
-                                    }
-                                    ring.push_back(s);
-                                }
-                            }
+                            shared.dispatch_samples(&owned);
                             return;
                         }
                         // Denoiser lock contention — fall through to raw samples
@@ -302,34 +306,7 @@ impl AudioRecorder {
                         &resampled
                     };
 
-                    if shared.recording.load(Ordering::Acquire) {
-                        // Recording mode: write to sample buffer and optional WAV
-                        if let Ok(mut buf) = shared.samples.try_lock() {
-                            buf.extend_from_slice(samples);
-                        } else {
-                            shared
-                                .dropped_samples
-                                .fetch_add(samples.len() as u64, Ordering::Relaxed);
-                        }
-
-                        if let Ok(mut guard) = shared.writer.try_lock() {
-                            if let Some(ref mut w) = *guard {
-                                for &sample in samples {
-                                    let _ = w.write_sample(f32_to_i16(sample));
-                                }
-                            }
-                        }
-                    } else {
-                        // Standby mode: fill pre-roll ring buffer
-                        if let Ok(mut ring) = shared.pre_roll.try_lock() {
-                            for &s in samples {
-                                if ring.len() >= PRE_ROLL_SAMPLES {
-                                    ring.pop_front();
-                                }
-                                ring.push_back(s);
-                            }
-                        }
-                    }
+                    shared.dispatch_samples(samples);
                 },
                 |err| {
                     log::error!("Audio stream error: {err}");
@@ -811,5 +788,221 @@ mod tests {
         // warm() will fail without a real audio device, but calling new() is fine
         let recorder = AudioRecorder::new();
         assert!(recorder.stream.is_none());
+    }
+
+    // ── Denoiser ──
+
+    #[test]
+    fn test_denoiser_new() {
+        let d = Denoiser::new();
+        assert!(d.pending_16k.is_empty());
+        assert!(d.output_16k.is_empty());
+        assert!(d.first_frame);
+    }
+
+    #[test]
+    fn test_denoiser_reset() {
+        let mut d = Denoiser::new();
+        d.pending_16k.push(1.0);
+        d.output_16k.push(2.0);
+        d.first_frame = false;
+        d.reset();
+        assert!(d.pending_16k.is_empty());
+        assert!(d.output_16k.is_empty());
+        assert!(d.first_frame);
+    }
+
+    #[test]
+    fn test_denoiser_process_empty() {
+        let mut d = Denoiser::new();
+        let out = d.process(&[]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_denoiser_process_short_accumulates() {
+        let mut d = Denoiser::new();
+        let out = d.process(&[0.0; 100]);
+        assert!(out.is_empty());
+        assert_eq!(d.pending_16k.len(), 100);
+    }
+
+    #[test]
+    fn test_denoiser_process_one_frame_skipped() {
+        let mut d = Denoiser::new();
+        // One frame = 160 samples at 16 kHz, but the first frame is always skipped.
+        let out = d.process(&[0.0; 160]);
+        assert!(out.is_empty());
+        assert!(!d.first_frame);
+    }
+
+    #[test]
+    fn test_denoiser_process_two_frames_produces_output() {
+        let mut d = Denoiser::new();
+        // First frame skipped, second frame produces 160 samples.
+        let out = d.process(&[0.0; 320]);
+        assert_eq!(out.len(), 160);
+    }
+
+    #[test]
+    fn test_denoiser_process_multiple_frames() {
+        let mut d = Denoiser::new();
+        // 3 frames: first skipped, remaining 2 produce 320 samples.
+        let out = d.process(&[0.0; 480]);
+        assert_eq!(out.len(), 320);
+    }
+
+    #[test]
+    fn test_denoiser_continuity_across_calls() {
+        let mut d = Denoiser::new();
+        // 100 samples: too few for a frame
+        let out1 = d.process(&[0.1; 100]);
+        assert!(out1.is_empty());
+
+        // 100 more → 200 total, one frame processed (160) but skipped, 40 leftover
+        let out2 = d.process(&[0.1; 100]);
+        assert!(out2.is_empty());
+        assert_eq!(d.pending_16k.len(), 40);
+
+        // 120 more → 40 + 120 = 160, second frame produces output
+        let out3 = d.process(&[0.1; 120]).to_vec();
+        assert_eq!(out3.len(), 160);
+    }
+
+    // ── dispatch_samples ──
+
+    #[test]
+    fn test_dispatch_recording_appends_to_samples() {
+        let state = SharedCaptureState::new();
+        state.recording.store(true, Ordering::Release);
+        state.dispatch_samples(&[0.1, 0.2, 0.3]);
+        let buf = state.samples.lock().unwrap();
+        assert_eq!(&*buf, &[0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn test_dispatch_standby_appends_to_pre_roll() {
+        let state = SharedCaptureState::new();
+        state.dispatch_samples(&[0.5, 0.6]);
+        let ring = state.pre_roll.lock().unwrap();
+        assert_eq!(ring.len(), 2);
+        assert!((ring[0] - 0.5).abs() < f32::EPSILON);
+        assert!((ring[1] - 0.6).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_dispatch_pre_roll_caps_at_limit() {
+        let state = SharedCaptureState::new();
+        let filler: Vec<f32> = (0..PRE_ROLL_SAMPLES).map(|i| i as f32).collect();
+        state.dispatch_samples(&filler);
+        // Push 2 more — oldest samples should be evicted
+        state.dispatch_samples(&[99.0, 100.0]);
+        let ring = state.pre_roll.lock().unwrap();
+        assert_eq!(ring.len(), PRE_ROLL_SAMPLES);
+        assert!((ring[ring.len() - 1] - 100.0).abs() < f32::EPSILON);
+        assert!((ring[ring.len() - 2] - 99.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_dispatch_with_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.wav");
+        let writer = WavWriter::create(&path, WHISPER_WAV_SPEC).unwrap();
+        let state = SharedCaptureState::new();
+        state.recording.store(true, Ordering::Release);
+        *state.writer.lock().unwrap() = Some(writer);
+
+        state.dispatch_samples(&[0.1, 0.2, 0.3]);
+
+        // Finalize the WAV and verify it was written
+        if let Some(w) = state.writer.lock().unwrap().take() {
+            w.finalize().unwrap();
+        }
+        let reader = hound::WavReader::open(&path).unwrap();
+        let written: Vec<i16> = reader.into_samples::<i16>().map(|s| s.unwrap()).collect();
+        assert_eq!(written.len(), 3);
+    }
+
+    // ── Pre-roll buffer logic ──
+
+    #[test]
+    fn test_pre_roll_does_not_exceed_capacity() {
+        let state = SharedCaptureState::new();
+        let large: Vec<f32> = (0..(PRE_ROLL_SAMPLES + 500)).map(|i| i as f32).collect();
+        state.dispatch_samples(&large);
+        let ring = state.pre_roll.lock().unwrap();
+        assert_eq!(ring.len(), PRE_ROLL_SAMPLES);
+    }
+
+    #[test]
+    fn test_pre_roll_drains_into_samples_on_start() {
+        let recorder = AudioRecorder::new();
+        // Manually push samples into pre_roll
+        {
+            let mut ring = recorder.shared.pre_roll.lock().unwrap();
+            ring.extend([0.1, 0.2, 0.3]);
+        }
+        // Simulate what start_in_memory does (without ensure_warm)
+        {
+            let mut ring = recorder.shared.pre_roll.lock().unwrap();
+            let mut samples = recorder.shared.samples.lock().unwrap();
+            samples.clear();
+            samples.extend(ring.drain(..));
+            recorder.shared.recording.store(true, Ordering::Release);
+        }
+        assert!(recorder.shared.recording.load(Ordering::Acquire));
+        let buf = recorder.shared.samples.lock().unwrap();
+        assert_eq!(&*buf, &[0.1, 0.2, 0.3]);
+        let ring = recorder.shared.pre_roll.lock().unwrap();
+        assert!(ring.is_empty());
+    }
+
+    // ── Recording state transitions ──
+
+    #[test]
+    fn test_new_recorder_not_recording() {
+        let recorder = AudioRecorder::new();
+        assert!(!recorder.shared.recording.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn test_start_sets_recording_flag() {
+        let recorder = AudioRecorder::new();
+        recorder.shared.recording.store(true, Ordering::Release);
+        assert!(recorder.shared.recording.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn test_stop_samples_returns_samples_and_clears_flag() {
+        let mut recorder = AudioRecorder::new();
+        recorder.shared.recording.store(true, Ordering::Release);
+        recorder
+            .shared
+            .samples
+            .lock()
+            .unwrap()
+            .extend_from_slice(&[0.1, 0.2]);
+        let samples = recorder.stop_samples();
+        assert!(!recorder.shared.recording.load(Ordering::Acquire));
+        assert_eq!(samples.unwrap(), vec![0.1, 0.2]);
+    }
+
+    #[test]
+    fn test_stop_samples_returns_none_when_empty() {
+        let mut recorder = AudioRecorder::new();
+        // Not recording and no samples → None
+        assert!(recorder.stop_samples().is_none());
+    }
+
+    #[test]
+    fn test_sample_count_zero_initially() {
+        let recorder = AudioRecorder::new();
+        assert_eq!(recorder.sample_count(), 0);
+    }
+
+    #[test]
+    fn test_snapshot_empty_initially() {
+        let recorder = AudioRecorder::new();
+        assert!(recorder.snapshot(0).is_empty());
     }
 }

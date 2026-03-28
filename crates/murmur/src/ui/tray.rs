@@ -83,6 +83,40 @@ pub fn radio_label(name: &str, selected: bool) -> String {
     }
 }
 
+/// Returns true if not enough time has passed since the last animation frame.
+pub fn should_throttle_frame(last_frame_elapsed_ms: u128, interval_ms: u128) -> bool {
+    last_frame_elapsed_ms < interval_ms
+}
+
+/// Compute the pulse alpha scale for the current animation frame.
+///
+/// Given elapsed time since animation start, the pulse period, and the
+/// minimum alpha, returns a scale factor in [`alpha_min`, 1.0] suitable
+/// for modulating icon opacity.
+pub fn compute_pulse_alpha(elapsed_secs: f64, period_secs: f64, alpha_min: f64) -> f64 {
+    let phase = (elapsed_secs * std::f64::consts::TAU / period_secs).sin();
+    alpha_min + (1.0 - alpha_min) * (phase + 1.0) / 2.0
+}
+
+/// Which icon variant to display for a given tray state.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IconKey {
+    Idle,
+    Recording,
+    Transcribing,
+    Loading,
+}
+
+/// Map a [`TrayState`] to the icon variant that should be displayed.
+pub fn state_icon_key(state: &TrayState) -> IconKey {
+    match state {
+        TrayState::Idle => IconKey::Idle,
+        TrayState::Recording | TrayState::Error => IconKey::Recording,
+        TrayState::Transcribing | TrayState::Downloading => IconKey::Transcribing,
+        TrayState::Loading => IconKey::Loading,
+    }
+}
+
 /// Grouped menu item IDs for constructing a MenuActionMap.
 pub struct MenuActionIds {
     pub quit: MenuId,
@@ -469,12 +503,7 @@ impl TrayController {
         // Re-check appearance on every state change so icons adapt when
         // the user switches between dark and light mode.
         let colors = StateColors::for_current_appearance();
-        let color = match &state {
-            TrayState::Loading => colors.loading,
-            TrayState::Idle => colors.idle,
-            TrayState::Recording | TrayState::Error => colors.recording,
-            TrayState::Transcribing | TrayState::Downloading => colors.transcribing,
-        };
+        let color = colors.color_for(state_icon_key(&state));
         if let Ok(icon) = make_icon(color.0, color.1, color.2, color.3) {
             let _ = self.tray.set_icon(Some(icon));
         }
@@ -506,15 +535,13 @@ impl TrayController {
         };
 
         if let Some(last) = self.last_animation_frame {
-            if last.elapsed().as_millis() < PULSE_FRAME_INTERVAL_MS {
+            if should_throttle_frame(last.elapsed().as_millis(), PULSE_FRAME_INTERVAL_MS) {
                 return;
             }
         }
 
         let elapsed = start.elapsed().as_secs_f64();
-        let phase = (elapsed * std::f64::consts::TAU / PULSE_PERIOD_SECS).sin();
-        // Map sin output [-1, 1] → [PULSE_ALPHA_MIN, 1.0]
-        let scale = PULSE_ALPHA_MIN + (1.0 - PULSE_ALPHA_MIN) * (phase + 1.0) / 2.0;
+        let scale = compute_pulse_alpha(elapsed, PULSE_PERIOD_SECS, PULSE_ALPHA_MIN);
 
         let colors = StateColors::for_current_appearance();
         let base = match &self.state {
@@ -593,16 +620,17 @@ fn make_icon(r: u8, g: u8, b: u8, a: u8) -> Result<Icon> {
 }
 
 /// RGBA colour for each tray state, tuned for dark and light menu bars.
-struct StateColors {
-    idle: (u8, u8, u8, u8),
-    recording: (u8, u8, u8, u8),
-    transcribing: (u8, u8, u8, u8),
-    loading: (u8, u8, u8, u8),
+pub(crate) struct StateColors {
+    pub(crate) idle: (u8, u8, u8, u8),
+    pub(crate) recording: (u8, u8, u8, u8),
+    pub(crate) transcribing: (u8, u8, u8, u8),
+    pub(crate) loading: (u8, u8, u8, u8),
 }
 
 impl StateColors {
-    fn for_current_appearance() -> Self {
-        if is_dark_mode() {
+    /// Return the colour palette for the given appearance.
+    pub(crate) fn for_appearance(is_dark: bool) -> Self {
+        if is_dark {
             // Light icons for dark menu bar
             Self {
                 idle: (255, 255, 255, 200),
@@ -618,6 +646,20 @@ impl StateColors {
                 transcribing: (180, 140, 0, 220),
                 loading: (100, 100, 100, 160),
             }
+        }
+    }
+
+    fn for_current_appearance() -> Self {
+        Self::for_appearance(is_dark_mode())
+    }
+
+    /// Look up the RGBA colour for an [`IconKey`].
+    pub(crate) fn color_for(&self, key: IconKey) -> (u8, u8, u8, u8) {
+        match key {
+            IconKey::Idle => self.idle,
+            IconKey::Recording => self.recording,
+            IconKey::Transcribing => self.transcribing,
+            IconKey::Loading => self.loading,
         }
     }
 }
@@ -1157,5 +1199,134 @@ mod tests {
         // Menu bar icons need ≥ 36px for 2× Retina at 18pt display size
         assert!(w >= 36, "icon width {w} too small for Retina");
         assert!(h >= 36, "icon height {h} too small for Retina");
+    }
+
+    // -- compute_pulse_alpha --
+
+    #[test]
+    fn compute_pulse_alpha_at_zero() {
+        // At t=0 sin=0, so alpha is the midpoint between min and 1.0
+        let alpha = compute_pulse_alpha(0.0, 1.5, PULSE_ALPHA_MIN);
+        let expected = PULSE_ALPHA_MIN + (1.0 - PULSE_ALPHA_MIN) * 0.5;
+        assert!((alpha - expected).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compute_pulse_alpha_at_quarter_period() {
+        // At t = period/4, sin(π/2) = 1 → alpha should be 1.0
+        let alpha = compute_pulse_alpha(0.375, 1.5, PULSE_ALPHA_MIN);
+        assert!((alpha - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compute_pulse_alpha_at_three_quarter_period() {
+        // At t = 3*period/4, sin(3π/2) = -1 → alpha should be alpha_min
+        let alpha = compute_pulse_alpha(1.125, 1.5, PULSE_ALPHA_MIN);
+        assert!((alpha - PULSE_ALPHA_MIN).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compute_pulse_alpha_stays_in_range() {
+        for i in 0..100 {
+            let elapsed = i as f64 * 0.05;
+            let alpha = compute_pulse_alpha(elapsed, 1.5, 0.25);
+            assert!(
+                alpha >= 0.25 - 1e-10,
+                "alpha {alpha} below min at t={elapsed}"
+            );
+            assert!(
+                alpha <= 1.0 + 1e-10,
+                "alpha {alpha} above max at t={elapsed}"
+            );
+        }
+    }
+
+    #[test]
+    fn compute_pulse_alpha_wraps_across_periods() {
+        let a1 = compute_pulse_alpha(0.0, 1.5, 0.25);
+        let a2 = compute_pulse_alpha(1.5, 1.5, 0.25);
+        assert!((a1 - a2).abs() < 1e-10, "should repeat after one period");
+    }
+
+    #[test]
+    fn compute_pulse_alpha_zero_min() {
+        // With min=0, peak should still be 1.0
+        let alpha = compute_pulse_alpha(0.375, 1.5, 0.0);
+        assert!((alpha - 1.0).abs() < 1e-10);
+    }
+
+    // -- should_throttle_frame --
+
+    #[test]
+    fn should_throttle_below_interval() {
+        assert!(should_throttle_frame(50, 100));
+    }
+
+    #[test]
+    fn should_not_throttle_at_interval() {
+        assert!(!should_throttle_frame(100, 100));
+    }
+
+    #[test]
+    fn should_not_throttle_above_interval() {
+        assert!(!should_throttle_frame(150, 100));
+    }
+
+    #[test]
+    fn should_throttle_zero_elapsed() {
+        assert!(should_throttle_frame(0, 100));
+    }
+
+    // -- state_icon_key --
+
+    #[test]
+    fn state_icon_key_all_variants() {
+        assert_eq!(state_icon_key(&TrayState::Idle), IconKey::Idle);
+        assert_eq!(state_icon_key(&TrayState::Recording), IconKey::Recording);
+        assert_eq!(state_icon_key(&TrayState::Error), IconKey::Recording);
+        assert_eq!(
+            state_icon_key(&TrayState::Transcribing),
+            IconKey::Transcribing
+        );
+        assert_eq!(
+            state_icon_key(&TrayState::Downloading),
+            IconKey::Transcribing
+        );
+        assert_eq!(state_icon_key(&TrayState::Loading), IconKey::Loading);
+    }
+
+    // -- StateColors::for_appearance --
+
+    #[test]
+    fn state_colors_for_appearance_dark() {
+        let dark = StateColors::for_appearance(true);
+        assert_eq!(dark.idle, (255, 255, 255, 200));
+    }
+
+    #[test]
+    fn state_colors_for_appearance_light() {
+        let light = StateColors::for_appearance(false);
+        assert_eq!(light.idle, (30, 80, 200, 220));
+    }
+
+    #[test]
+    fn state_colors_for_appearance_differ() {
+        let dark = StateColors::for_appearance(true);
+        let light = StateColors::for_appearance(false);
+        assert_ne!(dark.idle, light.idle);
+        assert_ne!(dark.recording, light.recording);
+        assert_ne!(dark.transcribing, light.transcribing);
+        assert_ne!(dark.loading, light.loading);
+    }
+
+    // -- StateColors::color_for --
+
+    #[test]
+    fn state_colors_color_for_all_keys() {
+        let colors = StateColors::for_appearance(true);
+        assert_eq!(colors.color_for(IconKey::Idle), colors.idle);
+        assert_eq!(colors.color_for(IconKey::Recording), colors.recording);
+        assert_eq!(colors.color_for(IconKey::Transcribing), colors.transcribing);
+        assert_eq!(colors.color_for(IconKey::Loading), colors.loading);
     }
 }

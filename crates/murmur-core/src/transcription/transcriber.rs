@@ -328,7 +328,6 @@ impl Transcriber {
     /// Unlike [`transcribe_samples`], this method:
     /// - reuses a caller-provided [`WhisperState`] (no per-call allocation),
     /// - skips VAD and min-length checks (the streaming loop handles those),
-    /// - enables `single_segment` mode (skips segment-boundary detection),
     /// - enables `no_context` (each pass re-transcribes the full window).
     ///
     /// If `abort_flag` is set to `true` mid-inference, whisper will abort
@@ -353,7 +352,10 @@ impl Transcriber {
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_suppress_nst(true);
-        params.set_single_segment(true);
+        // NOTE: single_segment is intentionally NOT set here.
+        // whisper-rs 0.16 has a bug where set_single_segment(true)
+        // corrupts the WhisperState on subsequent reuse, causing
+        // "failed to encode" error -6.
         params.set_no_context(true);
 
         let flag = Arc::clone(abort_flag);

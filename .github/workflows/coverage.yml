@@ -33,4 +33,4 @@ jobs:
 
       - name: Generate coverage report
         if: always()
-        run: cargo llvm-cov --workspace --exclude murmur-copilot --summary-only --ignore-filename-regex 'native_icon_cache\.rs' -- --test-threads=1
+        run: cargo llvm-cov --workspace --exclude murmur-copilot --summary-only -- --test-threads=1

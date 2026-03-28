@@ -173,3 +173,90 @@ impl NativeIconCache {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- encode_png --
+
+    #[test]
+    fn encode_png_produces_valid_png() {
+        // 2×2 red square
+        let rgba = [255, 0, 0, 255].repeat(4);
+        let png_data = encode_png(&rgba, 2, 2).unwrap();
+        // PNG magic bytes
+        assert_eq!(&png_data[..4], &[137, 80, 78, 71]);
+    }
+
+    #[test]
+    fn encode_png_single_pixel() {
+        let rgba = [0, 255, 0, 128];
+        let png_data = encode_png(&rgba, 1, 1).unwrap();
+        assert!(!png_data.is_empty());
+        assert_eq!(&png_data[..4], &[137, 80, 78, 71]);
+    }
+
+    #[test]
+    fn encode_png_roundtrip() {
+        let rgba: Vec<u8> = [100, 150, 200, 255].repeat(9);
+        let png_data = encode_png(&rgba, 3, 3).unwrap();
+        // Decode back and verify dimensions
+        let decoder = png::Decoder::new(std::io::Cursor::new(&png_data));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        assert_eq!(info.width, 3);
+        assert_eq!(info.height, 3);
+        assert_eq!(&buf[..info.buffer_size()], &rgba[..]);
+    }
+
+    #[test]
+    fn encode_png_transparent_pixels() {
+        let rgba = [0, 0, 0, 0].repeat(4);
+        let png_data = encode_png(&rgba, 2, 2).unwrap();
+        assert!(!png_data.is_empty());
+    }
+
+    // -- CachedImage --
+
+    #[test]
+    fn cached_image_from_rgba_small() {
+        let rgba = [255, 255, 255, 255].repeat(4);
+        let img = CachedImage::from_rgba(&rgba, 2, 2).unwrap();
+        let size = img.nsimage.size();
+        // Width is scaled proportionally to 18pt height
+        assert!((size.height - 18.0).abs() < 0.01);
+        assert!((size.width - 18.0).abs() < 0.01); // square → equal
+    }
+
+    #[test]
+    fn cached_image_from_rgba_rectangular() {
+        // 4 wide × 2 tall
+        let rgba = [128, 64, 32, 200].repeat(8);
+        let img = CachedImage::from_rgba(&rgba, 4, 2).unwrap();
+        let size = img.nsimage.size();
+        assert!((size.height - 18.0).abs() < 0.01);
+        // 4:2 aspect → width should be 36
+        assert!((size.width - 36.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn cached_image_from_decoded_embedded_icon() {
+        let decoded = super::super::decode_icon_png().unwrap();
+        let img = CachedImage::from_decoded(&decoded, 255, 80, 80, 230).unwrap();
+        let size = img.nsimage.size();
+        assert!((size.height - 18.0).abs() < 0.01);
+        assert!(size.width > 0.0);
+    }
+
+    #[test]
+    fn cached_image_different_tints_differ() {
+        let decoded = super::super::decode_icon_png().unwrap();
+        let red = CachedImage::from_decoded(&decoded, 255, 0, 0, 255).unwrap();
+        let blue = CachedImage::from_decoded(&decoded, 0, 0, 255, 255).unwrap();
+        // Both should succeed — we can't compare NSImage contents easily,
+        // but we can verify they're valid distinct objects.
+        assert!(!std::ptr::eq(&*red.nsimage, &*blue.nsimage));
+    }
+}

@@ -19,6 +19,9 @@ const PULSE_PERIOD_SECS: f64 = 1.5;
 /// Minimum opacity scale during the pulse (0.0–1.0).
 const PULSE_ALPHA_MIN: f64 = 0.25;
 
+/// Number of discrete frames in one pulse cycle.
+const PULSE_FRAME_COUNT: usize = 15;
+
 /// Whether the given state should show a pulsing animation.
 fn is_pulsing_state(state: &TrayState) -> bool {
     matches!(state, TrayState::Loading | TrayState::Downloading)
@@ -271,14 +274,21 @@ pub struct TrayController {
     status_item: MenuItem,
     hotkey_item: MenuItem,
 
-    #[allow(dead_code)]
     idle_icon: Icon,
-    #[allow(dead_code)]
     recording_icon: Icon,
-    #[allow(dead_code)]
     transcribing_icon: Icon,
-    #[allow(dead_code)]
     loading_icon: Icon,
+
+    /// Pre-rendered pulse animation frames for the Loading state.
+    loading_pulse_frames: Vec<Icon>,
+    /// Pre-rendered pulse animation frames for the Downloading state.
+    downloading_pulse_frames: Vec<Icon>,
+
+    /// Pre-decoded PNG pixel data kept for rebuilding icons on appearance change.
+    decoded_icon: DecodedIcon,
+
+    /// Cached dark-mode flag to avoid spawning a subprocess on every icon update.
+    cached_dark_mode: bool,
 
     /// When set, the icon pulses to indicate a busy/unavailable state.
     animation_start: Option<Instant>,
@@ -405,26 +415,40 @@ impl TrayController {
             mode_ids,
         );
 
-        let colors = StateColors::for_current_appearance();
-        let idle_icon = make_icon(colors.idle.0, colors.idle.1, colors.idle.2, colors.idle.3)?;
-        let recording_icon = make_icon(
+        let dark_mode = is_dark_mode();
+        let colors = StateColors::for_appearance(dark_mode);
+        let decoded = decode_icon_png()?;
+        let idle_icon = make_icon_from_decoded(
+            &decoded,
+            colors.idle.0,
+            colors.idle.1,
+            colors.idle.2,
+            colors.idle.3,
+        )?;
+        let recording_icon = make_icon_from_decoded(
+            &decoded,
             colors.recording.0,
             colors.recording.1,
             colors.recording.2,
             colors.recording.3,
         )?;
-        let transcribing_icon = make_icon(
+        let transcribing_icon = make_icon_from_decoded(
+            &decoded,
             colors.transcribing.0,
             colors.transcribing.1,
             colors.transcribing.2,
             colors.transcribing.3,
         )?;
-        let loading_icon = make_icon(
+        let loading_icon = make_icon_from_decoded(
+            &decoded,
             colors.loading.0,
             colors.loading.1,
             colors.loading.2,
             colors.loading.3,
         )?;
+
+        let loading_pulse_frames = build_pulse_frames(&decoded, colors.loading);
+        let downloading_pulse_frames = build_pulse_frames(&decoded, colors.transcribing);
 
         let tray = TrayIconBuilder::new()
             .with_icon(idle_icon.clone())
@@ -452,6 +476,10 @@ impl TrayController {
             recording_icon,
             transcribing_icon,
             loading_icon,
+            loading_pulse_frames,
+            downloading_pulse_frames,
+            decoded_icon: decoded,
+            cached_dark_mode: dark_mode,
             animation_start: None,
             last_animation_frame: None,
         };
@@ -466,18 +494,13 @@ impl TrayController {
     pub fn set_state(&mut self, state: TrayState) {
         let (tooltip, label) = state_display(&state);
 
-        // Re-check appearance on every state change so icons adapt when
-        // the user switches between dark and light mode.
-        let colors = StateColors::for_current_appearance();
-        let color = match &state {
-            TrayState::Loading => colors.loading,
-            TrayState::Idle => colors.idle,
-            TrayState::Recording | TrayState::Error => colors.recording,
-            TrayState::Transcribing | TrayState::Downloading => colors.transcribing,
+        let icon = match &state {
+            TrayState::Idle => &self.idle_icon,
+            TrayState::Recording | TrayState::Error => &self.recording_icon,
+            TrayState::Transcribing | TrayState::Downloading => &self.transcribing_icon,
+            TrayState::Loading => &self.loading_icon,
         };
-        if let Ok(icon) = make_icon(color.0, color.1, color.2, color.3) {
-            let _ = self.tray.set_icon(Some(icon));
-        }
+        let _ = self.tray.set_icon(Some(icon.clone()));
 
         // Start or stop pulsing animation based on the new state.
         if is_pulsing_state(&state) {
@@ -493,6 +516,58 @@ impl TrayController {
         let _ = self.tray.set_tooltip(Some(tooltip));
         self.status_item.set_text(label);
         self.state = state;
+    }
+
+    /// Re-check the system appearance and rebuild all cached icons if it changed.
+    /// Call this periodically (e.g. every few seconds) from the main loop,
+    /// not on every state transition.
+    pub fn refresh_appearance(&mut self) {
+        let dark = is_dark_mode();
+        if dark == self.cached_dark_mode {
+            return;
+        }
+        self.cached_dark_mode = dark;
+        let colors = StateColors::for_appearance(dark);
+        if let Ok(i) = make_icon_from_decoded(
+            &self.decoded_icon,
+            colors.idle.0,
+            colors.idle.1,
+            colors.idle.2,
+            colors.idle.3,
+        ) {
+            self.idle_icon = i;
+        }
+        if let Ok(i) = make_icon_from_decoded(
+            &self.decoded_icon,
+            colors.recording.0,
+            colors.recording.1,
+            colors.recording.2,
+            colors.recording.3,
+        ) {
+            self.recording_icon = i;
+        }
+        if let Ok(i) = make_icon_from_decoded(
+            &self.decoded_icon,
+            colors.transcribing.0,
+            colors.transcribing.1,
+            colors.transcribing.2,
+            colors.transcribing.3,
+        ) {
+            self.transcribing_icon = i;
+        }
+        if let Ok(i) = make_icon_from_decoded(
+            &self.decoded_icon,
+            colors.loading.0,
+            colors.loading.1,
+            colors.loading.2,
+            colors.loading.3,
+        ) {
+            self.loading_icon = i;
+        }
+        self.loading_pulse_frames = build_pulse_frames(&self.decoded_icon, colors.loading);
+        self.downloading_pulse_frames = build_pulse_frames(&self.decoded_icon, colors.transcribing);
+        // Re-apply the current state with the new icons.
+        self.set_state(self.state.clone());
     }
 
     /// Advance the pulsing animation by one frame (if active).
@@ -511,22 +586,21 @@ impl TrayController {
             }
         }
 
-        let elapsed = start.elapsed().as_secs_f64();
-        let phase = (elapsed * std::f64::consts::TAU / PULSE_PERIOD_SECS).sin();
-        // Map sin output [-1, 1] → [PULSE_ALPHA_MIN, 1.0]
-        let scale = PULSE_ALPHA_MIN + (1.0 - PULSE_ALPHA_MIN) * (phase + 1.0) / 2.0;
-
-        let colors = StateColors::for_current_appearance();
-        let base = match &self.state {
-            TrayState::Loading => colors.loading,
-            TrayState::Downloading => colors.transcribing,
+        let frames = match &self.state {
+            TrayState::Loading => &self.loading_pulse_frames,
+            TrayState::Downloading => &self.downloading_pulse_frames,
             _ => return,
         };
-        let a = (base.3 as f64 * scale).round().min(255.0) as u8;
 
-        if let Ok(icon) = make_icon(base.0, base.1, base.2, a) {
-            let _ = self.tray.set_icon(Some(icon));
+        if frames.is_empty() {
+            return;
         }
+
+        let elapsed = start.elapsed().as_secs_f64();
+        let cycle_progress = (elapsed / PULSE_PERIOD_SECS).fract();
+        let idx = (cycle_progress * frames.len() as f64) as usize % frames.len();
+
+        let _ = self.tray.set_icon(Some(frames[idx].clone()));
 
         self.last_animation_frame = Some(Instant::now());
     }
@@ -587,6 +661,63 @@ impl TrayController {
 /// The murmur icon PNG, embedded at compile time.
 const ICON_PNG: &[u8] = include_bytes!("../../assets/icons/murmur.png");
 
+/// Pre-decoded PNG pixel data so we can tint without re-decoding.
+#[derive(Clone)]
+pub struct DecodedIcon {
+    pub pixels: Vec<u8>,
+    pub stride: usize,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Decode the embedded icon PNG once and return the raw pixel data.
+pub fn decode_icon_png() -> Result<DecodedIcon> {
+    let cursor = std::io::Cursor::new(ICON_PNG);
+    let decoder = png::Decoder::new(cursor);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| anyhow::anyhow!("PNG decode: {e}"))?;
+    let mut buf = vec![0u8; reader.output_buffer_size().expect("PNG info missing")];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| anyhow::anyhow!("PNG frame: {e}"))?;
+    let stride = match info.color_type {
+        png::ColorType::Rgba => 4,
+        png::ColorType::Rgb => 3,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Grayscale => 1,
+        other => anyhow::bail!("Unsupported PNG colour type: {other:?}"),
+    };
+    Ok(DecodedIcon {
+        pixels: buf[..info.buffer_size()].to_vec(),
+        stride,
+        width: info.width,
+        height: info.height,
+    })
+}
+
+/// Build an Icon by tinting pre-decoded pixel data (no PNG decoding).
+fn make_icon_from_decoded(decoded: &DecodedIcon, r: u8, g: u8, b: u8, a: u8) -> Result<Icon> {
+    let rgba = tint_pixels(&decoded.pixels, decoded.stride, r, g, b, a);
+    Icon::from_rgba(rgba, decoded.width, decoded.height)
+        .map_err(|e| anyhow::anyhow!("Icon error: {e}"))
+}
+
+/// Pre-render all frames of a pulse animation for a given base colour.
+fn build_pulse_frames(decoded: &DecodedIcon, base: (u8, u8, u8, u8)) -> Vec<Icon> {
+    (0..PULSE_FRAME_COUNT)
+        .filter_map(|i| {
+            let phase_angle = (i as f64 / PULSE_FRAME_COUNT as f64) * std::f64::consts::TAU;
+            let phase = phase_angle.sin();
+            let scale = PULSE_ALPHA_MIN + (1.0 - PULSE_ALPHA_MIN) * (phase + 1.0) / 2.0;
+            let a = (base.3 as f64 * scale).round().min(255.0) as u8;
+            make_icon_from_decoded(decoded, base.0, base.1, base.2, a).ok()
+        })
+        .collect()
+}
+
+/// Build an icon by decoding the embedded PNG and tinting (used in tests).
+#[cfg(test)]
 fn make_icon(r: u8, g: u8, b: u8, a: u8) -> Result<Icon> {
     let (rgba, width, height) = tint_png_rgba(ICON_PNG, r, g, b, a)?;
     Icon::from_rgba(rgba, width, height).map_err(|e| anyhow::anyhow!("Icon error: {e}"))
@@ -601,8 +732,8 @@ struct StateColors {
 }
 
 impl StateColors {
-    fn for_current_appearance() -> Self {
-        if is_dark_mode() {
+    fn for_appearance(dark: bool) -> Self {
+        if dark {
             // Light icons for dark menu bar
             Self {
                 idle: (255, 255, 255, 200),
@@ -1114,6 +1245,27 @@ mod tests {
     #[test]
     fn tint_png_rgba_invalid() {
         assert!(tint_png_rgba(b"not a png", 255, 0, 0, 255).is_err());
+    }
+
+    // -- decode_icon_png / make_icon_from_decoded --
+
+    #[test]
+    fn decode_icon_png_succeeds() {
+        let decoded = decode_icon_png().unwrap();
+        assert!(decoded.width > 0 && decoded.height > 0);
+        assert_eq!(
+            decoded.pixels.len(),
+            (decoded.width as usize * decoded.height as usize) * decoded.stride
+        );
+    }
+
+    #[test]
+    fn make_icon_from_decoded_matches_make_icon() {
+        let decoded = decode_icon_png().unwrap();
+        let from_decoded = make_icon_from_decoded(&decoded, 255, 80, 80, 230);
+        let from_raw = make_icon(255, 80, 80, 230);
+        assert!(from_decoded.is_ok());
+        assert!(from_raw.is_ok());
     }
 
     // -- constants --

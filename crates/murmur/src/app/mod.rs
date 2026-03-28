@@ -249,6 +249,10 @@ pub fn run(notes_mode: bool) -> Result<()> {
     }
     println!("Loading model in background...");
 
+    let mut last_appearance_check = std::time::Instant::now();
+    // How often to re-check system dark/light mode (seconds).
+    const APPEARANCE_CHECK_INTERVAL_SECS: u64 = 5;
+
     loop {
         let mut should_quit = false;
 
@@ -381,6 +385,12 @@ pub fn run(notes_mode: bool) -> Result<()> {
         while let Ok(_event) = TrayIconEvent::receiver().try_recv() {}
 
         tray.tick();
+
+        // Periodically re-check dark/light mode so icons adapt.
+        if last_appearance_check.elapsed().as_secs() >= APPEARANCE_CHECK_INTERVAL_SECS {
+            tray.refresh_appearance();
+            last_appearance_check = std::time::Instant::now();
+        }
 
         // Auto-stop wake-word dictation after sustained silence
         let silence_effects = state.check_silence_timeout();

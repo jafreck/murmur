@@ -29,3 +29,47 @@ pub trait LlmProvider: Send + Sync {
     /// Get the name of the current model.
     fn model_name(&self) -> &str;
 }
+
+/// Strip `<think>...</think>` blocks from model output.
+/// Some models (e.g. Qwen3) include chain-of-thought reasoning in these
+/// tags. We keep only the final answer for display.
+pub fn strip_thinking(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("<think>") {
+        result.push_str(&rest[..start]);
+        if let Some(end) = rest[start..].find("</think>") {
+            rest = &rest[start + end + "</think>".len()..];
+        } else {
+            // Unclosed <think> — drop everything after it
+            return result.trim().to_string();
+        }
+    }
+    result.push_str(rest);
+    result.trim().to_string()
+}
+
+/// Format `<think>...</think>` blocks as separate sections for display.
+/// Returns the thinking text and the final answer as a tuple.
+pub fn split_thinking(text: &str) -> (Option<String>, String) {
+    let mut thinking = String::new();
+    let mut answer = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("<think>") {
+        answer.push_str(&rest[..start]);
+        if let Some(end) = rest[start..].find("</think>") {
+            let think_content = &rest[start + "<think>".len()..start + end];
+            thinking.push_str(think_content.trim());
+            rest = &rest[start + end + "</think>".len()..];
+        } else {
+            break;
+        }
+    }
+    answer.push_str(rest);
+    let answer = answer.trim().to_string();
+    if thinking.is_empty() {
+        (None, answer)
+    } else {
+        (Some(thinking), answer)
+    }
+}

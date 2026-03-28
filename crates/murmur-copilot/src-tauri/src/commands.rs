@@ -183,7 +183,7 @@ pub async fn extract_action_items(state: State<'_, AppState>) -> Result<Option<S
 pub async fn ask_question(
     state: State<'_, AppState>,
     question: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<crate::llm::LlmResponse>, String> {
     let transcript_text = {
         let session_guard = state.session.lock().map_err(|e| e.to_string())?;
         match session_guard.as_ref() {

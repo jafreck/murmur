@@ -110,10 +110,20 @@ export function initApp(): void {
 
     try {
       const result = (await invoke("ask_question", { question })) as
-        | string
+        | { thinking: string | null; answer: string }
         | null;
       if (result) {
-        llmContentEl.textContent = result;
+        llmContentEl.innerHTML = "";
+        if (result.thinking) {
+          const thinkEl = document.createElement("div");
+          thinkEl.className = "llm-thinking";
+          thinkEl.textContent = result.thinking;
+          llmContentEl.appendChild(thinkEl);
+        }
+        const answerEl = document.createElement("div");
+        answerEl.className = "llm-answer";
+        answerEl.textContent = result.answer;
+        llmContentEl.appendChild(answerEl);
         llmResponseEl.classList.remove("hidden");
       }
     } catch {
@@ -144,7 +154,7 @@ export function initApp(): void {
     accumulatedText = "";
     lastAskedQuestion = "";
     llmResponseEl.classList.add("hidden");
-    llmContentEl.textContent = "";
+    llmContentEl.innerHTML = "";
     try {
       await invoke("start_meeting");
       setRecording();

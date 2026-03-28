@@ -41,7 +41,7 @@ impl LlmManager {
         let provider = self.provider.as_ref()?;
         let messages = suggestion_prompt(transcript);
         match provider.generate(&messages) {
-            Ok(response) => Some(response),
+            Ok(response) => Some(murmur_core::llm::strip_thinking(&response)),
             Err(e) => {
                 warn!("LLM suggestion failed: {e}");
                 None
@@ -54,7 +54,7 @@ impl LlmManager {
         let provider = self.provider.as_ref()?;
         let messages = summary_prompt(transcript);
         match provider.generate(&messages) {
-            Ok(response) => Some(response),
+            Ok(response) => Some(murmur_core::llm::strip_thinking(&response)),
             Err(e) => {
                 warn!("LLM summary failed: {e}");
                 None
@@ -67,7 +67,7 @@ impl LlmManager {
         let provider = self.provider.as_ref()?;
         let messages = action_items_prompt(transcript);
         match provider.generate(&messages) {
-            Ok(response) => Some(response),
+            Ok(response) => Some(murmur_core::llm::strip_thinking(&response)),
             Err(e) => {
                 warn!("LLM action items extraction failed: {e}");
                 None
@@ -76,7 +76,7 @@ impl LlmManager {
     }
 
     /// Answer a free-form question using recent transcript as context.
-    pub fn ask(&self, question: &str, context: &str) -> Option<String> {
+    pub fn ask(&self, question: &str, context: &str) -> Option<LlmResponse> {
         let provider = self.provider.as_ref()?;
         let messages = vec![
             ChatMessage {
@@ -96,11 +96,23 @@ impl LlmManager {
             },
         ];
         match provider.generate(&messages) {
-            Ok(response) => Some(response),
+            Ok(raw) => {
+                let (thinking, answer) = murmur_core::llm::split_thinking(&raw);
+                Some(LlmResponse { thinking, answer })
+            }
             Err(e) => {
                 warn!("LLM ask failed: {e}");
                 None
             }
         }
     }
+}
+
+/// Structured LLM response with optional chain-of-thought reasoning.
+#[derive(serde::Serialize)]
+pub struct LlmResponse {
+    /// Chain-of-thought reasoning (from `<think>` tags), if any.
+    pub thinking: Option<String>,
+    /// The final answer.
+    pub answer: String,
 }

@@ -10,6 +10,11 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::config::{self, Config, InputMode};
 
+#[cfg(target_os = "macos")]
+mod native_icon_cache;
+#[cfg(target_os = "macos")]
+use native_icon_cache::NativeIconCache;
+
 /// How often (in milliseconds) the pulsing animation updates the icon.
 const PULSE_FRAME_INTERVAL_MS: u128 = 100;
 
@@ -290,6 +295,10 @@ pub struct TrayController {
     /// Cached dark-mode flag to avoid spawning a subprocess on every icon update.
     cached_dark_mode: bool,
 
+    /// macOS: pre-built NSImage cache for zero-cost icon swaps.
+    #[cfg(target_os = "macos")]
+    native_cache: Option<NativeIconCache>,
+
     /// When set, the icon pulses to indicate a busy/unavailable state.
     animation_start: Option<Instant>,
     last_animation_frame: Option<Instant>,
@@ -457,6 +466,15 @@ impl TrayController {
             .with_menu_on_left_click(true)
             .build()?;
 
+        #[cfg(target_os = "macos")]
+        let native_cache = match NativeIconCache::new(&tray, &decoded, &colors) {
+            Ok(cache) => Some(cache),
+            Err(e) => {
+                log::warn!("Native icon cache unavailable, falling back to tray-icon: {e}");
+                None
+            }
+        };
+
         let controller = Self {
             tray,
             state: TrayState::Idle,
@@ -480,6 +498,8 @@ impl TrayController {
             downloading_pulse_frames,
             decoded_icon: decoded,
             cached_dark_mode: dark_mode,
+            #[cfg(target_os = "macos")]
+            native_cache,
             animation_start: None,
             last_animation_frame: None,
         };
@@ -494,13 +514,28 @@ impl TrayController {
     pub fn set_state(&mut self, state: TrayState) {
         let (tooltip, label) = state_display(&state);
 
-        let icon = match &state {
-            TrayState::Idle => &self.idle_icon,
-            TrayState::Recording | TrayState::Error => &self.recording_icon,
-            TrayState::Transcribing | TrayState::Downloading => &self.transcribing_icon,
-            TrayState::Loading => &self.loading_icon,
+        // On macOS, use the native NSImage cache for instant icon swaps.
+        // Falls back to the tray-icon crate path on other platforms or if
+        // the native cache is unavailable.
+        #[cfg(target_os = "macos")]
+        let used_native = if let Some(ref cache) = self.native_cache {
+            cache.set_icon_for_state(&state);
+            true
+        } else {
+            false
         };
-        let _ = self.tray.set_icon(Some(icon.clone()));
+        #[cfg(not(target_os = "macos"))]
+        let used_native = false;
+
+        if !used_native {
+            let icon = match &state {
+                TrayState::Idle => &self.idle_icon,
+                TrayState::Recording | TrayState::Error => &self.recording_icon,
+                TrayState::Transcribing | TrayState::Downloading => &self.transcribing_icon,
+                TrayState::Loading => &self.loading_icon,
+            };
+            let _ = self.tray.set_icon(Some(icon.clone()));
+        }
 
         // Start or stop pulsing animation based on the new state.
         if is_pulsing_state(&state) {
@@ -566,6 +601,16 @@ impl TrayController {
         }
         self.loading_pulse_frames = build_pulse_frames(&self.decoded_icon, colors.loading);
         self.downloading_pulse_frames = build_pulse_frames(&self.decoded_icon, colors.transcribing);
+        #[cfg(target_os = "macos")]
+        {
+            match NativeIconCache::new(&self.tray, &self.decoded_icon, &colors) {
+                Ok(cache) => self.native_cache = Some(cache),
+                Err(e) => {
+                    log::warn!("Failed to rebuild native icon cache: {e}");
+                    self.native_cache = None;
+                }
+            }
+        }
         // Re-apply the current state with the new icons.
         self.set_state(self.state.clone());
     }
@@ -586,6 +631,20 @@ impl TrayController {
             }
         }
 
+        let elapsed = start.elapsed().as_secs_f64();
+        let cycle_progress = (elapsed / PULSE_PERIOD_SECS).fract();
+
+        // On macOS, use the native NSImage cache for instant frame swaps.
+        #[cfg(target_os = "macos")]
+        if let Some(ref cache) = self.native_cache {
+            let frame_count = PULSE_FRAME_COUNT;
+            let idx = (cycle_progress * frame_count as f64) as usize % frame_count;
+            if cache.set_pulse_frame(&self.state, idx) {
+                self.last_animation_frame = Some(Instant::now());
+            }
+            return;
+        }
+
         let frames = match &self.state {
             TrayState::Loading => &self.loading_pulse_frames,
             TrayState::Downloading => &self.downloading_pulse_frames,
@@ -596,8 +655,6 @@ impl TrayController {
             return;
         }
 
-        let elapsed = start.elapsed().as_secs_f64();
-        let cycle_progress = (elapsed / PULSE_PERIOD_SECS).fract();
         let idx = (cycle_progress * frames.len() as f64) as usize % frames.len();
 
         let _ = self.tray.set_icon(Some(frames[idx].clone()));
@@ -659,7 +716,7 @@ impl TrayController {
 }
 
 /// The murmur icon PNG, embedded at compile time.
-const ICON_PNG: &[u8] = include_bytes!("../../assets/icons/murmur.png");
+const ICON_PNG: &[u8] = include_bytes!("../../../assets/icons/murmur.png");
 
 /// Pre-decoded PNG pixel data so we can tint without re-decoding.
 #[derive(Clone)]

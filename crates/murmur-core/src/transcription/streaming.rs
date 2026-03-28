@@ -1,12 +1,9 @@
-//! Growing-window streaming transcription.
+//! Chunked streaming transcription with overlap stitching.
 //!
-//! While the user holds the hotkey, audio is recorded continuously.
-//! This module periodically transcribes a growing window of audio
-//! (from the start up to the current position), diffs against what
-//! was already emitted, and sends only new words incrementally.
-//!
-//! Once the window exceeds `MAX_WINDOW_SECS` the start anchor slides
-//! forward to keep each Whisper pass short and responsive.
+//! Audio is captured continuously and transcribed in overlapping chunks
+//! via a subprocess worker. Each chunk includes a configurable overlap
+//! with the previous chunk, and word-level stitching deduplicates the
+//! overlap region before appending new text.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -18,13 +15,14 @@ use crate::audio::capture::TARGET_RATE;
 // ── Configuration ──────────────────────────────────────────────────────
 
 /// Minimum new audio (seconds) before re-transcribing.
-const MIN_NEW_AUDIO_SECS: f32 = 1.0;
+const MIN_NEW_AUDIO_SECS: f32 = 2.0;
 /// Minimum interval between transcription attempts, in milliseconds.
 const POLL_INTERVAL_MS: u64 = 300;
-/// Maximum window size sent to Whisper during streaming, in seconds.
-/// Smaller windows keep each inference pass fast at the cost of less
-/// context. 10 s is a good balance between latency and accuracy.
-const MAX_WINDOW_SECS: f32 = 10.0;
+/// Maximum chunk size sent to Whisper, in seconds.
+const MAX_CHUNK_SECS: f32 = 5.0;
+/// Overlap between consecutive chunks (seconds). This gives whisper
+/// context across chunk boundaries so words aren't lost or split.
+const OVERLAP_SECS: f32 = 1.5;
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -71,6 +69,9 @@ impl StreamingHandle {
 /// Reads from `sample_buffer` (the AudioRecorder's shared buffer), transcribes
 /// overlapping chunks, and sends incremental text via `tx`.
 ///
+/// `worker` is a pre-spawned subprocess transcriber. Spawning it ahead of
+/// time avoids the model-loading delay on first recording.
+///
 /// Returns a [`StreamingHandle`] that can stop and join the thread.
 pub fn start_streaming(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
@@ -78,6 +79,7 @@ pub fn start_streaming(
     translate: bool,
     filler_word_removal: bool,
     tx: mpsc::Sender<StreamingEvent>,
+    worker: super::subprocess::SubprocessTranscriber,
 ) -> StreamingHandle {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
     let abort_flag = Arc::new(AtomicBool::new(false));
@@ -92,6 +94,7 @@ pub fn start_streaming(
             tx,
             stop_rx,
             abort_flag_clone,
+            worker,
         );
     });
 
@@ -104,39 +107,53 @@ pub fn start_streaming(
 
 // ── Internal ───────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn streaming_loop(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
-    transcriber: Arc<Transcriber>,
+    _transcriber: Arc<Transcriber>,
     translate: bool,
     filler_word_removal: bool,
     tx: mpsc::Sender<StreamingEvent>,
     stop_rx: mpsc::Receiver<()>,
-    abort_flag: Arc<AtomicBool>,
+    _abort_flag: Arc<AtomicBool>,
+    mut worker: super::subprocess::SubprocessTranscriber,
 ) {
     let min_new_samples = (MIN_NEW_AUDIO_SECS * TARGET_RATE as f32) as usize;
-    let max_window_samples = (MAX_WINDOW_SECS * TARGET_RATE as f32) as usize;
+    let max_chunk_samples = (MAX_CHUNK_SECS * TARGET_RATE as f32) as usize;
+    let overlap_samples = (OVERLAP_SECS * TARGET_RATE as f32) as usize;
 
-    let mut anchor: usize = 0;
-    let mut last_transcribed: usize = 0;
-    // The exact text currently on screen from streaming emissions.
-    let mut emitted_text = String::new();
-
-    // Pre-allocate the window buffer to avoid per-iteration heap allocations.
-    let mut window: Vec<f32> = Vec::with_capacity(max_window_samples);
-
-    // Create a single WhisperState up-front and reuse it across
-    // iterations to avoid per-call KV-cache allocation overhead.
-    let mut whisper_state = match transcriber.create_streaming_state() {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("Failed to create whisper state for streaming: {e}");
-            return;
-        }
-    };
+    // The boundary up to which audio has been consumed (minus overlap).
+    let mut consumed_boundary: usize = 0;
+    // Words emitted so far (for stitching overlap regions).
+    let mut committed_words: Vec<String> = Vec::new();
+    let mut chunk: Vec<f32> = Vec::with_capacity(max_chunk_samples);
 
     loop {
         match stop_rx.try_recv() {
-            Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
+            Ok(()) | Err(mpsc::TryRecvError::Disconnected) => {
+                // Final chunk: transcribe remaining audio with overlap.
+                let total = match sample_buffer.lock() {
+                    Ok(b) => b.len(),
+                    Err(e) => e.into_inner().len(),
+                };
+                let start = consumed_boundary.saturating_sub(overlap_samples);
+                if total > start {
+                    chunk.clear();
+                    {
+                        let buf = sample_buffer.lock().unwrap_or_else(|e| e.into_inner());
+                        chunk.extend_from_slice(&buf[start..total]);
+                    }
+                    emit_chunk(
+                        &mut worker,
+                        &chunk,
+                        translate,
+                        filler_word_removal,
+                        &mut committed_words,
+                        &tx,
+                    );
+                }
+                break;
+            }
             Err(mpsc::TryRecvError::Empty) => {}
         }
 
@@ -145,85 +162,92 @@ fn streaming_loop(
             Err(e) => e.into_inner().len(),
         };
 
-        if total_samples < last_transcribed + min_new_samples {
+        let new_samples = total_samples.saturating_sub(consumed_boundary);
+        if new_samples < min_new_samples {
             std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
             continue;
         }
 
-        let window_len = total_samples - anchor;
-        if window_len > max_window_samples {
-            anchor = total_samples - max_window_samples;
-        }
-
-        // Reuse the pre-allocated buffer instead of allocating each iteration.
-        window.clear();
-        {
-            let buf = sample_buffer.lock().unwrap_or_else(|e| e.into_inner());
-            window.extend_from_slice(&buf[anchor..total_samples]);
-        }
-
-        // Only run VAD on audio that arrived since the last transcription,
-        // not the full window. This avoids redundant Silero inference on
-        // already-checked audio.
-        let new_offset = last_transcribed.saturating_sub(anchor);
-        if !super::vad::contains_speech(&window[new_offset..]) {
-            last_transcribed = total_samples;
-            std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
-            continue;
-        }
-
-        // Notify that speech is detected (keeps silence timeout alive)
-        let _ = tx.send(StreamingEvent::SpeechDetected);
-
-        let mut full_text = match transcriber.streaming_transcribe(
-            &mut whisper_state,
-            &window,
-            translate,
-            &abort_flag,
-        ) {
-            Ok(t) => t,
-            Err(e) => {
-                log::error!("Streaming transcription failed: {e}");
-                last_transcribed = total_samples;
-                continue;
-            }
+        // Start the chunk with overlap from the previous chunk for context.
+        let chunk_start = consumed_boundary.saturating_sub(overlap_samples);
+        let chunk_end = if total_samples - chunk_start > max_chunk_samples {
+            chunk_start + max_chunk_samples
+        } else {
+            total_samples
         };
 
-        // Re-read the current buffer position so the min-new-audio threshold
-        // is relative to *now*, not to when this transcription started.
-        // Without this, audio that accumulated during a slow transcription
-        // immediately triggers another (even larger) transcription, creating
-        // a snowball effect that falls further and further behind real-time.
-        last_transcribed = match sample_buffer.lock() {
+        chunk.clear();
+        {
+            let buf = sample_buffer.lock().unwrap_or_else(|e| e.into_inner());
+            chunk.extend_from_slice(&buf[chunk_start..chunk_end]);
+        }
+
+        if !super::vad::contains_speech(&chunk) {
+            consumed_boundary = chunk_end;
+            std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+            continue;
+        }
+
+        let _ = tx.send(StreamingEvent::SpeechDetected);
+
+        emit_chunk(
+            &mut worker,
+            &chunk,
+            translate,
+            filler_word_removal,
+            &mut committed_words,
+            &tx,
+        );
+
+        // Advance boundary (new audio will overlap by overlap_samples).
+        consumed_boundary = match sample_buffer.lock() {
             Ok(b) => b.len(),
             Err(e) => e.into_inner().len(),
         };
+    }
+}
 
-        if full_text.is_empty() {
-            continue;
+/// Transcribe a chunk and emit only the new (stitched) words.
+fn emit_chunk(
+    worker: &mut super::subprocess::SubprocessTranscriber,
+    chunk: &[f32],
+    translate: bool,
+    filler_word_removal: bool,
+    committed_words: &mut Vec<String>,
+    tx: &mpsc::Sender<StreamingEvent>,
+) {
+    let mut text = match worker.transcribe(chunk, translate) {
+        Ok(t) => t,
+        Err(e) => {
+            log::error!("Streaming transcription failed: {e}");
+            return;
         }
+    };
 
-        if filler_word_removal {
-            full_text = super::postprocess::remove_filler_words(&full_text);
-            if full_text.is_empty() {
-                continue;
-            }
+    if text.is_empty() {
+        return;
+    }
+
+    if filler_word_removal {
+        text = super::postprocess::remove_filler_words(&text);
+        if text.is_empty() {
+            return;
         }
+    }
+    text = super::postprocess::ensure_space_after_punctuation(&text);
 
-        // Spoken-punctuation regex (17 passes) is deferred to the final
-        // transcription pass to keep each streaming iteration fast.
-        full_text = super::postprocess::ensure_space_after_punctuation(&full_text);
+    let chunk_words: Vec<String> = text.split_whitespace().map(String::from).collect();
 
-        // If the transcription changed at all, replace everything.
-        // Backspace the entire emitted text and retype Whisper's latest.
-        if full_text != emitted_text {
-            let replace_chars = emitted_text.chars().count();
-            let _ = tx.send(StreamingEvent::PartialText {
-                text: full_text.clone(),
-                replace_chars,
-            });
-            emitted_text = full_text;
-        }
+    // Stitch: deduplicate the overlap region against previously committed words.
+    let new_words = stitch(committed_words, &chunk_words);
+
+    if !new_words.is_empty() {
+        let new_text = new_words.join(" ");
+        let _ = tx.send(StreamingEvent::PartialText {
+            text: format!(" {new_text}"),
+            replace_chars: 0,
+        });
+        committed_words.extend(new_words);
     }
 }
 
@@ -427,8 +451,9 @@ mod tests {
     #[test]
     fn test_constants() {
         const { assert!(MIN_NEW_AUDIO_SECS > 0.0) };
-        const { assert!(MAX_WINDOW_SECS > 0.0) };
-        const { assert!(MAX_WINDOW_SECS <= 30.0) };
+        const { assert!(MAX_CHUNK_SECS > 0.0) };
+        const { assert!(MAX_CHUNK_SECS <= 30.0) };
+        const { assert!(OVERLAP_SECS >= 0.0) };
         const { assert!(POLL_INTERVAL_MS > 0) };
         assert_eq!(TARGET_RATE, 16_000);
     }

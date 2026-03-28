@@ -150,12 +150,17 @@ impl MeetingSession {
         let mic_samples = self.recorder.sample_buffer();
 
         let (mic_tx, mic_rx) = mpsc::channel::<StreamingEvent>();
+        let mic_worker = murmur_core::transcription::SubprocessTranscriber::new(
+            self.transcriber.model_path(),
+            self.transcriber.language(),
+        )?;
         let mic_handle = start_streaming(
             mic_samples,
             Arc::clone(&self.transcriber),
             self.config.translate_to_english,
             self.config.filler_word_removal,
             mic_tx,
+            mic_worker,
         );
         self.mic_streaming = Some(mic_handle);
 
@@ -163,16 +168,28 @@ impl MeetingSession {
         let sys_rx_opt = if let Some(ref mut capturer) = self.system_capturer {
             match capturer.start() {
                 Ok(sys_samples) => {
-                    let (sys_tx, sys_rx) = mpsc::channel::<StreamingEvent>();
-                    let sys_handle = start_streaming(
-                        sys_samples,
-                        Arc::clone(&self.transcriber),
-                        self.config.translate_to_english,
-                        self.config.filler_word_removal,
-                        sys_tx,
-                    );
-                    self.sys_streaming = Some(sys_handle);
-                    Some(sys_rx)
+                    match murmur_core::transcription::SubprocessTranscriber::new(
+                        self.transcriber.model_path(),
+                        self.transcriber.language(),
+                    ) {
+                        Ok(sys_worker) => {
+                            let (sys_tx, sys_rx) = mpsc::channel::<StreamingEvent>();
+                            let sys_handle = start_streaming(
+                                sys_samples,
+                                Arc::clone(&self.transcriber),
+                                self.config.translate_to_english,
+                                self.config.filler_word_removal,
+                                sys_tx,
+                                sys_worker,
+                            );
+                            self.sys_streaming = Some(sys_handle);
+                            Some(sys_rx)
+                        }
+                        Err(e) => {
+                            warn!("failed to spawn system audio worker: {e}");
+                            None
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!("failed to start system audio capture: {e}");

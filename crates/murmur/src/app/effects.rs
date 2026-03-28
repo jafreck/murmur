@@ -25,6 +25,7 @@ pub struct EffectContext<'a> {
     pub state: &'a mut AppState,
     pub tx: &'a mpsc::Sender<AppMessage>,
     pub streaming_stop: &'a mut Option<streaming::StreamingHandle>,
+    pub streaming_worker: &'a mut Option<murmur_core::transcription::SubprocessTranscriber>,
     pub hotkey_config: &'a SharedHotkeyConfig,
     pub capture_flag: &'a CaptureFlag,
     pub overlay: &'a mut Option<OverlayHandle>,
@@ -63,6 +64,7 @@ pub fn apply_effect(
             if let Some(handle) = ctx.streaming_stop.take() {
                 info!("Stopping streaming transcription");
                 handle.stop_and_join();
+                ctx.state.streaming_completed = true;
             }
         }
         AppEffect::InsertText(text) => {
@@ -226,11 +228,24 @@ pub fn apply_effect(
 
 fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
     // Stop streaming first (if running) and wait for the thread to exit.
-    // This prevents concurrent access to the shared WhisperContext between
-    // the streaming thread and the final transcription thread below.
+    let streaming_was_active = ctx.state.streaming_completed;
+    ctx.state.streaming_completed = false;
     if let Some(handle) = ctx.streaming_stop.take() {
         info!("Waiting for streaming thread to finish before final transcription");
         handle.stop_and_join();
+    }
+
+    // Re-spawn the worker for the next recording session
+    if ctx.streaming_worker.is_none() {
+        if let Some(transcriber) = ctx.transcriber.as_ref() {
+            match murmur_core::transcription::SubprocessTranscriber::new(
+                transcriber.model_path(),
+                transcriber.language(),
+            ) {
+                Ok(w) => *ctx.streaming_worker = Some(w),
+                Err(e) => error!("Failed to re-spawn whisper worker: {e}"),
+            }
+        }
     }
 
     let Some(transcriber) = ctx.transcriber.as_ref().map(Arc::clone) else {
@@ -255,6 +270,15 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
             let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
             return;
         };
+
+        // When streaming was active, it already emitted the text
+        // incrementally. Skip the batch re-transcription to avoid
+        // duplicating output.
+        if streaming_was_active {
+            info!("Streaming was active — skipping batch re-transcription");
+            let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
+            return;
+        }
 
         info!("Transcribing {} samples from memory...", samples.len());
         std::thread::spawn(move || {
@@ -360,12 +384,21 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
         }
     });
 
+    let worker = match ctx.streaming_worker.take() {
+        Some(w) => w,
+        None => {
+            log::error!("No whisper worker available — cannot start streaming");
+            return;
+        }
+    };
+
     let handle = streaming::start_streaming(
         sample_buffer,
         transcriber,
         translate,
         filler_removal,
         streaming_tx,
+        worker,
     );
     *ctx.streaming_stop = Some(handle);
 }

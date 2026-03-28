@@ -135,6 +135,9 @@ pub struct AppState {
     /// Timestamp of last speech activity (recording start or streaming text).
     /// Used to auto-stop wake-word-initiated sessions after silence.
     pub last_speech_at: Option<std::time::Instant>,
+    /// Set to true when a streaming session completes, so the batch
+    /// transcription at the end can be skipped (avoids duplicate output).
+    pub streaming_completed: bool,
 }
 
 impl AppState {
@@ -160,6 +163,7 @@ impl AppState {
             overlay_text: String::new(),
             stop_phrase: config.stop_phrase.clone(),
             last_speech_at: None,
+            streaming_completed: false,
         }
     }
 
@@ -575,6 +579,7 @@ mod tests {
             overlay_text: String::new(),
             stop_phrase: "murmur stop".to_string(),
             last_speech_at: None,
+            streaming_completed: false,
         }
     }
 

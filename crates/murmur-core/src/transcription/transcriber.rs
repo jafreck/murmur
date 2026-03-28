@@ -11,7 +11,7 @@ use crate::transcription::vad;
 
 /// Compute thread count: use 75% of available cores, clamped to [4, 8].
 /// This balances throughput against CPU pressure (avoids pegging all cores).
-fn inference_thread_count() -> i32 {
+pub fn inference_thread_count() -> i32 {
     let n = std::thread::available_parallelism()
         .map(|n| n.get() as i32)
         .unwrap_or(4);
@@ -229,6 +229,7 @@ fn is_cjk_char(c: char) -> bool {
 pub struct Transcriber {
     ctx: WhisperContext,
     language: String,
+    model_path: PathBuf,
 }
 
 /// Read a WAV file and return f32 samples normalized to [-1.0, 1.0].
@@ -267,7 +268,18 @@ impl Transcriber {
         Ok(Self {
             ctx,
             language: language.to_string(),
+            model_path: model_path.to_path_buf(),
         })
+    }
+
+    /// Path to the loaded model file.
+    pub fn model_path(&self) -> &Path {
+        &self.model_path
+    }
+
+    /// Language setting for this transcriber.
+    pub fn language(&self) -> &str {
+        &self.language
     }
 
     /// Return the language parameter for whisper. `None` means auto-detect.

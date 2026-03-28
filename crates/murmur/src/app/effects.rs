@@ -17,6 +17,83 @@ use murmur_core::input::wake_word::WakeWordHandle;
 
 use super::{AppEffect, AppMessage, AppState};
 
+// ---------------------------------------------------------------------------
+// Pure decision functions (extracted for testability)
+// ---------------------------------------------------------------------------
+
+/// Result of comparing old and new configuration states.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ConfigDiff {
+    /// The language after applying English-only model enforcement.
+    pub effective_language: String,
+    /// Whether the language selection menu should be enabled.
+    pub language_menu_enabled: bool,
+    /// Whether model or effective language differs from the old state.
+    pub model_or_language_changed: bool,
+    /// Whether the hotkey binding changed.
+    pub hotkey_changed: bool,
+}
+
+/// Compare old runtime state with a newly loaded config to decide what changed.
+pub(crate) fn compute_config_diff(
+    old_model: &str,
+    old_language: &str,
+    old_hotkey: &str,
+    new_config: &Config,
+) -> ConfigDiff {
+    let english_only = crate::config::is_english_only_model(&new_config.model_size);
+    let effective_language = if english_only && new_config.language != "en" {
+        "en".to_string()
+    } else {
+        new_config.language.clone()
+    };
+
+    ConfigDiff {
+        model_or_language_changed: new_config.model_size != old_model
+            || effective_language != old_language,
+        hotkey_changed: new_config.hotkey != old_hotkey,
+        language_menu_enabled: !english_only,
+        effective_language,
+    }
+}
+
+/// The outcome of deciding how to handle a stop-and-transcribe request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TranscribeDecision {
+    /// No transcriber is loaded.
+    NoTranscriber,
+    /// No audio was captured.
+    NoAudio,
+    /// Streaming already emitted the text; skip batch re-transcription.
+    SkipBatchStreamingDone,
+    /// Run transcription on the captured audio.
+    Transcribe,
+}
+
+/// Decide how to handle a stop-and-transcribe request.
+///
+/// `max_recordings == 0` means in-memory mode where the streaming-skip
+/// optimisation applies.
+pub(crate) fn decide_transcription(
+    has_transcriber: bool,
+    max_recordings: u32,
+    streaming_was_active: bool,
+    has_audio: bool,
+) -> TranscribeDecision {
+    if !has_transcriber {
+        return TranscribeDecision::NoTranscriber;
+    }
+    if !has_audio {
+        return TranscribeDecision::NoAudio;
+    }
+    if max_recordings == 0 && streaming_was_active {
+        return TranscribeDecision::SkipBatchStreamingDone;
+    }
+    TranscribeDecision::Transcribe
+}
+
+// ---------------------------------------------------------------------------
+
 pub struct EffectContext<'a> {
     pub recorder: &'a mut AudioRecorder,
     pub transcriber: &'a mut Option<Arc<Transcriber>>,
@@ -248,7 +325,14 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
         }
     }
 
-    let Some(transcriber) = ctx.transcriber.as_ref().map(Arc::clone) else {
+    let has_transcriber = ctx.transcriber.is_some();
+    let max_recordings = ctx.state.max_recordings;
+
+    // No-transcriber path: clean up both recorder modes and bail early.
+    if matches!(
+        decide_transcription(has_transcriber, max_recordings, streaming_was_active, true),
+        TranscribeDecision::NoTranscriber
+    ) {
         info!("Model not loaded yet — ignoring transcription request");
         let _ = ctx.recorder.stop();
         let _ = ctx.recorder.stop_samples();
@@ -256,82 +340,92 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
             "Model is still loading, please try again".to_string(),
         ));
         return;
-    };
+    }
+
+    let transcriber = ctx.transcriber.as_ref().map(Arc::clone).unwrap();
     let spoken_punctuation = ctx.state.spoken_punctuation;
     let filler_word_removal = ctx.state.filler_word_removal;
     let translate_to_english = ctx.state.translate_to_english;
-    let max_recordings = ctx.state.max_recordings;
     let tx = ctx.tx.clone();
 
     if max_recordings == 0 {
         // In-memory path: no file I/O
-        let Some(samples) = ctx.recorder.stop_samples() else {
-            info!("StopAndTranscribe called but no audio captured");
-            let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
-            return;
-        };
+        let samples = ctx.recorder.stop_samples();
+        let has_audio = samples.is_some();
 
-        // When streaming was active, it already emitted the text
-        // incrementally. Skip the batch re-transcription to avoid
-        // duplicating output.
-        if streaming_was_active {
-            info!("Streaming was active — skipping batch re-transcription");
-            let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
-            return;
-        }
-
-        info!("Transcribing {} samples from memory...", samples.len());
-        std::thread::spawn(move || {
-            match transcriber.transcribe_samples(&samples, translate_to_english) {
-                Ok(raw) => {
-                    let mut text = raw;
-                    if filler_word_removal {
-                        text = postprocess::remove_filler_words(&text);
-                    }
-                    if spoken_punctuation {
-                        text = postprocess::process(&text);
-                    }
-                    text = postprocess::ensure_space_after_punctuation(&text);
-                    if !text.is_empty() {
-                        let _ = tx.send(AppMessage::TranscriptionDone(text));
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
-                }
+        match decide_transcription(true, 0, streaming_was_active, has_audio) {
+            TranscribeDecision::NoAudio => {
+                info!("StopAndTranscribe called but no audio captured");
+                let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
             }
-        });
+            TranscribeDecision::SkipBatchStreamingDone => {
+                info!("Streaming was active — skipping batch re-transcription");
+                let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
+            }
+            TranscribeDecision::Transcribe => {
+                let samples = samples.expect("has_audio was true");
+                info!("Transcribing {} samples from memory...", samples.len());
+                std::thread::spawn(move || {
+                    match transcriber.transcribe_samples(&samples, translate_to_english) {
+                        Ok(raw) => {
+                            let mut text = raw;
+                            if filler_word_removal {
+                                text = postprocess::remove_filler_words(&text);
+                            }
+                            if spoken_punctuation {
+                                text = postprocess::process(&text);
+                            }
+                            text = postprocess::ensure_space_after_punctuation(&text);
+                            if !text.is_empty() {
+                                let _ = tx.send(AppMessage::TranscriptionDone(text));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
+                        }
+                    }
+                });
+            }
+            TranscribeDecision::NoTranscriber => unreachable!("checked above"),
+        }
     } else {
         // File path: write WAV for recording storage
-        let Some(audio_path) = ctx.recorder.stop() else {
-            info!("StopAndTranscribe called but no active recording");
-            let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
-            return;
-        };
+        let audio_path = ctx.recorder.stop();
+        let has_audio = audio_path.is_some();
 
-        info!("Transcribing...");
-        std::thread::spawn(move || {
-            let result = transcriber.transcribe(&audio_path, translate_to_english);
-            RecordingStore::prune(max_recordings);
-            match result {
-                Ok(raw) => {
-                    let mut text = raw;
-                    if filler_word_removal {
-                        text = postprocess::remove_filler_words(&text);
-                    }
-                    if spoken_punctuation {
-                        text = postprocess::process(&text);
-                    }
-                    text = postprocess::ensure_space_after_punctuation(&text);
-                    if !text.is_empty() {
-                        let _ = tx.send(AppMessage::TranscriptionDone(text));
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
-                }
+        match decide_transcription(true, max_recordings, streaming_was_active, has_audio) {
+            TranscribeDecision::NoAudio => {
+                info!("StopAndTranscribe called but no active recording");
+                let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
             }
-        });
+            TranscribeDecision::Transcribe => {
+                let audio_path = audio_path.expect("has_audio was true");
+                info!("Transcribing...");
+                std::thread::spawn(move || {
+                    let result = transcriber.transcribe(&audio_path, translate_to_english);
+                    RecordingStore::prune(max_recordings);
+                    match result {
+                        Ok(raw) => {
+                            let mut text = raw;
+                            if filler_word_removal {
+                                text = postprocess::remove_filler_words(&text);
+                            }
+                            if spoken_punctuation {
+                                text = postprocess::process(&text);
+                            }
+                            text = postprocess::ensure_space_after_punctuation(&text);
+                            if !text.is_empty() {
+                                let _ = tx.send(AppMessage::TranscriptionDone(text));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
+                        }
+                    }
+                });
+            }
+            _ => unreachable!("only NoAudio/Transcribe possible in file mode"),
+        }
     }
 }
 
@@ -431,19 +525,20 @@ fn reload_config(ctx: &mut EffectContext<'_>) -> Result<(bool, Vec<AppEffect>)> 
     let old_model = ctx.state.model_size.clone();
     let old_lang = ctx.state.language.clone();
     let old_generation = ctx.state.reload_generation;
+
+    let diff = compute_config_diff(&old_model, &old_lang, &ctx.config.hotkey, &new_config);
+
     *ctx.state = AppState::new(&new_config);
     // Preserve reload_generation so in-flight reloads are correctly discarded
     ctx.state.reload_generation = old_generation;
 
-    // Enforce English for English-only models
-    let english_only = crate::config::is_english_only_model(&ctx.state.model_size);
-    if english_only && ctx.state.language != "en" {
-        ctx.state.language = "en".to_string();
-    }
-    ctx.tray.set_language_menu_enabled(!english_only);
+    // Apply English-only model enforcement
+    ctx.state.language = diff.effective_language;
+    ctx.tray
+        .set_language_menu_enabled(diff.language_menu_enabled);
 
     // Update the hotkey listener if the hotkey changed
-    if new_config.hotkey != ctx.config.hotkey {
+    if diff.hotkey_changed {
         if let Some(parsed) = crate::input::keycodes::parse(&new_config.hotkey) {
             if let Ok(mut hk) = ctx.hotkey_config.lock() {
                 *hk = (parsed.key, parsed.modifiers.into_iter().collect());
@@ -464,7 +559,7 @@ fn reload_config(ctx: &mut EffectContext<'_>) -> Result<(bool, Vec<AppEffect>)> 
     ctx.tray.sync_config(ctx.config);
 
     // If model or language changed, reload the transcriber
-    if ctx.state.model_size != old_model || ctx.state.language != old_lang {
+    if diff.model_or_language_changed {
         ctx.state.reload_generation += 1;
         let gen = ctx.state.reload_generation;
         info!("Config reloaded");
@@ -573,5 +668,230 @@ fn spawn_overlay(ctx: &mut EffectContext<'_>) {
         Err(e) => {
             error!("Failed to spawn overlay: {e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // compute_config_diff
+    // -----------------------------------------------------------------------
+
+    fn config_with(f: impl FnOnce(&mut Config)) -> Config {
+        let mut c = Config::default();
+        f(&mut c);
+        c
+    }
+
+    #[test]
+    fn config_diff_no_changes() {
+        let config = Config::default();
+        let diff = compute_config_diff(
+            &config.model_size,
+            &config.language,
+            &config.hotkey,
+            &config,
+        );
+        assert!(!diff.model_or_language_changed);
+        assert!(!diff.hotkey_changed);
+        // Default model is "base.en" (English-only), so language menu is disabled
+        assert!(!diff.language_menu_enabled);
+        assert_eq!(diff.effective_language, "en");
+    }
+
+    #[test]
+    fn config_diff_model_changed() {
+        let new_config = config_with(|c| c.model_size = "large".to_string());
+        let diff = compute_config_diff("base", "en", &new_config.hotkey, &new_config);
+        assert!(diff.model_or_language_changed);
+        assert!(!diff.hotkey_changed);
+    }
+
+    #[test]
+    fn config_diff_language_changed() {
+        // Use a non-english-only model so language isn't forced
+        let old = config_with(|c| c.model_size = "base".to_string());
+        let new_config = config_with(|c| {
+            c.model_size = "base".to_string();
+            c.language = "fr".to_string();
+        });
+        let diff = compute_config_diff(&old.model_size, &old.language, &old.hotkey, &new_config);
+        assert!(diff.model_or_language_changed);
+        assert_eq!(diff.effective_language, "fr");
+    }
+
+    #[test]
+    fn config_diff_hotkey_changed() {
+        let old = Config::default();
+        let new_config = config_with(|c| c.hotkey = "F12".to_string());
+        let diff = compute_config_diff(&old.model_size, &old.language, &old.hotkey, &new_config);
+        assert!(diff.hotkey_changed);
+        assert!(!diff.model_or_language_changed);
+    }
+
+    #[test]
+    fn config_diff_english_only_model_forces_language() {
+        let new_config = config_with(|c| {
+            c.model_size = "base.en".to_string();
+            c.language = "fr".to_string();
+        });
+        let diff = compute_config_diff("base", "en", &new_config.hotkey, &new_config);
+        assert_eq!(diff.effective_language, "en");
+        assert!(!diff.language_menu_enabled);
+        // Model changed from "base" to "base.en"
+        assert!(diff.model_or_language_changed);
+    }
+
+    #[test]
+    fn config_diff_english_only_model_already_english() {
+        let new_config = config_with(|c| {
+            c.model_size = "base.en".to_string();
+            c.language = "en".to_string();
+        });
+        let diff = compute_config_diff("base.en", "en", &new_config.hotkey, &new_config);
+        assert_eq!(diff.effective_language, "en");
+        assert!(!diff.language_menu_enabled);
+        assert!(!diff.model_or_language_changed);
+    }
+
+    #[test]
+    fn config_diff_distil_model_forces_english() {
+        let new_config = config_with(|c| {
+            c.model_size = "distil-large".to_string();
+            c.language = "de".to_string();
+        });
+        let diff = compute_config_diff("base", "de", &new_config.hotkey, &new_config);
+        assert_eq!(diff.effective_language, "en");
+        assert!(!diff.language_menu_enabled);
+        // Model changed AND effective language changed (de → en)
+        assert!(diff.model_or_language_changed);
+    }
+
+    #[test]
+    fn config_diff_multiple_changes() {
+        let new_config = config_with(|c| {
+            c.model_size = "large".to_string();
+            c.language = "fr".to_string();
+            c.hotkey = "F12".to_string();
+        });
+        let diff = compute_config_diff("base", "en", "F10", &new_config);
+        assert!(diff.model_or_language_changed);
+        assert!(diff.hotkey_changed);
+        assert_eq!(diff.effective_language, "fr");
+        assert!(diff.language_menu_enabled);
+    }
+
+    #[test]
+    fn config_diff_non_english_only_preserves_language() {
+        let new_config = config_with(|c| {
+            c.model_size = "large".to_string();
+            c.language = "ja".to_string();
+        });
+        let diff = compute_config_diff("large", "ja", &new_config.hotkey, &new_config);
+        assert_eq!(diff.effective_language, "ja");
+        assert!(diff.language_menu_enabled);
+        assert!(!diff.model_or_language_changed);
+    }
+
+    #[test]
+    fn config_diff_english_only_language_change_masked() {
+        // Config says "fr" but model is english-only → effective is "en".
+        // Old language was "en" so no change detected.
+        let new_config = config_with(|c| {
+            c.model_size = "tiny.en".to_string();
+            c.language = "fr".to_string();
+        });
+        let diff = compute_config_diff("tiny.en", "en", &new_config.hotkey, &new_config);
+        assert_eq!(diff.effective_language, "en");
+        assert!(!diff.model_or_language_changed);
+    }
+
+    // -----------------------------------------------------------------------
+    // decide_transcription
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn decide_no_transcriber() {
+        assert_eq!(
+            decide_transcription(false, 0, false, false),
+            TranscribeDecision::NoTranscriber
+        );
+        assert_eq!(
+            decide_transcription(false, 10, true, true),
+            TranscribeDecision::NoTranscriber
+        );
+    }
+
+    #[test]
+    fn decide_no_audio_in_memory() {
+        assert_eq!(
+            decide_transcription(true, 0, false, false),
+            TranscribeDecision::NoAudio
+        );
+    }
+
+    #[test]
+    fn decide_no_audio_file_mode() {
+        assert_eq!(
+            decide_transcription(true, 10, false, false),
+            TranscribeDecision::NoAudio
+        );
+    }
+
+    #[test]
+    fn decide_streaming_skip_in_memory() {
+        assert_eq!(
+            decide_transcription(true, 0, true, true),
+            TranscribeDecision::SkipBatchStreamingDone
+        );
+    }
+
+    #[test]
+    fn decide_streaming_not_skipped_in_file_mode() {
+        // In file mode (max_recordings > 0), streaming skip doesn't apply
+        assert_eq!(
+            decide_transcription(true, 10, true, true),
+            TranscribeDecision::Transcribe
+        );
+    }
+
+    #[test]
+    fn decide_transcribe_in_memory() {
+        assert_eq!(
+            decide_transcription(true, 0, false, true),
+            TranscribeDecision::Transcribe
+        );
+    }
+
+    #[test]
+    fn decide_transcribe_file_mode() {
+        assert_eq!(
+            decide_transcription(true, 10, false, true),
+            TranscribeDecision::Transcribe
+        );
+    }
+
+    #[test]
+    fn decide_no_transcriber_overrides_all() {
+        // NoTranscriber takes priority regardless of other flags
+        for &streaming in &[true, false] {
+            for &has_audio in &[true, false] {
+                assert_eq!(
+                    decide_transcription(false, 0, streaming, has_audio),
+                    TranscribeDecision::NoTranscriber
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn decide_no_audio_overrides_streaming() {
+        // Even if streaming was active, no audio means nothing to do
+        assert_eq!(
+            decide_transcription(true, 0, true, false),
+            TranscribeDecision::NoAudio
+        );
     }
 }

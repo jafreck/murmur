@@ -15,6 +15,11 @@ mod native_icon_cache;
 #[cfg(target_os = "macos")]
 use native_icon_cache::NativeIconCache;
 
+#[cfg(target_os = "linux")]
+mod linux_icon_cache;
+#[cfg(target_os = "linux")]
+use linux_icon_cache::LinuxIconCache;
+
 /// How often (in milliseconds) the pulsing animation updates the icon.
 const PULSE_FRAME_INTERVAL_MS: u128 = 100;
 
@@ -299,6 +304,10 @@ pub struct TrayController {
     #[cfg(target_os = "macos")]
     native_cache: Option<NativeIconCache>,
 
+    /// Linux: pre-written PNG file cache for AppIndicator.
+    #[cfg(target_os = "linux")]
+    linux_cache: Option<LinuxIconCache>,
+
     /// When set, the icon pulses to indicate a busy/unavailable state.
     animation_start: Option<Instant>,
     last_animation_frame: Option<Instant>,
@@ -475,6 +484,15 @@ impl TrayController {
             }
         };
 
+        #[cfg(target_os = "linux")]
+        let linux_cache = match LinuxIconCache::new(&decoded, &colors) {
+            Ok(cache) => Some(cache),
+            Err(e) => {
+                log::warn!("Linux icon cache unavailable, falling back to tray-icon: {e}");
+                None
+            }
+        };
+
         let controller = Self {
             tray,
             state: TrayState::Idle,
@@ -500,6 +518,8 @@ impl TrayController {
             cached_dark_mode: dark_mode,
             #[cfg(target_os = "macos")]
             native_cache,
+            #[cfg(target_os = "linux")]
+            linux_cache,
             animation_start: None,
             last_animation_frame: None,
         };
@@ -514,20 +534,11 @@ impl TrayController {
     pub fn set_state(&mut self, state: TrayState) {
         let (tooltip, label) = state_display(&state);
 
-        // On macOS, use the native NSImage cache for instant icon swaps.
-        // Falls back to the tray-icon crate path on other platforms or if
-        // the native cache is unavailable.
-        #[cfg(target_os = "macos")]
-        let used_native = if let Some(ref cache) = self.native_cache {
-            cache.set_icon_for_state(&state);
-            true
-        } else {
-            false
-        };
-        #[cfg(not(target_os = "macos"))]
-        let used_native = false;
+        // Use platform-native caches when available; fall back to the
+        // tray-icon crate path (which re-encodes/re-writes on every call).
+        let used_cache = self.try_set_icon_cached(&state);
 
-        if !used_native {
+        if !used_cache {
             let icon = match &state {
                 TrayState::Idle => &self.idle_icon,
                 TrayState::Recording | TrayState::Error => &self.recording_icon,
@@ -611,8 +622,55 @@ impl TrayController {
                 }
             }
         }
+        #[cfg(target_os = "linux")]
+        {
+            match LinuxIconCache::new(&self.decoded_icon, &colors) {
+                Ok(cache) => self.linux_cache = Some(cache),
+                Err(e) => {
+                    log::warn!("Failed to rebuild Linux icon cache: {e}");
+                    self.linux_cache = None;
+                }
+            }
+        }
         // Re-apply the current state with the new icons.
         self.set_state(self.state.clone());
+    }
+
+    /// Try to set the icon using a platform-native cache.
+    /// Returns `true` if a cache was used, `false` to fall back to tray-icon.
+    fn try_set_icon_cached(&self, state: &TrayState) -> bool {
+        #[cfg(target_os = "macos")]
+        if let Some(ref cache) = self.native_cache {
+            cache.set_icon_for_state(state);
+            return true;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(ref cache) = self.linux_cache {
+            // SAFETY: the app_indicator pointer is valid for the lifetime of
+            // self.tray, which outlives every call to this method.
+            unsafe {
+                cache.set_icon_for_state(self.tray.app_indicator(), state);
+            }
+            return true;
+        }
+        false
+    }
+
+    /// Try to set a pulse animation frame using a platform-native cache.
+    /// Returns `true` if a cache was used.
+    fn try_set_pulse_cached(&self, state: &TrayState, frame_idx: usize) -> bool {
+        #[cfg(target_os = "macos")]
+        if let Some(ref cache) = self.native_cache {
+            return cache.set_pulse_frame(state, frame_idx);
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(ref cache) = self.linux_cache {
+            // SAFETY: same as try_set_icon_cached.
+            unsafe {
+                return cache.set_pulse_frame(self.tray.app_indicator(), state, frame_idx);
+            }
+        }
+        false
     }
 
     /// Advance the pulsing animation by one frame (if active).
@@ -634,14 +692,9 @@ impl TrayController {
         let elapsed = start.elapsed().as_secs_f64();
         let cycle_progress = (elapsed / PULSE_PERIOD_SECS).fract();
 
-        // On macOS, use the native NSImage cache for instant frame swaps.
-        #[cfg(target_os = "macos")]
-        if let Some(ref cache) = self.native_cache {
-            let frame_count = PULSE_FRAME_COUNT;
-            let idx = (cycle_progress * frame_count as f64) as usize % frame_count;
-            if cache.set_pulse_frame(&self.state, idx) {
-                self.last_animation_frame = Some(Instant::now());
-            }
+        let idx = (cycle_progress * PULSE_FRAME_COUNT as f64) as usize % PULSE_FRAME_COUNT;
+        if self.try_set_pulse_cached(&self.state.clone(), idx) {
+            self.last_animation_frame = Some(Instant::now());
             return;
         }
 

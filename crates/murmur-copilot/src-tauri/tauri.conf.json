@@ -4,10 +4,13 @@
   "version": "0.1.0",
   "identifier": "com.murmur.copilot",
   "build": {
-    "frontendDist": "../src",
-    "devUrl": "http://localhost:1420"
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "withGlobalTauri": true,
     "windows": [
       {

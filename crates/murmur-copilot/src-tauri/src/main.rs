@@ -10,7 +10,7 @@ use log::info;
 use murmur_core::config::Config;
 
 fn main() {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     info!("starting murmur-copilot");
 
     let config = Config::load();

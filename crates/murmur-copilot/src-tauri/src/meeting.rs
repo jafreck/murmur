@@ -73,6 +73,7 @@ impl MeetingSession {
             });
 
         let transcriber = Arc::new(Transcriber::new(&model_path, &config.language)?);
+        transcriber.warmup();
         let mut recorder = AudioRecorder::with_noise_suppression(config.noise_suppression);
         recorder.warm()?;
 

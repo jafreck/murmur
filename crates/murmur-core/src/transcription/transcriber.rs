@@ -9,13 +9,13 @@ use whisper_rs::{
 use crate::config::Config;
 use crate::transcription::vad;
 
-/// Compute thread count: use 75% of available cores, clamped to [4, 8].
-/// This balances throughput against CPU pressure (avoids pegging all cores).
+/// Compute thread count: use 50% of available cores, clamped to [2, 4].
+/// Apple Silicon performs best with fewer threads (performance cores only).
 fn inference_thread_count() -> i32 {
     let n = std::thread::available_parallelism()
         .map(|n| n.get() as i32)
         .unwrap_or(4);
-    (n * 3 / 4).clamp(4, 8)
+    (n / 2).clamp(2, 4)
 }
 
 /// Minimum audio duration in samples at 16 kHz.
@@ -229,6 +229,9 @@ fn is_cjk_char(c: char) -> bool {
 pub struct Transcriber {
     ctx: WhisperContext,
     language: String,
+    /// Serializes access to WhisperContext for state creation and inference.
+    /// WhisperContext is not safe for concurrent create_state / full calls.
+    ctx_lock: std::sync::Mutex<()>,
 }
 
 /// Read a WAV file and return f32 samples normalized to [-1.0, 1.0].
@@ -267,6 +270,7 @@ impl Transcriber {
         Ok(Self {
             ctx,
             language: language.to_string(),
+            ctx_lock: std::sync::Mutex::new(()),
         })
     }
 
@@ -312,12 +316,40 @@ impl Transcriber {
 
     // ── Streaming-optimised API ────────────────────────────────────────
 
+    /// Run a tiny silent inference to pre-compile Metal shader pipelines.
+    ///
+    /// The first whisper inference triggers lazy compilation of ~20 Metal
+    /// compute pipelines. If this happens during a real streaming call,
+    /// the encode step times out and returns error -6.  Calling this once
+    /// at startup moves that cost out of the hot path.
+    pub fn warmup(&self) {
+        log::info!("Warming up whisper (pre-compiling Metal pipelines)…");
+        let Ok(mut state) = self.create_streaming_state() else {
+            log::warn!("Warmup: failed to create state, skipping");
+            return;
+        };
+        // 1 second of silence — enough to trigger full encode + decode.
+        let silence = vec![0.0f32; 16000];
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        params.set_n_threads(1);
+        params.set_language(self.language_param());
+        params.set_single_segment(true);
+        params.set_no_context(true);
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        let _ = state.full(params, &silence);
+        log::info!("Whisper warmup complete");
+    }
+
     /// Create a reusable `WhisperState` for streaming.
     ///
     /// Creating a state involves allocating KV caches and other internal
     /// buffers. Reusing one across streaming iterations avoids that
     /// per-call overhead.
     pub fn create_streaming_state(&self) -> Result<WhisperState> {
+        let _guard = self.ctx_lock.lock().unwrap_or_else(|e| e.into_inner());
         self.ctx
             .create_state()
             .map_err(|e| anyhow::anyhow!("Failed to create whisper state: {e}"))
@@ -335,7 +367,7 @@ impl Transcriber {
     /// early and an empty string is returned.
     pub fn streaming_transcribe(
         &self,
-        state: &mut WhisperState,
+        _state: &mut WhisperState,
         samples: &[f32],
         translate: bool,
         abort_flag: &Arc<AtomicBool>,
@@ -353,13 +385,22 @@ impl Transcriber {
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_suppress_nst(true);
-        params.set_single_segment(true);
         params.set_no_context(true);
 
         let flag = Arc::clone(abort_flag);
         params.set_abort_callback_safe(move || flag.load(Ordering::Relaxed));
 
-        state
+        // Serialize all whisper context access and use a fresh state each
+        // call. Reusing a WhisperState with no_context=true corrupts the
+        // internal mel/encoder cache on subsequent calls (whisper-rs 0.16).
+        let _guard = self.ctx_lock.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mut fresh_state = self
+            .ctx
+            .create_state()
+            .map_err(|e| anyhow::anyhow!("Failed to create whisper state: {e}"))?;
+
+        fresh_state
             .full(params, samples)
             .map_err(|e| anyhow::anyhow!("Transcription failed: {e}"))?;
 
@@ -367,7 +408,7 @@ impl Transcriber {
             return Ok(String::new());
         }
 
-        let text = self.extract_text(state);
+        let text = self.extract_text(&fresh_state);
 
         if is_hallucination(&text) {
             log::debug!("Filtered hallucinated text: '{text}'");
@@ -458,6 +499,8 @@ impl Transcriber {
                 params.set_initial_prompt(&prompt_string);
             }
         }
+
+        let _guard = self.ctx_lock.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut state = self
             .ctx

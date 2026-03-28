@@ -22,9 +22,9 @@ const MIN_NEW_AUDIO_SECS: f32 = 1.0;
 /// Minimum interval between transcription attempts, in milliseconds.
 const POLL_INTERVAL_MS: u64 = 300;
 /// Maximum window size sent to Whisper during streaming, in seconds.
-/// Smaller windows keep each inference pass fast at the cost of less
-/// context. 10 s is a good balance between latency and accuracy.
-const MAX_WINDOW_SECS: f32 = 10.0;
+/// Keeping this short (≤ 5 s) avoids Metal encoder failures on Apple
+/// Silicon that can occur with larger buffers in background threads.
+const MAX_WINDOW_SECS: f32 = 5.0;
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -125,7 +125,7 @@ fn streaming_loop(
     let mut window: Vec<f32> = Vec::with_capacity(max_window_samples);
 
     // Create a single WhisperState up-front and reuse it across
-    // iterations to avoid per-call KV-cache allocation overhead.
+    // iterations. Metal pipelines are already compiled by warmup().
     let mut whisper_state = match transcriber.create_streaming_state() {
         Ok(s) => s,
         Err(e) => {
@@ -174,6 +174,13 @@ fn streaming_loop(
 
         // Notify that speech is detected (keeps silence timeout alive)
         let _ = tx.send(StreamingEvent::SpeechDetected);
+
+        // Sanitize: replace non-finite values with zero
+        for sample in window.iter_mut() {
+            if !sample.is_finite() {
+                *sample = 0.0;
+            }
+        }
 
         let mut full_text = match transcriber.streaming_transcribe(
             &mut whisper_state,

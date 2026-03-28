@@ -96,6 +96,40 @@ pub fn radio_label(name: &str, selected: bool) -> String {
     }
 }
 
+/// Returns true if not enough time has passed since the last animation frame.
+pub fn should_throttle_frame(last_frame_elapsed_ms: u128, interval_ms: u128) -> bool {
+    last_frame_elapsed_ms < interval_ms
+}
+
+/// Compute the pulse alpha scale for the current animation frame.
+///
+/// Given elapsed time since animation start, the pulse period, and the
+/// minimum alpha, returns a scale factor in [`alpha_min`, 1.0] suitable
+/// for modulating icon opacity.
+pub fn compute_pulse_alpha(elapsed_secs: f64, period_secs: f64, alpha_min: f64) -> f64 {
+    let phase = (elapsed_secs * std::f64::consts::TAU / period_secs).sin();
+    alpha_min + (1.0 - alpha_min) * (phase + 1.0) / 2.0
+}
+
+/// Which icon variant to display for a given tray state.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IconKey {
+    Idle,
+    Recording,
+    Transcribing,
+    Loading,
+}
+
+/// Map a [`TrayState`] to the icon variant that should be displayed.
+pub fn state_icon_key(state: &TrayState) -> IconKey {
+    match state {
+        TrayState::Idle => IconKey::Idle,
+        TrayState::Recording | TrayState::Error => IconKey::Recording,
+        TrayState::Transcribing | TrayState::Downloading => IconKey::Transcribing,
+        TrayState::Loading => IconKey::Loading,
+    }
+}
+
 /// Grouped menu item IDs for constructing a MenuActionMap.
 pub struct MenuActionIds {
     pub quit: MenuId,

@@ -24,6 +24,119 @@ pub enum OverlayCommand {
     Quit,
 }
 
+// ── Pure state machine ──────────────────────────────────────────────────
+
+/// Viewport side-effects produced by the state machine.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ViewportAction {
+    SetVisible(bool),
+    Focus,
+    Close,
+    RequestRepaint,
+}
+
+/// Fade animation state.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FadeState {
+    Hidden,
+    FadingIn,
+    Visible,
+    FadingOut,
+}
+
+/// Fade-in speed (opacity change per second).
+pub const FADE_IN_SPEED: f32 = 6.0;
+/// Fade-out speed (opacity change per second — 5-second fade-out).
+pub const FADE_OUT_SPEED: f32 = 1.0 / 5.0;
+
+/// Pure overlay state machine — no GUI dependencies.
+pub struct OverlayModel {
+    pub text: String,
+    pub visible: bool,
+    pub opacity: f32,
+    pub fade_state: FadeState,
+    pub should_quit: bool,
+}
+
+impl Default for OverlayModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OverlayModel {
+    pub fn new() -> Self {
+        Self {
+            text: String::new(),
+            visible: false,
+            opacity: 0.0,
+            fade_state: FadeState::Hidden,
+            should_quit: false,
+        }
+    }
+
+    /// Apply a single command, returning viewport actions to execute.
+    pub fn apply_command(&mut self, cmd: OverlayCommand) -> Vec<ViewportAction> {
+        match cmd {
+            OverlayCommand::Show => {
+                self.visible = true;
+                self.fade_state = FadeState::FadingIn;
+                vec![ViewportAction::SetVisible(true), ViewportAction::Focus]
+            }
+            OverlayCommand::Hide => {
+                self.visible = false;
+                self.opacity = 0.0;
+                self.fade_state = FadeState::Hidden;
+                vec![ViewportAction::SetVisible(false)]
+            }
+            OverlayCommand::Text { content } => {
+                self.text = content;
+                vec![]
+            }
+            OverlayCommand::Clear => {
+                self.text.clear();
+                vec![]
+            }
+            OverlayCommand::Done => {
+                self.fade_state = FadeState::FadingOut;
+                vec![]
+            }
+            OverlayCommand::Quit => {
+                self.should_quit = true;
+                vec![]
+            }
+        }
+    }
+
+    /// Advance the fade animation by `dt` seconds, returning viewport actions.
+    pub fn advance_fade(&mut self, dt: f32) -> Vec<ViewportAction> {
+        match self.fade_state {
+            FadeState::FadingIn => {
+                self.opacity = (self.opacity + FADE_IN_SPEED * dt).min(1.0);
+                if self.opacity >= 1.0 {
+                    self.fade_state = FadeState::Visible;
+                }
+                vec![ViewportAction::RequestRepaint]
+            }
+            FadeState::FadingOut => {
+                self.opacity = (self.opacity - FADE_OUT_SPEED * dt).max(0.0);
+                if self.opacity <= 0.0 {
+                    self.fade_state = FadeState::Hidden;
+                    self.visible = false;
+                    return vec![
+                        ViewportAction::SetVisible(false),
+                        ViewportAction::RequestRepaint,
+                    ];
+                }
+                vec![ViewportAction::RequestRepaint]
+            }
+            FadeState::Visible | FadeState::Hidden => vec![],
+        }
+    }
+}
+
+// ── GUI glue ────────────────────────────────────────────────────────────
+
 /// Run the overlay eframe application. Called from `murmur overlay`.
 pub fn run_overlay() -> Result<()> {
     let native_options = eframe::NativeOptions {
@@ -47,29 +160,11 @@ pub fn run_overlay() -> Result<()> {
 }
 
 struct OverlayApp {
-    text: String,
-    visible: bool,
+    model: OverlayModel,
     cmd_rx: std::sync::mpsc::Receiver<OverlayCommand>,
-    should_quit: bool,
-    /// Current opacity for fade animation (0.0 = invisible, 1.0 = fully visible)
-    opacity: f32,
-    fade_state: FadeState,
     #[cfg(target_os = "macos")]
     window_level_set: bool,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum FadeState {
-    Hidden,
-    FadingIn,
-    Visible,
-    FadingOut,
-}
-
-/// Fade animation speed (opacity change per second)
-const FADE_IN_SPEED: f32 = 6.0;
-/// 5-second fade-out (1.0 / 5.0)
-const FADE_OUT_SPEED: f32 = 1.0 / 5.0;
 
 impl OverlayApp {
     fn new() -> Self {
@@ -101,68 +196,42 @@ impl OverlayApp {
         });
 
         Self {
-            text: String::new(),
-            visible: false,
+            model: OverlayModel::new(),
             cmd_rx: rx,
-            should_quit: false,
-            opacity: 0.0,
-            fade_state: FadeState::Hidden,
             #[cfg(target_os = "macos")]
             window_level_set: false,
         }
     }
 
-    fn process_commands(&mut self, ctx: &egui::Context) {
-        while let Ok(cmd) = self.cmd_rx.try_recv() {
-            match cmd {
-                OverlayCommand::Show => {
-                    self.visible = true;
-                    self.fade_state = FadeState::FadingIn;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+    fn apply_actions(ctx: &egui::Context, actions: Vec<ViewportAction>) {
+        for action in actions {
+            match action {
+                ViewportAction::SetVisible(v) => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(v));
+                }
+                ViewportAction::Focus => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
-                OverlayCommand::Hide => {
-                    self.visible = false;
-                    self.opacity = 0.0;
-                    self.fade_state = FadeState::Hidden;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                ViewportAction::Close => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-                OverlayCommand::Text { content } => {
-                    self.text = content;
-                }
-                OverlayCommand::Clear => {
-                    self.text.clear();
-                }
-                OverlayCommand::Done => {
-                    self.fade_state = FadeState::FadingOut;
-                }
-                OverlayCommand::Quit => {
-                    self.should_quit = true;
+                ViewportAction::RequestRepaint => {
+                    ctx.request_repaint();
                 }
             }
         }
     }
 
-    fn update_fade(&mut self, ctx: &egui::Context, dt: f32) {
-        match self.fade_state {
-            FadeState::FadingIn => {
-                self.opacity = (self.opacity + FADE_IN_SPEED * dt).min(1.0);
-                if self.opacity >= 1.0 {
-                    self.fade_state = FadeState::Visible;
-                }
-                ctx.request_repaint();
-            }
-            FadeState::FadingOut => {
-                self.opacity = (self.opacity - FADE_OUT_SPEED * dt).max(0.0);
-                if self.opacity <= 0.0 {
-                    self.fade_state = FadeState::Hidden;
-                    self.visible = false;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-                }
-                ctx.request_repaint();
-            }
-            FadeState::Visible | FadeState::Hidden => {}
+    fn process_commands(&mut self, ctx: &egui::Context) {
+        while let Ok(cmd) = self.cmd_rx.try_recv() {
+            let actions = self.model.apply_command(cmd);
+            Self::apply_actions(ctx, actions);
         }
+    }
+
+    fn update_fade(&mut self, ctx: &egui::Context, dt: f32) {
+        let actions = self.model.advance_fade(dt);
+        Self::apply_actions(ctx, actions);
     }
 }
 
@@ -174,7 +243,7 @@ impl eframe::App for OverlayApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_commands(ctx);
 
-        if self.should_quit {
+        if self.model.should_quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
@@ -192,11 +261,11 @@ impl eframe::App for OverlayApp {
         // Request periodic repaints to check for new commands
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
 
-        if !self.visible && self.fade_state == FadeState::Hidden {
+        if !self.model.visible && self.model.fade_state == FadeState::Hidden {
             return;
         }
 
-        let alpha = self.opacity;
+        let alpha = self.model.opacity;
 
         // Semi-transparent dark panel with fade
         let panel_frame = egui::Frame::new()
@@ -222,7 +291,7 @@ impl eframe::App for OverlayApp {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
-                        if self.text.is_empty() {
+                        if self.model.text.is_empty() {
                             ui.label(
                                 egui::RichText::new("Listening…")
                                     .size(18.0)
@@ -235,7 +304,7 @@ impl eframe::App for OverlayApp {
                                     )),
                             );
                         } else {
-                            ui.label(egui::RichText::new(&self.text).size(18.0));
+                            ui.label(egui::RichText::new(&self.model.text).size(18.0));
                         }
                     });
             });
@@ -361,6 +430,8 @@ impl Drop for OverlayHandle {
 mod tests {
     use super::*;
 
+    // ── Serialisation tests (unchanged) ─────────────────────────────────
+
     #[test]
     fn test_overlay_command_serialize_show() {
         let cmd = OverlayCommand::Show;
@@ -430,5 +501,218 @@ mod tests {
             let json2 = serde_json::to_string(&parsed).unwrap();
             assert_eq!(json, json2);
         }
+    }
+
+    // ── OverlayModel tests ─────────────────────────────────────────────
+
+    #[test]
+    fn model_new_defaults() {
+        let m = OverlayModel::new();
+        assert!(m.text.is_empty());
+        assert!(!m.visible);
+        assert_eq!(m.opacity, 0.0);
+        assert_eq!(m.fade_state, FadeState::Hidden);
+        assert!(!m.should_quit);
+    }
+
+    #[test]
+    fn apply_command_show() {
+        let mut m = OverlayModel::new();
+        let actions = m.apply_command(OverlayCommand::Show);
+        assert!(m.visible);
+        assert_eq!(m.fade_state, FadeState::FadingIn);
+        assert_eq!(
+            actions,
+            vec![ViewportAction::SetVisible(true), ViewportAction::Focus]
+        );
+    }
+
+    #[test]
+    fn apply_command_hide() {
+        let mut m = OverlayModel::new();
+        m.visible = true;
+        m.opacity = 0.8;
+        m.fade_state = FadeState::Visible;
+
+        let actions = m.apply_command(OverlayCommand::Hide);
+        assert!(!m.visible);
+        assert_eq!(m.opacity, 0.0);
+        assert_eq!(m.fade_state, FadeState::Hidden);
+        assert_eq!(actions, vec![ViewportAction::SetVisible(false)]);
+    }
+
+    #[test]
+    fn apply_command_text() {
+        let mut m = OverlayModel::new();
+        let actions = m.apply_command(OverlayCommand::Text {
+            content: "hello".into(),
+        });
+        assert_eq!(m.text, "hello");
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn apply_command_clear() {
+        let mut m = OverlayModel::new();
+        m.text = "something".into();
+        let actions = m.apply_command(OverlayCommand::Clear);
+        assert!(m.text.is_empty());
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn apply_command_done() {
+        let mut m = OverlayModel::new();
+        m.fade_state = FadeState::Visible;
+        let actions = m.apply_command(OverlayCommand::Done);
+        assert_eq!(m.fade_state, FadeState::FadingOut);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn apply_command_quit() {
+        let mut m = OverlayModel::new();
+        let actions = m.apply_command(OverlayCommand::Quit);
+        assert!(m.should_quit);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn advance_fade_fading_in_increases_opacity() {
+        let mut m = OverlayModel::new();
+        m.fade_state = FadeState::FadingIn;
+        m.opacity = 0.0;
+
+        let actions = m.advance_fade(0.1);
+        assert!(m.opacity > 0.0);
+        assert_eq!(m.fade_state, FadeState::FadingIn);
+        assert_eq!(actions, vec![ViewportAction::RequestRepaint]);
+    }
+
+    #[test]
+    fn advance_fade_fading_in_completes_to_visible() {
+        let mut m = OverlayModel::new();
+        m.fade_state = FadeState::FadingIn;
+        m.opacity = 0.0;
+
+        // Large dt to finish the fade in one step
+        let actions = m.advance_fade(1.0);
+        assert_eq!(m.opacity, 1.0);
+        assert_eq!(m.fade_state, FadeState::Visible);
+        assert_eq!(actions, vec![ViewportAction::RequestRepaint]);
+    }
+
+    #[test]
+    fn advance_fade_fading_out_decreases_opacity() {
+        let mut m = OverlayModel::new();
+        m.fade_state = FadeState::FadingOut;
+        m.opacity = 1.0;
+        m.visible = true;
+
+        let actions = m.advance_fade(1.0);
+        assert!(m.opacity < 1.0);
+        assert!(m.opacity > 0.0);
+        assert_eq!(m.fade_state, FadeState::FadingOut);
+        assert_eq!(actions, vec![ViewportAction::RequestRepaint]);
+    }
+
+    #[test]
+    fn advance_fade_fading_out_completes_to_hidden() {
+        let mut m = OverlayModel::new();
+        m.fade_state = FadeState::FadingOut;
+        m.opacity = 0.1;
+        m.visible = true;
+
+        // Large dt to finish the fade
+        let actions = m.advance_fade(10.0);
+        assert_eq!(m.opacity, 0.0);
+        assert_eq!(m.fade_state, FadeState::Hidden);
+        assert!(!m.visible);
+        assert_eq!(
+            actions,
+            vec![
+                ViewportAction::SetVisible(false),
+                ViewportAction::RequestRepaint,
+            ]
+        );
+    }
+
+    #[test]
+    fn advance_fade_hidden_is_noop() {
+        let mut m = OverlayModel::new();
+        let actions = m.advance_fade(1.0);
+        assert!(actions.is_empty());
+        assert_eq!(m.opacity, 0.0);
+        assert_eq!(m.fade_state, FadeState::Hidden);
+    }
+
+    #[test]
+    fn advance_fade_visible_is_noop() {
+        let mut m = OverlayModel::new();
+        m.fade_state = FadeState::Visible;
+        m.opacity = 1.0;
+        let actions = m.advance_fade(1.0);
+        assert!(actions.is_empty());
+        assert_eq!(m.opacity, 1.0);
+    }
+
+    #[test]
+    fn sequence_show_text_done_fadeout() {
+        let mut m = OverlayModel::new();
+
+        m.apply_command(OverlayCommand::Show);
+        assert!(m.visible);
+        assert_eq!(m.fade_state, FadeState::FadingIn);
+
+        m.apply_command(OverlayCommand::Text {
+            content: "hello".into(),
+        });
+        assert_eq!(m.text, "hello");
+
+        // Complete fade-in
+        m.advance_fade(1.0);
+        assert_eq!(m.fade_state, FadeState::Visible);
+
+        m.apply_command(OverlayCommand::Done);
+        assert_eq!(m.fade_state, FadeState::FadingOut);
+
+        // Complete fade-out
+        m.advance_fade(10.0);
+        assert_eq!(m.fade_state, FadeState::Hidden);
+        assert!(!m.visible);
+        assert_eq!(m.opacity, 0.0);
+    }
+
+    #[test]
+    fn advance_fade_with_zero_dt() {
+        let mut m = OverlayModel::new();
+        m.fade_state = FadeState::FadingIn;
+        m.opacity = 0.5;
+
+        let actions = m.advance_fade(0.0);
+        assert_eq!(m.opacity, 0.5);
+        assert_eq!(m.fade_state, FadeState::FadingIn);
+        assert_eq!(actions, vec![ViewportAction::RequestRepaint]);
+    }
+
+    #[test]
+    fn multiple_commands_in_sequence() {
+        let mut m = OverlayModel::new();
+
+        m.apply_command(OverlayCommand::Show);
+        m.apply_command(OverlayCommand::Text {
+            content: "first".into(),
+        });
+        m.apply_command(OverlayCommand::Text {
+            content: "second".into(),
+        });
+        m.apply_command(OverlayCommand::Clear);
+        assert!(m.text.is_empty());
+        assert!(m.visible);
+        assert_eq!(m.fade_state, FadeState::FadingIn);
+
+        m.apply_command(OverlayCommand::Hide);
+        assert!(!m.visible);
+        assert_eq!(m.fade_state, FadeState::Hidden);
     }
 }

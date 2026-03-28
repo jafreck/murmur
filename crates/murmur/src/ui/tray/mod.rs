@@ -638,10 +638,10 @@ impl TrayController {
 
     /// Try to set the icon using a platform-native cache.
     /// Returns `true` if a cache was used, `false` to fall back to tray-icon.
-    fn try_set_icon_cached(&self, state: &TrayState) -> bool {
+    fn try_set_icon_cached(&self, _state: &TrayState) -> bool {
         #[cfg(target_os = "macos")]
         if let Some(ref cache) = self.native_cache {
-            cache.set_icon_for_state(state);
+            cache.set_icon_for_state(_state);
             return true;
         }
         #[cfg(target_os = "linux")]
@@ -649,7 +649,7 @@ impl TrayController {
             // SAFETY: the app_indicator pointer is valid for the lifetime of
             // self.tray, which outlives every call to this method.
             unsafe {
-                cache.set_icon_for_state(self.tray.app_indicator(), state);
+                cache.set_icon_for_state(self.tray.app_indicator(), _state);
             }
             return true;
         }
@@ -658,16 +658,16 @@ impl TrayController {
 
     /// Try to set a pulse animation frame using a platform-native cache.
     /// Returns `true` if a cache was used.
-    fn try_set_pulse_cached(&self, state: &TrayState, frame_idx: usize) -> bool {
+    fn try_set_pulse_cached(&self, _state: &TrayState, _frame_idx: usize) -> bool {
         #[cfg(target_os = "macos")]
         if let Some(ref cache) = self.native_cache {
-            return cache.set_pulse_frame(state, frame_idx);
+            return cache.set_pulse_frame(_state, _frame_idx);
         }
         #[cfg(target_os = "linux")]
         if let Some(ref cache) = self.linux_cache {
             // SAFETY: same as try_set_icon_cached.
             unsafe {
-                return cache.set_pulse_frame(self.tray.app_indicator(), state, frame_idx);
+                return cache.set_pulse_frame(self.tray.app_indicator(), _state, _frame_idx);
             }
         }
         false

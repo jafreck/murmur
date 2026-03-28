@@ -8,32 +8,11 @@
 </head>
 <body>
   <div id="app">
-    <header class="controls">
-      <button id="btn-start" class="btn btn-start">Start Meeting</button>
-      <button id="btn-stop" class="btn btn-stop" disabled>Stop Meeting</button>
-      <button id="btn-history" class="btn btn-history">📋 History</button>
-      <span id="llm-status" class="llm-status" title="LLM disconnected">🔴</span>
+    <header class="status-bar">
+      <span id="status-icon" class="status-icon" title="Idle">⏸</span>
       <span id="status" class="status">idle</span>
     </header>
-    <div class="settings">
-      <label for="device-select" class="device-label">System Audio:</label>
-      <select id="device-select" class="device-select">
-        <option value="">None (mic only)</option>
-      </select>
-    </div>
     <main id="transcript" class="transcript"></main>
-    <section id="history-panel" class="history-panel hidden"></section>
-    <section id="suggestion-panel" class="suggestion-panel hidden">
-      <div class="suggestion-header">
-        <span>💡 AI Suggestions</span>
-        <button id="btn-suggest" class="btn btn-suggest">Get Suggestion</button>
-      </div>
-      <div id="suggestion-content" class="suggestion-content">No suggestions yet.</div>
-    </section>
-    <section id="summary-panel" class="summary-panel hidden">
-      <div class="summary-header">📋 Meeting Summary</div>
-      <div id="summary-content" class="summary-content"></div>
-    </section>
   </div>
   <script src="/src/main.ts" type="module"></script>
 </body>

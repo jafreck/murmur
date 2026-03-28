@@ -8,6 +8,7 @@ mod session;
 
 use log::info;
 use murmur_core::config::Config;
+use tauri::Emitter;
 
 fn main() {
     env_logger::init();
@@ -27,6 +28,15 @@ fn main() {
         .setup(|app| {
             overlay::configure_overlay(app)?;
             info!("overlay window configured");
+
+            // Spawn wake word detector on a background thread (model loading is slow)
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                if let Err(e) = start_wake_word_detector(handle) {
+                    log::error!("Wake word detector failed to start: {e}");
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -46,4 +56,35 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running murmur-copilot");
+}
+
+/// Start the wake word detector, forwarding events as Tauri events.
+///
+/// This blocks while loading the model, so call from a background thread.
+fn start_wake_word_detector(app: tauri::AppHandle) -> anyhow::Result<()> {
+    use murmur_core::input::wake_word::{start_detector, WakeWordEvent};
+
+    let wake_phrase = "murmur listen".to_string();
+    let stop_phrase = "murmur stop".to_string();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    let _handle = start_detector(wake_phrase, stop_phrase, tx)?;
+    info!("wake word detector started");
+
+    // Forward events to the Tauri frontend — this loop keeps _handle alive
+    for event in rx {
+        match event {
+            WakeWordEvent::WakeWordDetected => {
+                info!("wake word detected — emitting copilot-wake");
+                let _ = app.emit("copilot-wake", ());
+            }
+            WakeWordEvent::StopPhraseDetected => {
+                info!("stop phrase detected — emitting copilot-sleep");
+                let _ = app.emit("copilot-sleep", ());
+            }
+        }
+    }
+
+    Ok(())
 }

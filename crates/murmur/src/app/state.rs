@@ -256,7 +256,7 @@ impl AppState {
         // Check for stop phrase in wake-word-initiated sessions
         if self.wake_word_initiated && !self.stop_phrase.is_empty() {
             if let Some(cleaned) =
-                crate::input::wake_word::check_and_strip_stop_phrase(text, &self.stop_phrase)
+                murmur_core::input::wake_word::check_and_strip_stop_phrase(text, &self.stop_phrase)
             {
                 // Stop phrase found — end dictation with cleaned text
                 let char_count = cleaned.chars().count();

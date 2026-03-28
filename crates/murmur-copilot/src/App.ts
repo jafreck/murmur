@@ -1,5 +1,4 @@
 import { TranscriptDisplay, TranscriptUpdate } from "./transcript";
-import { MeetingHistory } from "./history";
 
 declare global {
   interface Window {
@@ -17,16 +16,6 @@ declare global {
   }
 }
 
-interface AudioDevice {
-  name: string;
-  is_loopback_hint: boolean;
-}
-
-interface LlmStatus {
-  available: boolean;
-  model: string | null;
-}
-
 function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
   return window.__TAURI__!.core.invoke(cmd, args);
 }
@@ -38,142 +27,76 @@ function listen(
   return window.__TAURI__!.event.listen(event, handler);
 }
 
+const FADE_TIMEOUT_MS = 5000;
+const SLEEP_TIMEOUT_MS = 10000;
+
 export function initApp(): void {
-  const btnStart = document.getElementById("btn-start") as HTMLButtonElement;
-  const btnStop = document.getElementById("btn-stop") as HTMLButtonElement;
-  const btnSuggest = document.getElementById("btn-suggest") as HTMLButtonElement;
-  const btnHistory = document.getElementById("btn-history") as HTMLButtonElement;
+  const statusIconEl = document.getElementById("status-icon") as HTMLSpanElement;
   const statusEl = document.getElementById("status") as HTMLSpanElement;
-  const llmStatusEl = document.getElementById("llm-status") as HTMLSpanElement;
   const transcriptEl = document.getElementById("transcript") as HTMLElement;
-  const deviceSelect = document.getElementById("device-select") as HTMLSelectElement;
-  const suggestionPanel = document.getElementById("suggestion-panel") as HTMLElement;
-  const suggestionContent = document.getElementById("suggestion-content") as HTMLElement;
-  const summaryPanel = document.getElementById("summary-panel") as HTMLElement;
-  const summaryContent = document.getElementById("summary-content") as HTMLElement;
-  const historyPanel = document.getElementById("history-panel") as HTMLElement;
+  const appEl = document.getElementById("app") as HTMLElement;
 
   const display = new TranscriptDisplay(transcriptEl);
-  const history = new MeetingHistory(historyPanel);
 
-  // ── LLM status check ──────────────────────────────────────────────
-  async function checkLlmStatus() {
-    try {
-      const status = (await invoke("get_llm_status")) as LlmStatus;
-      if (status.available) {
-        llmStatusEl.textContent = "🟢";
-        llmStatusEl.title = `LLM connected: ${status.model}`;
-      } else {
-        llmStatusEl.textContent = "🔴";
-        llmStatusEl.title = "LLM disconnected";
-      }
-    } catch {
-      llmStatusEl.textContent = "🔴";
-      llmStatusEl.title = "LLM disconnected";
-    }
+  let fadeTimer: ReturnType<typeof setTimeout> | null = null;
+  let sleepTimer: ReturnType<typeof setTimeout> | null = null;
+  let isRecording = false;
+
+  function setRecording() {
+    isRecording = true;
+    statusIconEl.textContent = "🎙";
+    statusIconEl.classList.add("recording");
+    statusIconEl.title = "Recording";
+    statusEl.textContent = "recording";
+    resetTimers();
   }
-  checkLlmStatus();
 
-  // ── Populate audio device selector ─────────────────────────────────
-  async function loadDevices() {
-    try {
-      const devices = (await invoke("list_audio_devices")) as AudioDevice[];
-      deviceSelect.innerHTML = '<option value="">None (mic only)</option>';
-      for (const d of devices) {
-        const opt = document.createElement("option");
-        opt.value = d.name;
-        opt.textContent = d.name + (d.is_loopback_hint ? " ★" : "");
-        deviceSelect.appendChild(opt);
-      }
-    } catch {
-      // Device listing may fail in environments without audio
-    }
+  function setIdle() {
+    isRecording = false;
+    statusIconEl.textContent = "⏸";
+    statusIconEl.classList.remove("recording");
+    statusIconEl.title = "Idle";
+    statusEl.textContent = "idle";
   }
-  loadDevices();
 
-  deviceSelect.addEventListener("change", async () => {
-    const value = deviceSelect.value || null;
-    await invoke("set_system_audio_device", { deviceName: value });
-  });
+  function resetTimers() {
+    appEl.classList.remove("faded", "asleep");
 
-  // ── Meeting controls ───────────────────────────────────────────────
-  btnStart.addEventListener("click", async () => {
-    try {
-      btnStart.disabled = true;
-      statusEl.textContent = "starting…";
-      await invoke("start_meeting");
-      btnStop.disabled = false;
-      statusEl.textContent = "recording";
-      suggestionPanel.classList.remove("hidden");
-      summaryPanel.classList.add("hidden");
-      suggestionContent.textContent = "No suggestions yet.";
-    } catch (err) {
-      statusEl.textContent = `error: ${err}`;
-      btnStart.disabled = false;
-    }
-  });
+    if (fadeTimer) clearTimeout(fadeTimer);
+    if (sleepTimer) clearTimeout(sleepTimer);
 
-  btnStop.addEventListener("click", async () => {
-    try {
-      btnStop.disabled = true;
-      statusEl.textContent = "stopping…";
-      const entries = (await invoke("stop_meeting")) as { speaker: string; text: string }[];
-      statusEl.textContent = "idle";
-      btnStart.disabled = false;
-      if (entries && entries.length > 0) {
-        display.setFinalTranscript(entries);
+    fadeTimer = setTimeout(() => {
+      appEl.classList.add("faded");
+    }, FADE_TIMEOUT_MS);
+
+    sleepTimer = setTimeout(async () => {
+      appEl.classList.add("asleep");
+      if (isRecording) {
+        try {
+          await invoke("stop_meeting");
+        } catch { /* already stopped */ }
       }
-      suggestionPanel.classList.add("hidden");
-
-      // Auto-generate summary when meeting ends
-      try {
-        const summary = (await invoke("generate_summary")) as string | null;
-        if (summary) {
-          summaryContent.textContent = summary;
-          summaryPanel.classList.remove("hidden");
-        }
-      } catch {
-        // LLM may not be available — that's fine
-      }
-    } catch (err) {
-      statusEl.textContent = `error: ${err}`;
-      btnStop.disabled = false;
-    }
-  });
-
-  // ── Suggestion button ──────────────────────────────────────────────
-  btnSuggest.addEventListener("click", async () => {
-    try {
-      btnSuggest.disabled = true;
-      suggestionContent.textContent = "Thinking…";
-      const suggestion = (await invoke("get_suggestion")) as string | null;
-      suggestionContent.textContent = suggestion ?? "No suggestions available.";
-    } catch (err) {
-      suggestionContent.textContent = `Error: ${err}`;
-    } finally {
-      btnSuggest.disabled = false;
-    }
-  });
-
-  // ── History toggle ────────────────────────────────────────────────
-  let historyVisible = false;
-  btnHistory.addEventListener("click", async () => {
-    historyVisible = !historyVisible;
-    if (historyVisible) {
-      transcriptEl.classList.add("hidden");
-      historyPanel.classList.remove("hidden");
-      await history.loadSessions();
-      history.renderSessionList();
-    } else {
-      historyPanel.classList.add("hidden");
-      transcriptEl.classList.remove("hidden");
-    }
-    btnHistory.classList.toggle("active", historyVisible);
-  });
+      setIdle();
+    }, SLEEP_TIMEOUT_MS);
+  }
 
   // ── Real-time transcript updates ──────────────────────────────────
   listen("transcript-update", (event) => {
     const payload = event.payload as TranscriptUpdate;
     display.applyUpdate(payload);
+    resetTimers();
+  });
+
+  // ── Wake/sleep voice events ───────────────────────────────────────
+  listen("copilot-wake", async () => {
+    display.clear();
+    try {
+      await invoke("start_meeting");
+      setRecording();
+    } catch { /* meeting may already be running */ }
+  });
+
+  listen("copilot-sleep", () => {
+    setIdle();
   });
 }

@@ -239,7 +239,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
     };
 
     // Wake word detector — deferred until the main transcriber is ready
-    let mut wake_word: Option<crate::input::wake_word::WakeWordHandle> = None;
+    let mut wake_word: Option<murmur_core::input::wake_word::WakeWordHandle> = None;
 
     println!("murmur v{VERSION}");
     println!("Hotkey: {}", config.hotkey);
@@ -303,7 +303,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
                             let ww_tx = tx.clone();
                             let (event_tx, event_rx) = mpsc::channel();
                             std::thread::spawn(move || {
-                                use crate::input::wake_word::WakeWordEvent;
+                                use murmur_core::input::wake_word::WakeWordEvent;
                                 while let Ok(event) = event_rx.recv() {
                                     let msg = match event {
                                         WakeWordEvent::WakeWordDetected => {
@@ -318,7 +318,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
                                     }
                                 }
                             });
-                            match crate::input::wake_word::start_detector(
+                            match murmur_core::input::wake_word::start_detector(
                                 wake_phrase,
                                 stop_phrase,
                                 event_tx,

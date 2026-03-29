@@ -438,9 +438,7 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
                                 filler_word_removal,
                                 spoken_punctuation,
                             );
-                            if !text.is_empty() {
-                                let _ = tx.send(AppMessage::TranscriptionDone(text));
-                            }
+                            let _ = tx.send(AppMessage::TranscriptionDone(text));
                         }
                         Err(e) => {
                             let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
@@ -473,9 +471,7 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
                                 filler_word_removal,
                                 spoken_punctuation,
                             );
-                            if !text.is_empty() {
-                                let _ = tx.send(AppMessage::TranscriptionDone(text));
-                            }
+                            let _ = tx.send(AppMessage::TranscriptionDone(text));
                         }
                         Err(e) => {
                             let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));

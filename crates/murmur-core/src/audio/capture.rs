@@ -35,6 +35,9 @@ struct SharedCaptureState {
     pre_roll: Mutex<VecDeque<f32>>,
     /// Count of samples dropped due to lock contention.
     dropped_samples: AtomicU64,
+    /// Monotonically increasing count of audio callback invocations.
+    /// Used to detect dead streams (e.g. when a Bluetooth device disconnects).
+    callback_count: AtomicU64,
 }
 
 impl SharedCaptureState {
@@ -46,12 +49,14 @@ impl SharedCaptureState {
             samples: Arc::new(Mutex::new(Vec::with_capacity(initial_capacity))),
             pre_roll: Mutex::new(VecDeque::with_capacity(PRE_ROLL_SAMPLES + 512)),
             dropped_samples: AtomicU64::new(0),
+            callback_count: AtomicU64::new(0),
         }
     }
 
     /// Dispatch processed audio samples to the appropriate buffer.
     /// Called from the audio callback after mixing/resampling/denoising.
     fn dispatch_samples(&self, samples: &[f32]) {
+        self.callback_count.fetch_add(1, Ordering::Relaxed);
         if self.recording.load(Ordering::Acquire) {
             if let Ok(mut buf) = self.samples.try_lock() {
                 buf.extend_from_slice(samples);
@@ -267,8 +272,21 @@ impl AudioRecorder {
             return Ok(());
         }
 
+        // Platform hook: on macOS, nudge Bluetooth devices into HFP mode
+        // so the microphone is active when we open the stream.
+        super::activate::prepare_default_input();
+
         let host = cpal::default_host();
         let device = host.default_input_device().context("No microphone found")?;
+        self.open_device(device)
+    }
+
+    /// Build and start an input stream on the given device.
+    fn open_device(&mut self, device: cpal::Device) -> Result<()> {
+        let device_name = device
+            .description()
+            .map(|d| d.name().to_string())
+            .unwrap_or_else(|_| "<unknown>".into());
 
         let supported_config = device
             .default_input_config()
@@ -276,6 +294,11 @@ impl AudioRecorder {
 
         let native_rate = supported_config.sample_rate();
         let native_channels = supported_config.channels() as u32;
+
+        log::info!(
+            "Opening audio device: \"{device_name}\" ({native_rate}Hz, {native_channels}ch, {:?})",
+            supported_config.sample_format(),
+        );
 
         let shared = Arc::clone(&self.shared);
         let ns_flag = Arc::clone(&self.noise_suppression);
@@ -322,9 +345,35 @@ impl AudioRecorder {
         Ok(())
     }
 
+    /// Close the current stream and re-open on the current default input device.
+    fn rewarm(&mut self) -> Result<()> {
+        log::info!("Re-opening audio stream on current default device");
+        self.stream = None;
+        if let Ok(mut ring) = self.shared.pre_roll.lock() {
+            ring.clear();
+        }
+        super::activate::prepare_default_input();
+        let host = cpal::default_host();
+        let device = host.default_input_device().context("No microphone found")?;
+        self.open_device(device)
+    }
+
     /// Ensure the stream is warm, warming it up if needed.
+    /// If the stream exists but is no longer producing audio (e.g. the
+    /// Bluetooth device disconnected), close and re-open it.
     fn ensure_warm(&mut self) -> Result<()> {
-        if self.stream.is_none() {
+        if self.stream.is_some() {
+            // Direct probe: snapshot the counter, wait briefly, check again.
+            // This avoids false positives from stale counters that were set
+            // during a previous recording session.
+            let before = self.shared.callback_count.load(Ordering::Relaxed);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let after = self.shared.callback_count.load(Ordering::Relaxed);
+            if after == before {
+                log::warn!("Audio stream appears dead (no callbacks in 50ms), re-opening");
+                self.rewarm()?;
+            }
+        } else {
             self.warm()?;
         }
         Ok(())

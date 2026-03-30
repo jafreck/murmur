@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::{tint_pixels, DecodedIcon, StateColors, TrayState, PULSE_ALPHA_MIN, PULSE_FRAME_COUNT};
+use super::{tint_pixels, DecodedIcon, StateColors, TrayState};
 
 fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
@@ -52,8 +52,8 @@ pub struct LinuxIconCache {
     recording: String,
     transcribing: String,
     loading: String,
-    loading_pulse: Vec<String>,
-    downloading_pulse: Vec<String>,
+    recording_frames: Vec<String>,
+    transcribing_frames: Vec<String>,
 }
 
 impl LinuxIconCache {
@@ -75,9 +75,18 @@ impl LinuxIconCache {
         let c = &colors.loading;
         let loading = write_icon(&dir, "loading", decoded, c.0, c.1, c.2, c.3)?;
 
-        let loading_pulse = Self::write_pulse_frames(&dir, "loading", decoded, colors.loading)?;
-        let downloading_pulse =
-            Self::write_pulse_frames(&dir, "downloading", decoded, colors.transcribing)?;
+        let recording_frames = Self::write_animation_frames(
+            &dir,
+            "recording",
+            &super::decode_recording_frames(),
+            colors.recording,
+        )?;
+        let transcribing_frames = Self::write_animation_frames(
+            &dir,
+            "transcribing",
+            &super::decode_transcribing_frames(),
+            colors.transcribing,
+        )?;
 
         Ok(Self {
             dir,
@@ -86,25 +95,23 @@ impl LinuxIconCache {
             recording,
             transcribing,
             loading,
-            loading_pulse,
-            downloading_pulse,
+            recording_frames,
+            transcribing_frames,
         })
     }
 
-    fn write_pulse_frames(
+    fn write_animation_frames(
         dir: &Path,
         prefix: &str,
-        decoded: &DecodedIcon,
-        base: (u8, u8, u8, u8),
+        decoded_frames: &[DecodedIcon],
+        color: (u8, u8, u8, u8),
     ) -> Result<Vec<String>> {
-        (0..PULSE_FRAME_COUNT)
-            .map(|i| {
-                let phase_angle = (i as f64 / PULSE_FRAME_COUNT as f64) * std::f64::consts::TAU;
-                let phase = phase_angle.sin();
-                let scale = PULSE_ALPHA_MIN + (1.0 - PULSE_ALPHA_MIN) * (phase + 1.0) / 2.0;
-                let a = (base.3 as f64 * scale).round().min(255.0) as u8;
-                let name = format!("{prefix}-pulse-{i:02}");
-                write_icon(dir, &name, decoded, base.0, base.1, base.2, a)
+        decoded_frames
+            .iter()
+            .enumerate()
+            .map(|(i, decoded)| {
+                let name = format!("{prefix}-anim-{i:02}");
+                write_icon(dir, &name, decoded, color.0, color.1, color.2, color.3)
             })
             .collect()
     }
@@ -135,20 +142,20 @@ impl LinuxIconCache {
         self.apply(indicator, name);
     }
 
-    /// Set a pulse animation frame.
+    /// Set an animation frame.
     ///
     /// # Safety
     ///
     /// Same as [`set_icon_for_state`].
-    pub unsafe fn set_pulse_frame(
+    pub unsafe fn set_animation_frame(
         &self,
         indicator: *const libappindicator::AppIndicator,
         state: &TrayState,
         frame_idx: usize,
     ) -> bool {
         let frames = match state {
-            TrayState::Loading => &self.loading_pulse,
-            TrayState::Downloading => &self.downloading_pulse,
+            TrayState::Recording => &self.recording_frames,
+            TrayState::Transcribing => &self.transcribing_frames,
             _ => return false,
         };
         if let Some(name) = frames.get(frame_idx) {

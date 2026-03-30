@@ -20,21 +20,19 @@ mod linux_icon_cache;
 #[cfg(target_os = "linux")]
 use linux_icon_cache::LinuxIconCache;
 
-/// How often (in milliseconds) the pulsing animation updates the icon.
-const PULSE_FRAME_INTERVAL_MS: u128 = 100;
+/// How often (in milliseconds) the recording/transcribing animation advances.
+const ANIMATION_FRAME_INTERVAL_MS: u128 = 40;
 
-/// Duration of one full pulse cycle in seconds.
-const PULSE_PERIOD_SECS: f64 = 1.5;
+/// Number of embedded animation frames per state.
+const ANIMATION_FRAME_COUNT: usize = 28;
 
-/// Minimum opacity scale during the pulse (0.0–1.0).
-const PULSE_ALPHA_MIN: f64 = 0.25;
+/// Duration of one full animation cycle in seconds.
+const ANIMATION_PERIOD_SECS: f64 =
+    ANIMATION_FRAME_COUNT as f64 * ANIMATION_FRAME_INTERVAL_MS as f64 / 1000.0;
 
-/// Number of discrete frames in one pulse cycle.
-const PULSE_FRAME_COUNT: usize = 15;
-
-/// Whether the given state should show a pulsing animation.
-fn is_pulsing_state(state: &TrayState) -> bool {
-    matches!(state, TrayState::Loading | TrayState::Downloading)
+/// Whether the given state should show an animation.
+fn is_animating_state(state: &TrayState) -> bool {
+    matches!(state, TrayState::Recording | TrayState::Transcribing)
 }
 
 /// App states the tray can display.
@@ -106,6 +104,7 @@ pub fn should_throttle_frame(last_frame_elapsed_ms: u128, interval_ms: u128) -> 
 /// Given elapsed time since animation start, the pulse period, and the
 /// minimum alpha, returns a scale factor in [`alpha_min`, 1.0] suitable
 /// for modulating icon opacity.
+#[deprecated(note = "Pulse animation has been removed; kept for API compatibility")]
 pub fn compute_pulse_alpha(elapsed_secs: f64, period_secs: f64, alpha_min: f64) -> f64 {
     let phase = (elapsed_secs * std::f64::consts::TAU / period_secs).sin();
     alpha_min + (1.0 - alpha_min) * (phase + 1.0) / 2.0
@@ -323,10 +322,11 @@ pub struct TrayController {
     transcribing_icon: Icon,
     loading_icon: Icon,
 
-    /// Pre-rendered pulse animation frames for the Loading state.
-    loading_pulse_frames: Vec<Icon>,
-    /// Pre-rendered pulse animation frames for the Downloading state.
-    downloading_pulse_frames: Vec<Icon>,
+    /// Pre-rendered recording animation frames (from embedded APNG).
+    recording_frames: Vec<Icon>,
+
+    /// Pre-rendered transcribing animation frames (from embedded APNG).
+    transcribing_frames: Vec<Icon>,
 
     /// Pre-decoded PNG pixel data kept for rebuilding icons on appearance change.
     decoded_icon: DecodedIcon,
@@ -342,9 +342,13 @@ pub struct TrayController {
     #[cfg(target_os = "linux")]
     linux_cache: Option<LinuxIconCache>,
 
-    /// When set, the icon pulses to indicate a busy/unavailable state.
+    /// When set, the icon animates to indicate recording is active.
     animation_start: Option<Instant>,
     last_animation_frame: Option<Instant>,
+
+    /// Deferred state: applied by `tick()` after one full animation cycle has
+    /// elapsed since the deferred request, so the user always sees a smooth loop.
+    deferred_state: Option<(TrayState, Instant)>,
 }
 
 impl TrayController {
@@ -499,8 +503,8 @@ impl TrayController {
             colors.loading.3,
         )?;
 
-        let loading_pulse_frames = build_pulse_frames(&decoded, colors.loading);
-        let downloading_pulse_frames = build_pulse_frames(&decoded, colors.transcribing);
+        let recording_frames = build_recording_animation_frames(colors.recording);
+        let transcribing_frames = build_transcribing_animation_frames(colors.transcribing);
 
         let tray = TrayIconBuilder::new()
             .with_icon(idle_icon.clone())
@@ -546,8 +550,8 @@ impl TrayController {
             recording_icon,
             transcribing_icon,
             loading_icon,
-            loading_pulse_frames,
-            downloading_pulse_frames,
+            recording_frames,
+            transcribing_frames,
             decoded_icon: decoded,
             cached_dark_mode: dark_mode,
             #[cfg(target_os = "macos")]
@@ -556,6 +560,7 @@ impl TrayController {
             linux_cache,
             animation_start: None,
             last_animation_frame: None,
+            deferred_state: None,
         };
 
         if config::is_english_only_model(&config.model_size) {
@@ -566,31 +571,60 @@ impl TrayController {
     }
 
     pub fn set_state(&mut self, state: TrayState) {
-        let (tooltip, label) = state_display(&state);
-
-        // Use platform-native caches when available; fall back to the
-        // tray-icon crate path (which re-encodes/re-writes on every call).
-        let used_cache = self.try_set_icon_cached(&state);
-
-        if !used_cache {
-            let icon = match &state {
-                TrayState::Idle => &self.idle_icon,
-                TrayState::Recording | TrayState::Error => &self.recording_icon,
-                TrayState::Transcribing | TrayState::Downloading => &self.transcribing_icon,
-                TrayState::Loading => &self.loading_icon,
-            };
-            let _ = self.tray.set_icon(Some(icon.clone()));
+        // If we're currently animating and the new state is not the same
+        // animation, defer the transition until the current cycle completes.
+        if is_animating_state(&self.state) && !is_animating_state(&state) {
+            if let Some(start) = self.animation_start {
+                let elapsed = start.elapsed().as_secs_f64();
+                if elapsed < ANIMATION_PERIOD_SECS {
+                    self.deferred_state = Some((state, Instant::now()));
+                    return;
+                }
+            }
         }
 
-        // Start or stop pulsing animation based on the new state.
-        if is_pulsing_state(&state) {
-            if self.animation_start.is_none() {
+        // Clear any pending deferred state since we're applying a new one.
+        self.deferred_state = None;
+
+        let (tooltip, label) = state_display(&state);
+
+        // Start or stop animation based on the new state.
+        if is_animating_state(&state) {
+            // Always reset when entering a new animating state so the
+            // animation starts from frame 0.
+            if self.animation_start.is_none() || self.state != state {
                 self.animation_start = Some(Instant::now());
                 self.last_animation_frame = None;
+            }
+
+            // Set the first animation frame immediately so there is no
+            // flash of the static icon before tick() takes over.
+            let first_frame_set = self.try_set_animation_frame_cached(&state, 0);
+            if !first_frame_set {
+                let frame = match &state {
+                    TrayState::Recording => self.recording_frames.first(),
+                    TrayState::Transcribing => self.transcribing_frames.first(),
+                    _ => None,
+                };
+                if let Some(icon) = frame {
+                    let _ = self.tray.set_icon(Some(icon.clone()));
+                }
             }
         } else {
             self.animation_start = None;
             self.last_animation_frame = None;
+
+            // Set the static icon for non-animating states.
+            let used_cache = self.try_set_icon_cached(&state);
+            if !used_cache {
+                let icon = match &state {
+                    TrayState::Idle => &self.idle_icon,
+                    TrayState::Recording | TrayState::Error => &self.recording_icon,
+                    TrayState::Transcribing | TrayState::Downloading => &self.transcribing_icon,
+                    TrayState::Loading => &self.loading_icon,
+                };
+                let _ = self.tray.set_icon(Some(icon.clone()));
+            }
         }
 
         let _ = self.tray.set_tooltip(Some(tooltip));
@@ -644,8 +678,8 @@ impl TrayController {
         ) {
             self.loading_icon = i;
         }
-        self.loading_pulse_frames = build_pulse_frames(&self.decoded_icon, colors.loading);
-        self.downloading_pulse_frames = build_pulse_frames(&self.decoded_icon, colors.transcribing);
+        self.recording_frames = build_recording_animation_frames(colors.recording);
+        self.transcribing_frames = build_transcribing_animation_frames(colors.transcribing);
         #[cfg(target_os = "macos")]
         {
             match NativeIconCache::new(&self.tray, &self.decoded_icon, &colors) {
@@ -690,51 +724,57 @@ impl TrayController {
         false
     }
 
-    /// Try to set a pulse animation frame using a platform-native cache.
-    /// Returns `true` if a cache was used.
-    fn try_set_pulse_cached(&self, _state: &TrayState, _frame_idx: usize) -> bool {
+    /// Try to set an animation frame using a platform-native cache.
+    #[allow(unused_variables)]
+    fn try_set_animation_frame_cached(&self, state: &TrayState, frame_idx: usize) -> bool {
         #[cfg(target_os = "macos")]
         if let Some(ref cache) = self.native_cache {
-            return cache.set_pulse_frame(_state, _frame_idx);
+            return cache.set_animation_frame(state, frame_idx);
         }
         #[cfg(target_os = "linux")]
         if let Some(ref cache) = self.linux_cache {
             // SAFETY: same as try_set_icon_cached.
             unsafe {
-                return cache.set_pulse_frame(self.tray.app_indicator(), _state, _frame_idx);
+                return cache.set_animation_frame(self.tray.app_indicator(), state, frame_idx);
             }
         }
         false
     }
 
-    /// Advance the pulsing animation by one frame (if active).
+    /// Advance the tray animation by one frame (if active).
     ///
     /// Call this every iteration of the main event loop. The method
-    /// internally throttles itself to [`PULSE_FRAME_INTERVAL_MS`] so
+    /// internally throttles itself to [`ANIMATION_FRAME_INTERVAL_MS`] so
     /// it is cheap to call at the full loop rate.
     pub fn tick(&mut self) {
         let Some(start) = self.animation_start else {
             return;
         };
 
-        if let Some(last) = self.last_animation_frame {
-            if last.elapsed().as_millis() < PULSE_FRAME_INTERVAL_MS {
+        if !is_animating_state(&self.state) {
+            return;
+        }
+
+        // If a deferred state is waiting and one full cycle has played
+        // since the deferred state was set, apply it now. This guarantees
+        // at least one smooth animation cycle after GPU contention ends.
+        if let Some((_, deferred_at)) = &self.deferred_state {
+            if deferred_at.elapsed().as_secs_f64() >= ANIMATION_PERIOD_SECS {
+                let (deferred, _) = self.deferred_state.take().unwrap();
+                self.set_state(deferred);
                 return;
             }
         }
 
-        let elapsed = start.elapsed().as_secs_f64();
-        let cycle_progress = (elapsed / PULSE_PERIOD_SECS).fract();
-
-        let idx = (cycle_progress * PULSE_FRAME_COUNT as f64) as usize % PULSE_FRAME_COUNT;
-        if self.try_set_pulse_cached(&self.state.clone(), idx) {
-            self.last_animation_frame = Some(Instant::now());
-            return;
+        if let Some(last) = self.last_animation_frame {
+            if last.elapsed().as_millis() < ANIMATION_FRAME_INTERVAL_MS {
+                return;
+            }
         }
 
         let frames = match &self.state {
-            TrayState::Loading => &self.loading_pulse_frames,
-            TrayState::Downloading => &self.downloading_pulse_frames,
+            TrayState::Recording => &self.recording_frames,
+            TrayState::Transcribing => &self.transcribing_frames,
             _ => return,
         };
 
@@ -742,7 +782,14 @@ impl TrayController {
             return;
         }
 
+        let elapsed = start.elapsed().as_secs_f64();
+        let cycle_progress = (elapsed / ANIMATION_PERIOD_SECS).fract();
         let idx = (cycle_progress * frames.len() as f64) as usize % frames.len();
+
+        if self.try_set_animation_frame_cached(&self.state.clone(), idx) {
+            self.last_animation_frame = Some(Instant::now());
+            return;
+        }
 
         let _ = self.tray.set_icon(Some(frames[idx].clone()));
 
@@ -816,7 +863,12 @@ pub struct DecodedIcon {
 
 /// Decode the embedded icon PNG once and return the raw pixel data.
 pub fn decode_icon_png() -> Result<DecodedIcon> {
-    let cursor = std::io::Cursor::new(ICON_PNG);
+    decode_png_bytes(ICON_PNG)
+}
+
+/// Decode arbitrary PNG bytes into raw pixel data.
+pub fn decode_png_bytes(data: &[u8]) -> Result<DecodedIcon> {
+    let cursor = std::io::Cursor::new(data);
     let decoder = png::Decoder::new(cursor);
     let mut reader = decoder
         .read_info()
@@ -847,15 +899,102 @@ fn make_icon_from_decoded(decoded: &DecodedIcon, r: u8, g: u8, b: u8, a: u8) -> 
         .map_err(|e| anyhow::anyhow!("Icon error: {e}"))
 }
 
-/// Pre-render all frames of a pulse animation for a given base colour.
-fn build_pulse_frames(decoded: &DecodedIcon, base: (u8, u8, u8, u8)) -> Vec<Icon> {
-    (0..PULSE_FRAME_COUNT)
-        .filter_map(|i| {
-            let phase_angle = (i as f64 / PULSE_FRAME_COUNT as f64) * std::f64::consts::TAU;
-            let phase = phase_angle.sin();
-            let scale = PULSE_ALPHA_MIN + (1.0 - PULSE_ALPHA_MIN) * (phase + 1.0) / 2.0;
-            let a = (base.3 as f64 * scale).round().min(255.0) as u8;
-            make_icon_from_decoded(decoded, base.0, base.1, base.2, a).ok()
+/// Embedded recording animation frame PNGs (extracted from GIF).
+const RECORDING_FRAME_PNGS: &[&[u8]] = &[
+    include_bytes!("../../../assets/icons/recording_00.png"),
+    include_bytes!("../../../assets/icons/recording_01.png"),
+    include_bytes!("../../../assets/icons/recording_02.png"),
+    include_bytes!("../../../assets/icons/recording_03.png"),
+    include_bytes!("../../../assets/icons/recording_04.png"),
+    include_bytes!("../../../assets/icons/recording_05.png"),
+    include_bytes!("../../../assets/icons/recording_06.png"),
+    include_bytes!("../../../assets/icons/recording_07.png"),
+    include_bytes!("../../../assets/icons/recording_08.png"),
+    include_bytes!("../../../assets/icons/recording_09.png"),
+    include_bytes!("../../../assets/icons/recording_10.png"),
+    include_bytes!("../../../assets/icons/recording_11.png"),
+    include_bytes!("../../../assets/icons/recording_12.png"),
+    include_bytes!("../../../assets/icons/recording_13.png"),
+    include_bytes!("../../../assets/icons/recording_14.png"),
+    include_bytes!("../../../assets/icons/recording_15.png"),
+    include_bytes!("../../../assets/icons/recording_16.png"),
+    include_bytes!("../../../assets/icons/recording_17.png"),
+    include_bytes!("../../../assets/icons/recording_18.png"),
+    include_bytes!("../../../assets/icons/recording_19.png"),
+    include_bytes!("../../../assets/icons/recording_20.png"),
+    include_bytes!("../../../assets/icons/recording_21.png"),
+    include_bytes!("../../../assets/icons/recording_22.png"),
+    include_bytes!("../../../assets/icons/recording_23.png"),
+    include_bytes!("../../../assets/icons/recording_24.png"),
+    include_bytes!("../../../assets/icons/recording_25.png"),
+    include_bytes!("../../../assets/icons/recording_26.png"),
+    include_bytes!("../../../assets/icons/recording_27.png"),
+];
+
+/// Decode all embedded recording frame PNGs.
+pub fn decode_recording_frames() -> Vec<DecodedIcon> {
+    RECORDING_FRAME_PNGS
+        .iter()
+        .filter_map(|data| decode_png_bytes(data).ok())
+        .collect()
+}
+
+/// Build recording animation icons from embedded multi-frame PNGs.
+fn build_recording_animation_frames(color: (u8, u8, u8, u8)) -> Vec<Icon> {
+    decode_recording_frames()
+        .iter()
+        .filter_map(|decoded| {
+            make_icon_from_decoded(decoded, color.0, color.1, color.2, color.3).ok()
+        })
+        .collect()
+}
+
+/// Embedded transcribing animation frame PNGs (extracted from APNG).
+const TRANSCRIBING_FRAME_PNGS: &[&[u8]] = &[
+    include_bytes!("../../../assets/icons/transcribing_00.png"),
+    include_bytes!("../../../assets/icons/transcribing_01.png"),
+    include_bytes!("../../../assets/icons/transcribing_02.png"),
+    include_bytes!("../../../assets/icons/transcribing_03.png"),
+    include_bytes!("../../../assets/icons/transcribing_04.png"),
+    include_bytes!("../../../assets/icons/transcribing_05.png"),
+    include_bytes!("../../../assets/icons/transcribing_06.png"),
+    include_bytes!("../../../assets/icons/transcribing_07.png"),
+    include_bytes!("../../../assets/icons/transcribing_08.png"),
+    include_bytes!("../../../assets/icons/transcribing_09.png"),
+    include_bytes!("../../../assets/icons/transcribing_10.png"),
+    include_bytes!("../../../assets/icons/transcribing_11.png"),
+    include_bytes!("../../../assets/icons/transcribing_12.png"),
+    include_bytes!("../../../assets/icons/transcribing_13.png"),
+    include_bytes!("../../../assets/icons/transcribing_14.png"),
+    include_bytes!("../../../assets/icons/transcribing_15.png"),
+    include_bytes!("../../../assets/icons/transcribing_16.png"),
+    include_bytes!("../../../assets/icons/transcribing_17.png"),
+    include_bytes!("../../../assets/icons/transcribing_18.png"),
+    include_bytes!("../../../assets/icons/transcribing_19.png"),
+    include_bytes!("../../../assets/icons/transcribing_20.png"),
+    include_bytes!("../../../assets/icons/transcribing_21.png"),
+    include_bytes!("../../../assets/icons/transcribing_22.png"),
+    include_bytes!("../../../assets/icons/transcribing_23.png"),
+    include_bytes!("../../../assets/icons/transcribing_24.png"),
+    include_bytes!("../../../assets/icons/transcribing_25.png"),
+    include_bytes!("../../../assets/icons/transcribing_26.png"),
+    include_bytes!("../../../assets/icons/transcribing_27.png"),
+];
+
+/// Decode all embedded transcribing frame PNGs.
+pub fn decode_transcribing_frames() -> Vec<DecodedIcon> {
+    TRANSCRIBING_FRAME_PNGS
+        .iter()
+        .filter_map(|data| decode_png_bytes(data).ok())
+        .collect()
+}
+
+/// Build transcribing animation icons from embedded multi-frame PNGs.
+fn build_transcribing_animation_frames(color: (u8, u8, u8, u8)) -> Vec<Icon> {
+    decode_transcribing_frames()
+        .iter()
+        .filter_map(|decoded| {
+            make_icon_from_decoded(decoded, color.0, color.1, color.2, color.3).ok()
         })
         .collect()
 }

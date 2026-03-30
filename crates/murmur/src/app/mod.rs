@@ -347,6 +347,10 @@ pub fn run(notes_mode: bool) -> Result<()> {
             }
             let mut effects = VecDeque::from(state.handle_message(&msg));
             while let Some(effect) = effects.pop_front() {
+                // Keep the tray animation smooth between potentially-blocking
+                // effects (e.g. typing, clipboard, worker respawn).
+                tray.tick();
+
                 let (quit, extra) = effects::apply_effect(
                     effect,
                     &mut EffectContext {

@@ -244,12 +244,15 @@ impl AppState {
         self.is_pressed = false;
         self.wake_word_initiated = false;
         self.last_speech_at = None;
-        // Set tray state first so the icon updates immediately.
-        let mut effects = vec![AppEffect::SetTrayState(TrayState::Transcribing)];
+        let mut effects = Vec::new();
         if self.streaming {
             effects.push(AppEffect::StopStreaming);
         }
+        // Dispatch transcription first (synchronous cleanup happens here),
+        // then update the tray so the dots animation starts smoothly
+        // without being blocked by the cleanup work.
         effects.push(AppEffect::StopAndTranscribe);
+        effects.push(AppEffect::SetTrayState(TrayState::Transcribing));
         effects
     }
 

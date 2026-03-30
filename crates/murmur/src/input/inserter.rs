@@ -49,19 +49,24 @@ impl TextInserter {
         // Simulate paste
         Self::simulate_paste()?;
 
-        // Wait for the target application to consume the paste before restoring.
-        // Slow apps (Electron, remote desktop) may need longer than this, but
-        // there is no reliable cross-platform way to detect paste completion.
-        thread::sleep(Duration::from_millis(400));
-        match saved {
-            SavedClipboard::Text(prev) => {
-                let _ = clipboard.set_text(prev);
+        // Restore the previous clipboard contents in a background thread
+        // so the main event loop is not blocked for 400ms.
+        thread::spawn(move || {
+            // Wait for the target application to consume the paste before
+            // restoring. Slow apps (Electron, remote desktop) may need
+            // longer than this, but there is no reliable cross-platform
+            // way to detect paste completion.
+            thread::sleep(Duration::from_millis(400));
+            match saved {
+                SavedClipboard::Text(prev) => {
+                    let _ = Clipboard::new().map(|mut cb| cb.set_text(prev));
+                }
+                SavedClipboard::Image(img) => {
+                    let _ = Clipboard::new().map(|mut cb| cb.set_image(img));
+                }
+                SavedClipboard::Empty => {}
             }
-            SavedClipboard::Image(img) => {
-                let _ = clipboard.set_image(img);
-            }
-            SavedClipboard::Empty => {}
-        }
+        });
 
         Ok(())
     }

@@ -25,6 +25,7 @@ pub enum AppMessage {
     TrayReloadConfig,
     TraySetHotkey,
     TrayToggleAppMode,
+    TrayCheckForUpdates,
     HotkeyCapture(Key),
     TranscriptionDone(String),
     TranscriptionError(String),
@@ -41,6 +42,12 @@ pub enum AppMessage {
     StopPhraseDetected,
     /// VAD detected speech in the audio stream (keeps silence timeout alive).
     SpeechActivity,
+    /// A background update check found a newer version.
+    UpdateAvailable(murmur_core::update::UpdateInfo),
+    /// An update has been applied; show a notification.
+    UpdateApplied(String),
+    /// Update check or apply failed.
+    UpdateError(String),
 }
 
 /// Effect returned by the app state machine in response to a message.
@@ -215,6 +222,11 @@ impl AppState {
                 text,
                 replace_chars,
             } => self.on_streaming_partial(text, replace_chars),
+            // Update messages are handled in the effects layer; pass through.
+            AppMessage::TrayCheckForUpdates
+            | AppMessage::UpdateAvailable(_)
+            | AppMessage::UpdateApplied(_)
+            | AppMessage::UpdateError(_) => vec![AppEffect::None],
         }
     }
 
@@ -553,6 +565,7 @@ impl AppState {
             ollama_url: base.ollama_url.clone(),
             sessions_dir: base.sessions_dir.clone(),
             auto_summary: base.auto_summary,
+            auto_update: base.auto_update,
         }
     }
 }

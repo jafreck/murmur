@@ -62,6 +62,7 @@ pub enum TrayAction {
     ToggleNoiseSuppression,
     SetHotkey,
     ToggleAppMode,
+    CheckForUpdates,
     OpenConfig,
     ReloadConfig,
     Quit,
@@ -142,6 +143,7 @@ pub struct MenuActionIds {
     pub noise_suppression: MenuId,
     pub set_hotkey: MenuId,
     pub app_mode: MenuId,
+    pub check_for_updates: MenuId,
 }
 
 /// Menu event matching engine. Maps MenuId → TrayAction.
@@ -157,6 +159,7 @@ pub struct MenuActionMap {
     noise_suppression_id: MenuId,
     set_hotkey_id: MenuId,
     app_mode_id: MenuId,
+    check_for_updates_id: MenuId,
 
     model_ids: Vec<(MenuId, String)>,
     language_ids: Vec<(MenuId, String)>,
@@ -182,6 +185,7 @@ impl MenuActionMap {
             noise_suppression_id: ids.noise_suppression,
             set_hotkey_id: ids.set_hotkey,
             app_mode_id: ids.app_mode,
+            check_for_updates_id: ids.check_for_updates,
 
             model_ids,
             language_ids,
@@ -222,6 +226,9 @@ impl MenuActionMap {
         }
         if event_id == &self.app_mode_id {
             return Some(TrayAction::ToggleAppMode);
+        }
+        if event_id == &self.check_for_updates_id {
+            return Some(TrayAction::CheckForUpdates);
         }
 
         for (id, size) in &self.model_ids {
@@ -316,6 +323,7 @@ pub struct TrayController {
 
     status_item: MenuItem,
     hotkey_item: MenuItem,
+    update_item: MenuItem,
 
     idle_icon: Icon,
     recording_icon: Icon,
@@ -424,6 +432,8 @@ impl TrayController {
         let open_config_id = open_config.id().clone();
         let reload_config = MenuItem::new("Reload Config", true, None);
         let reload_config_id = reload_config.id().clone();
+        let update_item = MenuItem::new("Check for Updates…", true, None);
+        let check_for_updates_id = update_item.id().clone();
 
         let quit = MenuItem::new("Quit", true, None);
         let quit_id = quit.id().clone();
@@ -449,6 +459,7 @@ impl TrayController {
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&open_config)?;
         menu.append(&reload_config)?;
+        menu.append(&update_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&quit)?;
 
@@ -465,6 +476,7 @@ impl TrayController {
                 noise_suppression: noise_suppression_id,
                 set_hotkey: set_hotkey_id,
                 app_mode: app_mode_id,
+                check_for_updates: check_for_updates_id,
             },
             model_ids,
             language_ids,
@@ -546,6 +558,7 @@ impl TrayController {
             app_mode_item,
             status_item,
             hotkey_item,
+            update_item,
             idle_icon,
             recording_icon,
             transcribing_icon,
@@ -842,6 +855,12 @@ impl TrayController {
         self.streaming_item.set_checked(config.streaming);
         self.translate_item.set_checked(config.translate_to_english);
         self.app_mode_item.set_checked(config.is_notes_mode());
+    }
+
+    /// Update the tray menu to show that an update is available.
+    pub fn set_update_available(&mut self, version: &str) {
+        self.update_item
+            .set_text(format!("Update Available (v{version})"));
     }
 
     pub fn match_menu_event(&self, event: &MenuEvent) -> Option<TrayAction> {
@@ -1240,6 +1259,7 @@ mod tests {
             noise_suppression: MenuId::new("ns"),
             set_hotkey: MenuId::new("sh"),
             app_mode: MenuId::new("am"),
+            check_for_updates: MenuId::new("cu"),
         }
     }
 

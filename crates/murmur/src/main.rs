@@ -49,6 +49,12 @@ enum Commands {
         #[arg(default_value = "base.en")]
         size: String,
     },
+    /// Check for updates and install the latest version
+    Update {
+        /// Check only, don't install
+        #[arg(long)]
+        check: bool,
+    },
     /// Show configuration and status
     Status,
     /// Run the transparent overlay window (internal — spawned by the daemon)
@@ -79,6 +85,7 @@ fn main() {
         Some(Commands::SetModel { size }) => cmd_set_model(&size),
         Some(Commands::SetLanguage { code }) => cmd_set_language(&code),
         Some(Commands::DownloadModel { size }) => cmd_download_model(&size),
+        Some(Commands::Update { check }) => cmd_update(check),
         Some(Commands::Status) => cmd_status(),
         Some(Commands::Overlay) => murmur::ui::overlay::run_overlay(),
         None => {
@@ -197,6 +204,31 @@ fn cmd_download_model(size: &str) -> Result<()> {
     eprintln!();
     println!("Model downloaded.");
     Ok(())
+}
+
+fn cmd_update(check_only: bool) -> Result<()> {
+    println!("Checking for updates...");
+    match murmur_core::update::check_for_update(VERSION)? {
+        None => {
+            println!("Already up to date (v{VERSION}).");
+            Ok(())
+        }
+        Some(info) => {
+            println!(
+                "Update available: v{} → v{}",
+                info.current_version, info.latest_version
+            );
+            if check_only {
+                println!("Run 'murmur update' to install.");
+                return Ok(());
+            }
+            murmur_core::update::apply_update(&info, |msg| {
+                println!("  {msg}");
+            })?;
+            println!("Restart murmur to use the new version.");
+            Ok(())
+        }
+    }
 }
 
 fn cmd_status() -> Result<()> {

@@ -96,6 +96,7 @@ impl From<TrayAction> for AppMessage {
             TrayAction::ReloadConfig => AppMessage::TrayReloadConfig,
             TrayAction::SetHotkey => AppMessage::TraySetHotkey,
             TrayAction::ToggleAppMode => AppMessage::TrayToggleAppMode,
+            TrayAction::CheckForUpdates => AppMessage::TrayCheckForUpdates,
         }
     }
 }
@@ -249,6 +250,41 @@ pub fn run(notes_mode: bool) -> Result<()> {
     }
     println!("Loading model in background...");
 
+    // Background update check
+    {
+        let auto_update = config.auto_update;
+        let tx_update = tx.clone();
+        std::thread::spawn(
+            move || match murmur_core::update::check_for_update(crate::VERSION) {
+                Ok(Some(info)) => {
+                    info!(
+                        "Update available: v{} → v{}",
+                        info.current_version, info.latest_version
+                    );
+                    if auto_update {
+                        if let Err(e) = murmur_core::update::apply_update(&info, |msg| {
+                            info!("Update: {msg}");
+                        }) {
+                            error!("Auto-update failed: {e}");
+                            let _ = tx_update.send(AppMessage::UpdateError(format!("{e}")));
+                        } else {
+                            let _ = tx_update
+                                .send(AppMessage::UpdateApplied(info.latest_version.clone()));
+                        }
+                    } else {
+                        let _ = tx_update.send(AppMessage::UpdateAvailable(info));
+                    }
+                }
+                Ok(None) => {
+                    info!("No updates available");
+                }
+                Err(e) => {
+                    info!("Update check failed: {e}");
+                }
+            },
+        );
+    }
+
     let mut last_appearance_check = std::time::Instant::now();
     // How often to re-check system dark/light mode (seconds).
     const APPEARANCE_CHECK_INTERVAL_SECS: u64 = 5;
@@ -344,6 +380,46 @@ pub fn run(notes_mode: bool) -> Result<()> {
                     );
                 }
                 continue;
+            }
+            // Handle update messages directly (they carry owned data or
+            // trigger side-effects that the pure state machine can't do).
+            match msg {
+                AppMessage::UpdateAvailable(info) => {
+                    info!(
+                        "Update available: v{} → v{}",
+                        info.current_version, info.latest_version
+                    );
+                    tray.set_update_available(&info.latest_version);
+                    continue;
+                }
+                AppMessage::UpdateApplied(version) => {
+                    info!("Update applied: v{version}. Restart to use new version.");
+                    tray.set_status(&format!("Updated to v{version} — restart to apply"));
+                    continue;
+                }
+                AppMessage::UpdateError(e) => {
+                    error!("Update error: {e}");
+                    continue;
+                }
+                AppMessage::TrayCheckForUpdates => {
+                    let tx_update = tx.clone();
+                    std::thread::spawn(move || {
+                        match murmur_core::update::check_for_update(crate::VERSION) {
+                            Ok(Some(info)) => {
+                                let _ = tx_update.send(AppMessage::UpdateAvailable(info));
+                            }
+                            Ok(None) => {
+                                info!("Already up to date (v{})", crate::VERSION);
+                            }
+                            Err(e) => {
+                                error!("Update check failed: {e}");
+                                let _ = tx_update.send(AppMessage::UpdateError(format!("{e}")));
+                            }
+                        }
+                    });
+                    continue;
+                }
+                _ => {}
             }
             let mut effects = VecDeque::from(state.handle_message(&msg));
             while let Some(effect) = effects.pop_front() {

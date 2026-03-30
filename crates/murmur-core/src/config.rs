@@ -235,6 +235,9 @@ pub struct Config {
     /// Auto-generate summary when meeting ends
     #[serde(default)]
     pub auto_summary: bool,
+    /// Automatically check for and apply updates on startup (default: false)
+    #[serde(default)]
+    pub auto_update: bool,
 }
 
 fn default_true() -> bool {
@@ -284,6 +287,7 @@ impl Default for Config {
             ollama_url: default_ollama_url(),
             sessions_dir: None,
             auto_summary: false,
+            auto_update: false,
         }
     }
 }

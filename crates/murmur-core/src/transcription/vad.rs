@@ -50,14 +50,23 @@ pub fn contains_speech(samples: &[f32]) -> bool {
         return false;
     }
 
+    let rms = audio_rms(samples);
+
     // Fast path: reject digital silence without loading the model.
-    if is_below_noise_floor(samples) {
-        log::debug!("VAD: audio below noise floor, skipping");
+    if rms < SILENCE_RMS_FLOOR {
+        log::info!("VAD: audio below noise floor (RMS={rms:.6}), skipping");
         return false;
     }
 
+    log::debug!("VAD: audio RMS={rms:.4}, running speech detection");
+
     match detect_speech(samples) {
-        Ok(has_speech) => has_speech,
+        Ok(has_speech) => {
+            if !has_speech {
+                log::info!("VAD: no speech detected (RMS={rms:.4})");
+            }
+            has_speech
+        }
         Err(e) => {
             log::warn!("VAD inference failed, conservatively skipping transcription: {e}");
             false
@@ -106,12 +115,20 @@ fn detect_speech(samples: &[f32]) -> Result<bool, voice_activity_detector::Error
 }
 
 /// Quick RMS energy check to reject near-zero audio without neural inference.
+#[cfg_attr(not(test), allow(dead_code))]
 fn is_below_noise_floor(samples: &[f32]) -> bool {
     if samples.is_empty() {
         return true;
     }
-    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-    rms < SILENCE_RMS_FLOOR
+    audio_rms(samples) < SILENCE_RMS_FLOOR
+}
+
+/// Compute RMS (root-mean-square) energy of audio samples.
+fn audio_rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
 }
 
 #[cfg(test)]

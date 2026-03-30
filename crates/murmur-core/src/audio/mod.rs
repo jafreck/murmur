@@ -1,8 +1,10 @@
+pub mod activate;
 pub mod capture;
 pub mod recordings;
 pub mod speaker;
 pub mod system_capture;
 
+pub use activate::prepare_default_input;
 pub use capture::{AudioRecorder, TARGET_RATE, WHISPER_WAV_SPEC};
 pub use recordings::RecordingStore;
 pub use speaker::{ActiveSpeaker, SpeakerTracker};

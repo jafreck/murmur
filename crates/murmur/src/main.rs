@@ -113,7 +113,6 @@ fn main() {
 fn cmd_start(notes: bool, backend: Option<String>) -> Result<()> {
     println!("murmur v{VERSION}");
     if let Some(ref backend_str) = backend {
-        // Apply backend override before starting the app
         let mut cfg = config::Config::load();
         cfg.asr_backend = match backend_str.as_str() {
             "whisper" => AsrBackend::Whisper,
@@ -121,6 +120,11 @@ fn cmd_start(notes: bool, backend: Option<String>) -> Result<()> {
             "parakeet" => AsrBackend::Parakeet,
             _ => anyhow::bail!("Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet"),
         };
+        // Set default model size for the new backend if current one is invalid
+        let valid_models = config::supported_models(cfg.asr_backend);
+        if !valid_models.contains(&cfg.model_size.as_str()) {
+            cfg.model_size = cfg.default_model_for_backend().to_string();
+        }
         cfg.save()?;
     }
     app::run(notes)
@@ -160,10 +164,17 @@ fn cmd_set_model(size: &str) -> Result<()> {
 }
 
 pub fn validate_model(size: &str) -> Result<()> {
-    if !config::SUPPORTED_MODELS.contains(&size) {
+    let cfg = config::Config::load();
+    validate_model_for_backend(size, cfg.asr_backend)
+}
+
+fn validate_model_for_backend(size: &str, backend: AsrBackend) -> Result<()> {
+    let valid = config::supported_models(backend);
+    if !valid.contains(&size) {
         anyhow::bail!(
-            "Unknown model '{size}'. Available: {}",
-            config::SUPPORTED_MODELS.join(", ")
+            "Unknown model '{size}' for {} backend. Available: {}",
+            backend,
+            valid.join(", ")
         );
     }
     Ok(())
@@ -296,20 +307,24 @@ mod tests {
 
     #[test]
     fn test_validate_model_valid() {
-        assert!(validate_model("base.en").is_ok());
-        assert!(validate_model("tiny.en").is_ok());
-        assert!(validate_model("small.en").is_ok());
-        assert!(validate_model("medium.en").is_ok());
-        assert!(validate_model("large-v3-turbo").is_ok());
-        assert!(validate_model("large").is_ok());
-        assert!(validate_model("distil-large-v3").is_ok());
+        assert!(validate_model_for_backend("base.en", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("tiny.en", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("small.en", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("medium.en", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("large-v3-turbo", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("large", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("distil-large-v3", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("0.6b", AsrBackend::Qwen3Asr).is_ok());
+        assert!(validate_model_for_backend("1.7b", AsrBackend::Qwen3Asr).is_ok());
+        assert!(validate_model_for_backend("0.6b-v2", AsrBackend::Parakeet).is_ok());
     }
 
     #[test]
     fn test_validate_model_invalid() {
-        assert!(validate_model("nonexistent").is_err());
-        assert!(validate_model("").is_err());
-        assert!(validate_model("huge").is_err());
+        assert!(validate_model_for_backend("nonexistent", AsrBackend::Whisper).is_err());
+        assert!(validate_model_for_backend("", AsrBackend::Whisper).is_err());
+        assert!(validate_model_for_backend("huge", AsrBackend::Whisper).is_err());
+        assert!(validate_model_for_backend("base.en", AsrBackend::Qwen3Asr).is_err());
     }
 
     #[test]
@@ -421,7 +436,9 @@ mod tests {
 
     #[test]
     fn test_cmd_set_model_valid() {
-        let original = config::Config::load();
+        let mut original = config::Config::load();
+        original.asr_backend = AsrBackend::Whisper;
+        let _ = original.save();
         assert!(cmd_set_model("base.en").is_ok());
         let _ = original.save();
     }
@@ -429,7 +446,9 @@ mod tests {
     #[test]
     fn test_cmd_set_model_prints_download_hint() {
         // Use a model that almost certainly doesn't exist locally
-        let original = config::Config::load();
+        let mut original = config::Config::load();
+        original.asr_backend = AsrBackend::Whisper;
+        let _ = original.save();
         // "tiny" is a valid model but likely not downloaded
         assert!(cmd_set_model("tiny").is_ok());
         let _ = original.save();

@@ -373,7 +373,7 @@ impl TrayController {
         let copy_last_id = copy_last.id().clone();
 
         let model_submenu = Submenu::new("Model", true);
-        let model_items: Vec<(&str, String)> = crate::config::SUPPORTED_MODELS
+        let model_items: Vec<(&str, String)> = crate::config::supported_models(config.asr_backend)
             .iter()
             .map(|&s| (s, s.to_string()))
             .collect();

@@ -4,3 +4,5 @@
 _candle_cormel/
 _whisper_cpp/
 node_modules/
+
+*.DS_Store

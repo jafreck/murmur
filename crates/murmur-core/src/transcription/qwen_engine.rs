@@ -1,4 +1,8 @@
 //! Qwen3-ASR backend implementing [`AsrEngine`] via ONNX Runtime.
+//!
+//! Uses a three-model pipeline: encoder → decoder_init (prefill with KV cache)
+//! → decoder_step (autoregressive with KV cache). Native streaming is supported
+//! by persisting accumulated audio across chunks.
 
 #![cfg(feature = "onnx")]
 
@@ -6,21 +10,44 @@ use super::engine::{AsrEngine, StreamingState, TranscriptionResult};
 use anyhow::{Context, Result};
 use ort::session::Session;
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Qwen3-ASR ONNX engine.
+// ── Model config parsed from config.json ────────────────────────────────
+
+#[derive(Debug, Clone)]
+struct QwenModelConfig {
+    hidden_size: usize,
+    vocab_size: usize,
+    eos_token_id: u32,
+    /// Start position of audio_pad tokens in the prefix sequence (typically 9).
+    audio_offset: usize,
+}
+
+impl QwenModelConfig {
+    fn from_json(path: &Path) -> Result<Self> {
+        let s = std::fs::read_to_string(path).context("Failed to read config.json")?;
+        let v: serde_json::Value = serde_json::from_str(&s)?;
+
+        Ok(Self {
+            hidden_size: v["hidden_size"].as_u64().unwrap_or(1024) as usize,
+            vocab_size: v["vocab_size"].as_u64().unwrap_or(151936) as usize,
+            eos_token_id: v["eos_token_id"].as_u64().unwrap_or(151643) as u32,
+            audio_offset: v["audio_offset"].as_u64().unwrap_or(9) as usize,
+        })
+    }
+}
+
+// ── Engine ───────────────────────────────────────────────────────────────
+
+/// Qwen3-ASR ONNX engine with KV-cache optimized decoding.
 pub struct QwenEngine {
     encoder: Mutex<Session>,
     decoder_init: Mutex<Session>,
-    #[allow(dead_code)]
     decoder_step: Mutex<Session>,
-    #[allow(dead_code)]
-    embed_tokens: Vec<f32>, // flattened [vocab_size, hidden_size], loaded from FP16 → FP32
-    #[allow(dead_code)]
-    hidden_size: usize,
+    embed_tokens: Vec<f32>,
+    config: QwenModelConfig,
     tokenizer: tokenizers::Tokenizer,
-    eos_token_id: u32,
     model_name: String,
 }
 
@@ -28,20 +55,8 @@ pub struct QwenEngine {
 unsafe impl Send for QwenEngine {}
 unsafe impl Sync for QwenEngine {}
 
-struct QwenStreamingState;
-
-impl StreamingState for QwenStreamingState {
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-}
-
 impl QwenEngine {
     /// Load Qwen3-ASR ONNX model from a directory.
-    ///
-    /// `model_dir` should contain encoder, decoder_init, decoder_step ONNX files,
-    /// embed_tokens.bin, tokenizer.json, and config.json.
-    /// `quantization` selects int4 vs fp32 file variants.
     pub fn new(model_dir: &Path, quantization: crate::config::AsrQuantization) -> Result<Self> {
         use crate::config::AsrQuantization;
 
@@ -57,13 +72,7 @@ impl QwenEngine {
         let tokenizer_path = model_dir.join("tokenizer.json");
         let config_path = model_dir.join("config.json");
 
-        // Load config to get hidden_size and eos_token_id
-        let config_str =
-            std::fs::read_to_string(&config_path).context("Failed to read config.json")?;
-        let config: serde_json::Value = serde_json::from_str(&config_str)?;
-        let hidden_size = config["hidden_size"].as_u64().unwrap_or(896) as usize;
-        let eos_token_id = config["eos_token_id"].as_u64().unwrap_or(151643) as u32;
-
+        let config = QwenModelConfig::from_json(&config_path)?;
         let threads = num_inference_threads();
 
         let encoder = Session::builder()?
@@ -81,7 +90,6 @@ impl QwenEngine {
             .commit_from_file(&decoder_step_path)
             .context("Failed to load decoder_step ONNX")?;
 
-        // Load embed_tokens (FP16 -> FP32)
         let embed_bytes = std::fs::read(&embed_path).context("Failed to read embed_tokens.bin")?;
         let embed_tokens = load_fp16_to_f32(&embed_bytes);
 
@@ -99,94 +107,169 @@ impl QwenEngine {
             decoder_init: Mutex::new(decoder_init),
             decoder_step: Mutex::new(decoder_step),
             embed_tokens,
-            hidden_size,
+            config,
             tokenizer,
-            eos_token_id,
             model_name,
         })
     }
 
-    /// Run the full encoder → decoder pipeline on audio samples.
-    fn run_inference(&self, samples: &[f32]) -> Result<String> {
-        // Step 1: Compute mel spectrogram (128-bin, Qwen3-ASR style)
-        // 16 kHz, 25 ms window (400 samples), 10 ms hop (160 samples)
+    /// Build prefix token IDs for decoder_init.
+    ///
+    /// Layout: `[pad × audio_offset] + [audio_pad × audio_len] + [<|transcribe|>]`
+    fn build_input_ids(&self, audio_len: usize) -> Vec<i64> {
+        let audio_pad_id = 151647i64;
+        let transcribe_id = 151646i64;
+
+        let mut ids = Vec::with_capacity(self.config.audio_offset + audio_len + 1);
+        // Prefix tokens up to audio_offset (the ONNX model handles embedding)
+        ids.resize(self.config.audio_offset, audio_pad_id);
+        // Audio pad tokens (replaced by encoder features inside decoder_init)
+        ids.extend(std::iter::repeat(audio_pad_id).take(audio_len));
+        // Suffix: transcribe token
+        ids.push(transcribe_id);
+        ids
+    }
+
+    /// Run encoder on audio samples, returning features `[1, N, dim]`.
+    fn encode(&self, samples: &[f32]) -> Result<ndarray::Array3<f32>> {
         let n_mels = 128usize;
         let mel = compute_mel_spectrogram(samples, n_mels, 400, 160);
         let n_frames = mel.len() / n_mels;
 
-        // Step 2: Run encoder — extract owned array before releasing lock
-        let encoder_out_owned = {
-            let mel_tensor = ndarray::Array3::from_shape_vec((1, n_mels, n_frames), mel)?;
-            let mel_input = ort::value::Tensor::from_array(mel_tensor)?;
+        let mel_tensor = ndarray::Array3::from_shape_vec((1, n_mels, n_frames), mel)?;
+        let mel_input = ort::value::Tensor::from_array(mel_tensor)?;
 
-            let mut enc = self.encoder.lock().unwrap();
-            let encoder_outputs = enc.run(ort::inputs![mel_input])?;
-            let view = encoder_outputs[0].try_extract_array::<f32>()?;
-            view.to_owned()
-        };
+        let mut enc = self.encoder.lock().unwrap();
+        let outputs = enc.run(ort::inputs![mel_input])?;
+        let view = outputs[0].try_extract_array::<f32>()?;
+        Ok(view.to_owned().into_dimensionality()?)
+    }
 
-        // Step 3: Run decoder_init with start tokens
-        let start_ids: Vec<i64> = vec![151644, 151645]; // <|startoftext|>, <|transcribe|>
+    /// Run decoder_init (prefill) returning (logits, KV keys, KV values).
+    fn prefill(
+        &self,
+        encoder_features: &ndarray::Array3<f32>,
+    ) -> Result<(
+        ndarray::ArrayD<f32>,
+        ndarray::ArrayD<f32>,
+        ndarray::ArrayD<f32>,
+    )> {
+        let audio_len = encoder_features.shape()[1];
+        let input_ids = self.build_input_ids(audio_len);
+        let seq_len = input_ids.len();
 
-        let mut generated_ids: Vec<u32> = Vec::new();
+        let ids_tensor = ndarray::Array2::from_shape_vec((1, seq_len), input_ids)?;
+        let pos_ids: Vec<i64> = (0..seq_len as i64).collect();
+        let pos_tensor = ndarray::Array2::from_shape_vec((1, seq_len), pos_ids)?;
+        let offset_tensor = ndarray::Array1::from_vec(vec![self.config.audio_offset as i64]);
+
+        let ids_input = ort::value::Tensor::from_array(ids_tensor)?;
+        let pos_input = ort::value::Tensor::from_array(pos_tensor)?;
+        let audio_input = ort::value::TensorRef::from_array_view(encoder_features.view())?;
+        let offset_input = ort::value::Tensor::from_array(offset_tensor)?;
+
+        let mut dec = self.decoder_init.lock().unwrap();
+        let outputs = dec.run(ort::inputs![
+            ids_input,
+            pos_input,
+            audio_input,
+            offset_input
+        ])?;
+
+        let logits = outputs[0].try_extract_array::<f32>()?.to_owned().into_dyn();
+        let keys = outputs[1].try_extract_array::<f32>()?.to_owned().into_dyn();
+        let values = outputs[2].try_extract_array::<f32>()?.to_owned().into_dyn();
+
+        Ok((logits, keys, values))
+    }
+
+    /// Run one decoder_step with KV cache.
+    fn step(
+        &self,
+        token_id: u32,
+        position: usize,
+        past_keys: &ndarray::ArrayD<f32>,
+        past_values: &ndarray::ArrayD<f32>,
+    ) -> Result<(
+        ndarray::ArrayD<f32>,
+        ndarray::ArrayD<f32>,
+        ndarray::ArrayD<f32>,
+    )> {
+        let embed = lookup_embedding(&self.embed_tokens, token_id, self.config.hidden_size);
+        let embed_tensor = ndarray::Array3::from_shape_vec((1, 1, self.config.hidden_size), embed)?;
+        let pos_tensor = ndarray::Array2::from_elem((1, 1), position as i64);
+
+        let embed_input = ort::value::Tensor::from_array(embed_tensor)?;
+        let pos_input = ort::value::Tensor::from_array(pos_tensor)?;
+        let keys_input = ort::value::TensorRef::from_array_view(past_keys.view())?;
+        let values_input = ort::value::TensorRef::from_array_view(past_values.view())?;
+
+        let mut dec = self.decoder_step.lock().unwrap();
+        let outputs = dec.run(ort::inputs![
+            embed_input,
+            pos_input,
+            keys_input,
+            values_input
+        ])?;
+
+        let logits = outputs[0].try_extract_array::<f32>()?.to_owned().into_dyn();
+        let keys = outputs[1].try_extract_array::<f32>()?.to_owned().into_dyn();
+        let values = outputs[2].try_extract_array::<f32>()?.to_owned().into_dyn();
+
+        Ok((logits, keys, values))
+    }
+
+    /// Full encoder → decoder pipeline with KV-cache optimization.
+    fn run_inference(&self, samples: &[f32], abort_flag: &Arc<AtomicBool>) -> Result<String> {
+        if samples.is_empty() {
+            return Ok(String::new());
+        }
+
+        let encoder_features = self.encode(samples)?;
+        let (logits, mut present_keys, mut present_values) = self.prefill(&encoder_features)?;
+
+        // Greedy decode first token from prefill logits (last position)
+        let vocab_size = self.config.vocab_size;
+        let logits_slice = logits.as_slice().context("Logits not contiguous")?;
+        if logits_slice.len() < vocab_size {
+            anyhow::bail!(
+                "Logits too small: expected >= {vocab_size}, got {}",
+                logits_slice.len()
+            );
+        }
+        let offset = logits_slice.len().saturating_sub(vocab_size);
+        let mut next_token = argmax(&logits_slice[offset..]);
+
+        if next_token == self.config.eos_token_id {
+            return Ok(String::new());
+        }
+
+        let mut generated_ids: Vec<u32> = vec![next_token];
+        let prefill_seq_len = present_keys.shape().get(3).copied().unwrap_or(0);
+        let mut current_pos = prefill_seq_len;
         let max_tokens = 448;
 
-        // Initial decoder_init run
-        let vocab_size = {
-            let start_tensor =
-                ndarray::Array2::from_shape_vec((1, start_ids.len()), start_ids.clone())?;
-            let start_input = ort::value::Tensor::from_array(start_tensor)?;
-            let enc_input = ort::value::TensorRef::from_array_view(encoder_out_owned.view())?;
-
-            let mut dec = self.decoder_init.lock().unwrap();
-            let decoder_outputs = dec.run(ort::inputs![start_input, enc_input])?;
-
-            let logits = decoder_outputs[0].try_extract_array::<f32>()?;
-            let logits_shape = logits.shape();
-            let vocab_size = *logits_shape.last().unwrap_or(&0);
-
-            let logits_owned = logits.to_owned();
-            let logits_slice = logits_owned.as_slice().context("Logits not contiguous")?;
-            if logits_slice.len() < vocab_size {
-                anyhow::bail!(
-                    "Logits shape mismatch: expected at least {vocab_size} values, got {}",
-                    logits_slice.len()
-                );
-            }
-            let offset = logits_slice.len().saturating_sub(vocab_size);
-            let next_token = argmax(&logits_slice[offset..]);
-
-            if next_token == self.eos_token_id {
-                return Ok(String::new());
-            }
-            generated_ids.push(next_token);
-            vocab_size
-        };
-
-        // Autoregressive decoding loop.
-        // Re-runs decoder_init each step (no KV cache). Slower but correct;
-        // KV-cache optimization is a follow-up.
+        // Autoregressive decoding with KV cache via decoder_step
         for _ in 1..max_tokens {
-            let mut all_ids: Vec<i64> = vec![151644, 151645];
-            all_ids.extend(generated_ids.iter().map(|&id| id as i64));
+            if abort_flag.load(Ordering::Relaxed) {
+                break;
+            }
 
-            let ids_tensor = ndarray::Array2::from_shape_vec((1, all_ids.len()), all_ids)?;
-            let ids_input = ort::value::Tensor::from_array(ids_tensor)?;
-            let enc_input = ort::value::TensorRef::from_array_view(encoder_out_owned.view())?;
+            let (logits, new_keys, new_values) =
+                self.step(next_token, current_pos, &present_keys, &present_values)?;
 
-            let mut dec = self.decoder_init.lock().unwrap();
-            let outputs = dec.run(ort::inputs![ids_input, enc_input])?;
+            present_keys = new_keys;
+            present_values = new_values;
 
-            let logits = outputs[0].try_extract_array::<f32>()?;
-            let logits_owned = logits.to_owned();
-            let logits_slice = logits_owned.as_slice().context("Logits not contiguous")?;
-            let offset = logits_slice.len().saturating_sub(vocab_size);
-            let next_token = argmax(&logits_slice[offset..]);
+            let logits_slice = logits.as_slice().context("Step logits not contiguous")?;
+            let step_offset = logits_slice.len().saturating_sub(vocab_size);
+            next_token = argmax(&logits_slice[step_offset..]);
 
-            if next_token == self.eos_token_id {
+            if next_token == self.config.eos_token_id {
                 break;
             }
             generated_ids.push(next_token);
+            current_pos += 1;
         }
 
         let text = self
@@ -198,9 +281,28 @@ impl QwenEngine {
     }
 }
 
+// ── Streaming state ─────────────────────────────────────────────────────
+
+/// Native streaming state for Qwen3-ASR.
+///
+/// Accumulates audio samples across chunks. Each streaming call re-encodes
+/// and re-decodes the full utterance to produce the latest transcription.
+struct QwenStreamingState {
+    accumulated_samples: Vec<f32>,
+}
+
+impl StreamingState for QwenStreamingState {
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+// ── AsrEngine implementation ────────────────────────────────────────────
+
 impl AsrEngine for QwenEngine {
     fn transcribe(&self, samples: &[f32], _translate: bool) -> Result<TranscriptionResult> {
-        let text = self.run_inference(samples)?;
+        let no_abort = Arc::new(AtomicBool::new(false));
+        let text = self.run_inference(samples, &no_abort)?;
         Ok(TranscriptionResult {
             text,
             pre_formatted: false,
@@ -208,19 +310,30 @@ impl AsrEngine for QwenEngine {
     }
 
     fn create_streaming_state(&self) -> Result<Box<dyn StreamingState>> {
-        // TODO: Implement native Qwen3-ASR streaming with KV-cache state
-        Ok(Box::new(QwenStreamingState))
+        Ok(Box::new(QwenStreamingState {
+            accumulated_samples: Vec::new(),
+        }))
     }
 
     fn streaming_transcribe(
         &self,
-        _state: &mut dyn StreamingState,
+        state: &mut dyn StreamingState,
         samples: &[f32],
-        translate: bool,
-        _abort_flag: &Arc<AtomicBool>,
+        _translate: bool,
+        abort_flag: &Arc<AtomicBool>,
     ) -> Result<TranscriptionResult> {
-        // Fall back to full transcription per chunk for now
-        self.transcribe(samples, translate)
+        let qs = state
+            .as_any_mut()
+            .downcast_mut::<QwenStreamingState>()
+            .ok_or_else(|| anyhow::anyhow!("Invalid streaming state for QwenEngine"))?;
+
+        qs.accumulated_samples.extend_from_slice(samples);
+        let text = self.run_inference(&qs.accumulated_samples, abort_flag)?;
+
+        Ok(TranscriptionResult {
+            text,
+            pre_formatted: false,
+        })
     }
 
     fn engine_name(&self) -> String {
@@ -232,7 +345,8 @@ impl AsrEngine for QwenEngine {
     }
 }
 
-/// Greedy argmax over a logit slice, returning the token id.
+// ── Helpers ─────────────────────────────────────────────────────────────
+
 fn argmax(logits: &[f32]) -> u32 {
     logits
         .iter()
@@ -242,7 +356,16 @@ fn argmax(logits: &[f32]) -> u32 {
         .unwrap_or(0)
 }
 
-/// Number of threads for inference.
+fn lookup_embedding(embed_tokens: &[f32], token_id: u32, hidden_size: usize) -> Vec<f32> {
+    let start = token_id as usize * hidden_size;
+    let end = start + hidden_size;
+    if end <= embed_tokens.len() {
+        embed_tokens[start..end].to_vec()
+    } else {
+        vec![0.0; hidden_size]
+    }
+}
+
 fn num_inference_threads() -> usize {
     let cpus = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -250,7 +373,6 @@ fn num_inference_threads() -> usize {
     (cpus / 2).max(1)
 }
 
-/// Load FP16 binary data into f32 vec.
 fn load_fp16_to_f32(bytes: &[u8]) -> Vec<f32> {
     use half::f16;
     bytes
@@ -264,9 +386,8 @@ fn load_fp16_to_f32(bytes: &[u8]) -> Vec<f32> {
 
 /// Compute mel spectrogram from raw audio samples.
 ///
-/// Simplified implementation producing a reasonable approximation.
-/// A full implementation would use proper FFT and mel filterbanks matching
-/// the Qwen3-ASR preprocessing pipeline.
+/// Simplified placeholder matching Qwen3-ASR params: 16kHz, 128 bins,
+/// 25ms window (n_fft=400), 10ms hop (hop_length=160).
 fn compute_mel_spectrogram(
     samples: &[f32],
     n_mels: usize,

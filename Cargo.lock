@@ -3350,7 +3350,7 @@ dependencies = [
 
 [[package]]
 name = "murmur"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3401,7 +3401,7 @@ dependencies = [
 
 [[package]]
 name = "murmur-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arboard",

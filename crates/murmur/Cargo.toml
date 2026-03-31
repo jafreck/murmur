@@ -1,6 +1,6 @@
 [package]
 name = "murmur"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -10,7 +10,7 @@ keywords = ["whisper", "dictation", "voice", "speech-to-text"]
 categories = ["multimedia::audio"]
 
 [dependencies]
-murmur-core = { version = "0.1.1", path = "../murmur-core" }
+murmur-core = { version = "0.1.2", path = "../murmur-core" }
 tray-icon = "0.21"
 rdev = "0.5"
 arboard = "3"

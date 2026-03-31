@@ -54,7 +54,7 @@ pub fn contains_speech(samples: &[f32]) -> bool {
 
     // Fast path: reject digital silence without loading the model.
     if rms < SILENCE_RMS_FLOOR {
-        log::info!("VAD: audio below noise floor (RMS={rms:.6}), skipping");
+        log::debug!("VAD: audio below noise floor (RMS={rms:.6}), skipping");
         return false;
     }
 

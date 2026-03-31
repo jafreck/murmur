@@ -44,10 +44,23 @@ pub enum FadeState {
     FadingOut,
 }
 
-/// Fade-in speed (opacity change per second).
-pub const FADE_IN_SPEED: f32 = 6.0;
-/// Fade-out speed (opacity change per second — 5-second fade-out).
-pub const FADE_OUT_SPEED: f32 = 1.0 / 5.0;
+/// Fade-in duration in seconds (quick pop-in, ease-out curve).
+pub const FADE_IN_DURATION: f32 = 0.15;
+/// Brief hold at full opacity before fade-out begins (seconds).
+pub const FADE_OUT_HOLD: f32 = 0.3;
+/// Fade-out duration in seconds (smooth S-curve, native macOS feel).
+pub const FADE_OUT_DURATION: f32 = 0.8;
+
+/// Cubic ease-out: fast start, gentle settle. Used for fade-in.
+fn ease_out_cubic(t: f32) -> f32 {
+    let inv = 1.0 - t;
+    1.0 - inv * inv * inv
+}
+
+/// Hermite smooth-step: smooth S-curve (slow–fast–slow). Used for fade-out.
+fn smooth_step(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
 
 /// Pure overlay state machine — no GUI dependencies.
 pub struct OverlayModel {
@@ -55,6 +68,7 @@ pub struct OverlayModel {
     pub visible: bool,
     pub opacity: f32,
     pub fade_state: FadeState,
+    pub fade_elapsed: f32,
     pub should_quit: bool,
 }
 
@@ -71,6 +85,7 @@ impl OverlayModel {
             visible: false,
             opacity: 0.0,
             fade_state: FadeState::Hidden,
+            fade_elapsed: 0.0,
             should_quit: false,
         }
     }
@@ -81,12 +96,14 @@ impl OverlayModel {
             OverlayCommand::Show => {
                 self.visible = true;
                 self.fade_state = FadeState::FadingIn;
+                self.fade_elapsed = 0.0;
                 vec![ViewportAction::SetVisible(true), ViewportAction::Focus]
             }
             OverlayCommand::Hide => {
                 self.visible = false;
                 self.opacity = 0.0;
                 self.fade_state = FadeState::Hidden;
+                self.fade_elapsed = 0.0;
                 vec![ViewportAction::SetVisible(false)]
             }
             OverlayCommand::Text { content } => {
@@ -99,6 +116,7 @@ impl OverlayModel {
             }
             OverlayCommand::Done => {
                 self.fade_state = FadeState::FadingOut;
+                self.fade_elapsed = 0.0;
                 vec![]
             }
             OverlayCommand::Quit => {
@@ -112,15 +130,26 @@ impl OverlayModel {
     pub fn advance_fade(&mut self, dt: f32) -> Vec<ViewportAction> {
         match self.fade_state {
             FadeState::FadingIn => {
-                self.opacity = (self.opacity + FADE_IN_SPEED * dt).min(1.0);
-                if self.opacity >= 1.0 {
+                self.fade_elapsed += dt;
+                let t = (self.fade_elapsed / FADE_IN_DURATION).min(1.0);
+                self.opacity = ease_out_cubic(t);
+                if t >= 1.0 {
+                    self.opacity = 1.0;
                     self.fade_state = FadeState::Visible;
                 }
                 vec![ViewportAction::RequestRepaint]
             }
             FadeState::FadingOut => {
-                self.opacity = (self.opacity - FADE_OUT_SPEED * dt).max(0.0);
-                if self.opacity <= 0.0 {
+                self.fade_elapsed += dt;
+                if self.fade_elapsed <= FADE_OUT_HOLD {
+                    self.opacity = 1.0;
+                    return vec![ViewportAction::RequestRepaint];
+                }
+                let fade_time = self.fade_elapsed - FADE_OUT_HOLD;
+                let t = (fade_time / FADE_OUT_DURATION).min(1.0);
+                self.opacity = 1.0 - smooth_step(t);
+                if t >= 1.0 {
+                    self.opacity = 0.0;
                     self.fade_state = FadeState::Hidden;
                     self.visible = false;
                     return vec![
@@ -512,6 +541,7 @@ mod tests {
         assert!(!m.visible);
         assert_eq!(m.opacity, 0.0);
         assert_eq!(m.fade_state, FadeState::Hidden);
+        assert_eq!(m.fade_elapsed, 0.0);
         assert!(!m.should_quit);
     }
 
@@ -609,7 +639,8 @@ mod tests {
         m.opacity = 1.0;
         m.visible = true;
 
-        let actions = m.advance_fade(1.0);
+        // Use a dt that lands past the hold but before the fade completes
+        let actions = m.advance_fade(FADE_OUT_HOLD + FADE_OUT_DURATION * 0.5);
         assert!(m.opacity < 1.0);
         assert!(m.opacity > 0.0);
         assert_eq!(m.fade_state, FadeState::FadingOut);
@@ -687,10 +718,14 @@ mod tests {
     fn advance_fade_with_zero_dt() {
         let mut m = OverlayModel::new();
         m.fade_state = FadeState::FadingIn;
-        m.opacity = 0.5;
 
+        // Advance partway to establish a consistent state
+        m.advance_fade(FADE_IN_DURATION * 0.5);
+        let opacity_before = m.opacity;
+
+        // Zero dt should not change opacity
         let actions = m.advance_fade(0.0);
-        assert_eq!(m.opacity, 0.5);
+        assert_eq!(m.opacity, opacity_before);
         assert_eq!(m.fade_state, FadeState::FadingIn);
         assert_eq!(actions, vec![ViewportAction::RequestRepaint]);
     }
@@ -714,5 +749,80 @@ mod tests {
         m.apply_command(OverlayCommand::Hide);
         assert!(!m.visible);
         assert_eq!(m.fade_state, FadeState::Hidden);
+    }
+
+    // ── Easing function tests ──────────────────────────────────────────
+
+    #[test]
+    fn ease_out_cubic_endpoints() {
+        assert_eq!(ease_out_cubic(0.0), 0.0);
+        assert_eq!(ease_out_cubic(1.0), 1.0);
+    }
+
+    #[test]
+    fn ease_out_cubic_monotonic() {
+        let mut prev = 0.0_f32;
+        for i in 1..=10 {
+            let t = i as f32 / 10.0;
+            let v = ease_out_cubic(t);
+            assert!(
+                v > prev,
+                "ease_out_cubic should be monotonically increasing"
+            );
+            prev = v;
+        }
+    }
+
+    #[test]
+    fn smooth_step_endpoints() {
+        assert_eq!(smooth_step(0.0), 0.0);
+        assert_eq!(smooth_step(1.0), 1.0);
+    }
+
+    #[test]
+    fn smooth_step_midpoint() {
+        assert_eq!(smooth_step(0.5), 0.5);
+    }
+
+    #[test]
+    fn smooth_step_monotonic() {
+        let mut prev = 0.0_f32;
+        for i in 1..=10 {
+            let t = i as f32 / 10.0;
+            let v = smooth_step(t);
+            assert!(v > prev, "smooth_step should be monotonically increasing");
+            prev = v;
+        }
+    }
+
+    #[test]
+    fn fade_out_holds_at_full_opacity() {
+        let mut m = OverlayModel::new();
+        m.fade_state = FadeState::FadingOut;
+        m.opacity = 1.0;
+        m.visible = true;
+
+        // During the hold period, opacity should stay at 1.0
+        let actions = m.advance_fade(FADE_OUT_HOLD * 0.5);
+        assert_eq!(m.opacity, 1.0);
+        assert_eq!(m.fade_state, FadeState::FadingOut);
+        assert_eq!(actions, vec![ViewportAction::RequestRepaint]);
+    }
+
+    #[test]
+    fn fade_out_starts_after_hold() {
+        let mut m = OverlayModel::new();
+        m.fade_state = FadeState::FadingOut;
+        m.opacity = 1.0;
+        m.visible = true;
+
+        // Advance just past the hold
+        let actions = m.advance_fade(FADE_OUT_HOLD + 0.01);
+        assert!(
+            m.opacity < 1.0,
+            "opacity should start decreasing after hold"
+        );
+        assert_eq!(m.fade_state, FadeState::FadingOut);
+        assert_eq!(actions, vec![ViewportAction::RequestRepaint]);
     }
 }

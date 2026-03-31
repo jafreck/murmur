@@ -3,6 +3,7 @@ use murmur::config;
 use murmur::input::keycodes;
 use murmur::transcription::{model, transcriber};
 use murmur::VERSION;
+use murmur_core::config::AsrBackend;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -25,6 +26,9 @@ enum Commands {
         /// Enable notes mode for this session
         #[arg(long)]
         notes: bool,
+        /// ASR backend engine (whisper, qwen3-asr, parakeet)
+        #[arg(long)]
+        backend: Option<String>,
     },
     /// Set the push-to-talk hotkey
     SetHotkey {
@@ -48,6 +52,9 @@ enum Commands {
         /// Model size (defaults to "base.en")
         #[arg(default_value = "base.en")]
         size: String,
+        /// ASR backend for the model (whisper, qwen3-asr, parakeet)
+        #[arg(long, default_value = "whisper")]
+        backend: String,
     },
     /// Check for updates and install the latest version
     Update {
@@ -79,12 +86,12 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Some(Commands::Start { notes }) => cmd_start(notes),
+        Some(Commands::Start { notes, backend }) => cmd_start(notes, backend),
         Some(Commands::SetHotkey { key }) => cmd_set_hotkey(&key),
         Some(Commands::GetHotkey) => cmd_get_hotkey(),
         Some(Commands::SetModel { size }) => cmd_set_model(&size),
         Some(Commands::SetLanguage { code }) => cmd_set_language(&code),
-        Some(Commands::DownloadModel { size }) => cmd_download_model(&size),
+        Some(Commands::DownloadModel { size, backend }) => cmd_download_model(&size, &backend),
         Some(Commands::Update { check }) => cmd_update(check),
         Some(Commands::Status) => cmd_status(),
         Some(Commands::Overlay) => murmur::ui::overlay::run_overlay(),
@@ -103,8 +110,19 @@ fn main() {
     }
 }
 
-fn cmd_start(notes: bool) -> Result<()> {
+fn cmd_start(notes: bool, backend: Option<String>) -> Result<()> {
     println!("murmur v{VERSION}");
+    if let Some(ref backend_str) = backend {
+        // Apply backend override before starting the app
+        let mut cfg = config::Config::load();
+        cfg.asr_backend = match backend_str.as_str() {
+            "whisper" => AsrBackend::Whisper,
+            "qwen3-asr" | "qwen3_asr" | "qwen" => AsrBackend::Qwen3Asr,
+            "parakeet" => AsrBackend::Parakeet,
+            _ => anyhow::bail!("Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet"),
+        };
+        cfg.save()?;
+    }
     app::run(notes)
 }
 
@@ -180,6 +198,7 @@ pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
         "murmur v{VERSION}\n\
          Config:       {}\n\
          Hotkey:       {}\n\
+         Backend:      {}\n\
          Model:        {}\n\
          Model ready:  {model_ready_str}\n\
          Language:     {lang_name} ({})\n\
@@ -187,20 +206,48 @@ pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
          Streaming:    {streaming_str}",
         config::Config::file_path().display(),
         cfg.hotkey,
+        cfg.asr_backend,
         cfg.model_size,
         cfg.language,
     )
 }
 
-fn cmd_download_model(size: &str) -> Result<()> {
+fn cmd_download_model(size: &str, backend_str: &str) -> Result<()> {
+    let backend = match backend_str {
+        "whisper" => AsrBackend::Whisper,
+        "qwen3-asr" | "qwen3_asr" | "qwen" => AsrBackend::Qwen3Asr,
+        "parakeet" => AsrBackend::Parakeet,
+        _ => anyhow::bail!("Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet"),
+    };
+
+    let cfg = config::Config::load();
     let last_pct = std::cell::Cell::new(u32::MAX);
-    model::download(size, |percent| {
-        let pct = percent as u32;
-        if pct != last_pct.get() {
-            last_pct.set(pct);
-            eprint!("\rDownloading {size} model... {pct}%");
+
+    match backend {
+        AsrBackend::Whisper => {
+            model::download(size, |percent| {
+                let pct = percent as u32;
+                if pct != last_pct.get() {
+                    last_pct.set(pct);
+                    eprint!("\rDownloading {size} model... {pct}%");
+                }
+            })?;
         }
-    })?;
+        _ => {
+            murmur_core::transcription::download_for_backend(
+                backend,
+                size,
+                cfg.asr_quantization,
+                |percent| {
+                    let pct = percent as u32;
+                    if pct != last_pct.get() {
+                        last_pct.set(pct);
+                        eprint!("\rDownloading {backend} {size} model... {pct}%");
+                    }
+                },
+            )?;
+        }
+    }
     eprintln!();
     println!("Model downloaded.");
     Ok(())

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use super::transcriber::Transcriber;
+use super::engine::AsrEngine;
 use crate::audio::capture::TARGET_RATE;
 
 // ── Configuration ──────────────────────────────────────────────────────
@@ -75,7 +75,7 @@ impl StreamingHandle {
 /// Returns a [`StreamingHandle`] that can stop and join the thread.
 pub fn start_streaming(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
-    transcriber: Arc<Transcriber>,
+    engine: Arc<dyn AsrEngine + Send + Sync>,
     translate: bool,
     filler_word_removal: bool,
     tx: mpsc::Sender<StreamingEvent>,
@@ -88,7 +88,7 @@ pub fn start_streaming(
     let join_handle = std::thread::spawn(move || {
         streaming_loop(
             sample_buffer,
-            transcriber,
+            engine,
             translate,
             filler_word_removal,
             tx,
@@ -110,7 +110,7 @@ pub fn start_streaming(
 #[allow(clippy::too_many_arguments)]
 fn streaming_loop(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
-    _transcriber: Arc<Transcriber>,
+    _engine: Arc<dyn AsrEngine + Send + Sync>,
     translate: bool,
     filler_word_removal: bool,
     tx: mpsc::Sender<StreamingEvent>,

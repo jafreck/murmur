@@ -72,7 +72,47 @@ pub struct AppContextConfig {
     pub mode: Option<DictationMode>,
 }
 
-pub const SUPPORTED_MODELS: &[&str] = &[
+/// ASR backend engine.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AsrBackend {
+    #[default]
+    Whisper,
+    Qwen3Asr,
+    Parakeet,
+}
+
+impl std::fmt::Display for AsrBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AsrBackend::Whisper => write!(f, "Whisper"),
+            AsrBackend::Qwen3Asr => write!(f, "Qwen3-ASR"),
+            AsrBackend::Parakeet => write!(f, "Parakeet"),
+        }
+    }
+}
+
+/// ONNX model quantization level.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AsrQuantization {
+    Fp32,
+    #[default]
+    Int4,
+    Int8,
+}
+
+impl std::fmt::Display for AsrQuantization {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AsrQuantization::Fp32 => write!(f, "FP32"),
+            AsrQuantization::Int4 => write!(f, "INT4"),
+            AsrQuantization::Int8 => write!(f, "INT8"),
+        }
+    }
+}
+
+pub const WHISPER_MODELS: &[&str] = &[
     "tiny.en",
     "tiny",
     "base.en",
@@ -85,6 +125,22 @@ pub const SUPPORTED_MODELS: &[&str] = &[
     "large",
     "distil-large-v3",
 ];
+
+pub const QWEN3_ASR_MODELS: &[&str] = &["0.6b", "1.7b"];
+
+pub const PARAKEET_MODELS: &[&str] = &["0.6b-v2"];
+
+/// All supported models for a given backend.
+pub fn supported_models(backend: AsrBackend) -> &'static [&'static str] {
+    match backend {
+        AsrBackend::Whisper => WHISPER_MODELS,
+        AsrBackend::Qwen3Asr => QWEN3_ASR_MODELS,
+        AsrBackend::Parakeet => PARAKEET_MODELS,
+    }
+}
+
+/// Deprecated: use `WHISPER_MODELS` or `supported_models()` instead.
+pub const SUPPORTED_MODELS: &[&str] = WHISPER_MODELS;
 
 /// Returns true for models that only support English (`.en` suffix or `distil-*`).
 pub fn is_english_only_model(model: &str) -> bool {
@@ -176,6 +232,12 @@ pub fn language_name(code: &str) -> Option<&str> {
 pub struct Config {
     pub hotkey: String,
     pub model_size: String,
+    /// ASR backend engine (default: whisper)
+    #[serde(default)]
+    pub asr_backend: AsrBackend,
+    /// ONNX model quantization level (default: int4, only used for ONNX backends)
+    #[serde(default)]
+    pub asr_quantization: AsrQuantization,
     pub language: String,
     #[serde(default)]
     pub spoken_punctuation: bool,
@@ -265,6 +327,8 @@ impl Default for Config {
         Self {
             hotkey: default_hotkey().to_string(),
             model_size: "base.en".to_string(),
+            asr_backend: AsrBackend::default(),
+            asr_quantization: AsrQuantization::default(),
             language: "en".to_string(),
             spoken_punctuation: false,
             filler_word_removal: false,
@@ -317,6 +381,20 @@ impl Config {
     /// Whether the app is in Notes mode.
     pub fn is_notes_mode(&self) -> bool {
         self.app_mode == AppMode::Notes
+    }
+
+    /// Default model size for the current ASR backend.
+    pub fn default_model_for_backend(&self) -> &'static str {
+        match self.asr_backend {
+            AsrBackend::Whisper => "base.en",
+            AsrBackend::Qwen3Asr => "0.6b",
+            AsrBackend::Parakeet => "0.6b-v2",
+        }
+    }
+
+    /// Whether the current backend produces pre-formatted output (punctuation, capitalization).
+    pub fn backend_has_native_formatting(&self) -> bool {
+        matches!(self.asr_backend, AsrBackend::Parakeet)
     }
 
     /// Resolved notes directory, falling back to data_dir/murmur/notes.

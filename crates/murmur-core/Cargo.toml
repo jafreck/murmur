@@ -21,6 +21,10 @@ voice_activity_detector = "0.2"
 log = "0.4"
 nnnoiseless = "0.5"
 env_logger = "0.11"
+ort = { version = "2.0.0-rc.10", optional = true }
+ndarray = { version = "0.16", optional = true, default-features = false, features = ["std"] }
+tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
+half = { version = "2", optional = true }
 
 [[bin]]
 name = "murmur-whisper-worker"
@@ -28,6 +32,7 @@ path = "src/bin/whisper_worker.rs"
 
 [features]
 default = []
+onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:half"]
 cuda = ["whisper-rs/cuda"]
 metal = ["whisper-rs/metal"]
 vulkan = ["whisper-rs/vulkan"]

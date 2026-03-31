@@ -3,9 +3,9 @@ use crate::config::{AppMode, Config, InputMode};
 use crate::ui::tray::TrayState;
 use rdev::Key;
 
-use crate::transcription::transcriber::Transcriber;
 #[cfg(test)]
 use crate::ui::tray::TrayAction;
+use murmur_core::transcription::AsrEngine;
 use std::sync::Arc;
 
 pub enum AppMessage {
@@ -33,9 +33,9 @@ pub enum AppMessage {
         text: String,
         replace_chars: usize,
     },
-    /// A new Transcriber has been loaded in the background and is ready to swap in.
+    /// A new ASR engine has been loaded in the background and is ready to swap in.
     /// The u64 is the reload generation; stale reloads are discarded.
-    TranscriberReady(Arc<Transcriber>, u64),
+    EngineReady(Arc<dyn AsrEngine + Send + Sync>, u64),
     /// The wake word was detected — start dictation.
     WakeWordDetected,
     /// The stop phrase was detected — stop dictation.
@@ -209,9 +209,9 @@ impl AppState {
             AppMessage::TraySetHotkey => self.on_tray_set_hotkey(),
             AppMessage::TrayToggleAppMode => self.on_toggle_app_mode(),
             AppMessage::HotkeyCapture(key) => self.on_hotkey_capture(key),
-            // TranscriberReady is handled directly in the run() loop before
+            // EngineReady is handled directly in the run() loop before
             // reaching handle_message, but we need an arm for exhaustiveness.
-            AppMessage::TranscriberReady(_, _) => vec![AppEffect::None],
+            AppMessage::EngineReady(_, _) => vec![AppEffect::None],
             AppMessage::WakeWordDetected => self.on_wake_word_detected(),
             AppMessage::StopPhraseDetected => self.on_stop_phrase_detected(),
             AppMessage::SpeechActivity => {
@@ -543,6 +543,8 @@ impl AppState {
         Config {
             hotkey: base.hotkey.clone(),
             model_size: self.model_size.clone(),
+            asr_backend: base.asr_backend,
+            asr_quantization: base.asr_quantization,
             language: self.language.clone(),
             spoken_punctuation: self.spoken_punctuation,
             filler_word_removal: self.filler_word_removal,
@@ -1238,8 +1240,8 @@ mod tests {
         assert_eq!(cfg.max_recordings, 42);
     }
 
-    // -- TranscriberReady exhaustiveness --
-    // TranscriberReady is handled in the run() loop, not handle_message().
+    // -- EngineReady exhaustiveness --
+    // EngineReady is handled in the run() loop, not handle_message().
     // Exhaustiveness is verified at compile time. No runtime test needed.
 
     // -- Open mic streaming --

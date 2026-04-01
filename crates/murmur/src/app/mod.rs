@@ -115,13 +115,13 @@ pub fn run(notes_mode: bool) -> Result<()> {
     let parsed = keycodes::parse(&config.hotkey)
         .ok_or_else(|| anyhow::anyhow!("Invalid hotkey: {}", config.hotkey))?;
 
-    let accessible = permissions::check_accessibility();
+    let _accessible = permissions::check_accessibility();
     permissions::check_microphone();
 
     // If accessibility isn't granted, wait for the user to grant it,
     // then re-exec so the process picks up the new permission.
     #[cfg(target_os = "macos")]
-    if !accessible {
+    if !_accessible {
         permissions::open_accessibility_settings();
         eprintln!("⚠ Accessibility permission required for hotkey detection.");
         eprintln!("  Grant access in the System Settings window that just opened,");

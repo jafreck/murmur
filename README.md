@@ -9,8 +9,8 @@
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#platform-notes)
 
-Worry free speech to text.
 No cloud, no API keys, no data collection.
+State-of-the-art speech recognition running entirely on your hardware.
 
 </div>
 
@@ -22,30 +22,35 @@ No cloud, no API keys, no data collection.
 
 ## Features
 
-### 🤖 AI-Powered Transcription
+### 🎙️ Multi-Engine Speech Recognition
 
-Murmur runs [OpenAI Whisper](https://github.com/openai/whisper) — a state-of-the-art speech recognition model — entirely on your machine via [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
+Murmur supports multiple ASR (Automatic Speech Recognition) backends — all running locally on your machine. Choose the engine that best fits your needs:
 
-- **Accurate speech recognition** — Whisper was trained on 680,000 hours of multilingual audio, delivering near-human accuracy
-- **90+ languages** — transcribe in your language or auto-detect it, with optional translate-to-English mode
-- **Smart vocabulary biasing** — provide domain-specific terms and Murmur prioritizes them during transcription using intelligent prompt engineering that ranks novel multi-token terms higher
-- **Context-aware formatting** — detects the active application and adjusts transcription formatting automatically
+| Engine | Models | Languages | Streaming | Strengths |
+|---|---|---|---|---|
+| [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) | 0.6B, 1.7B | 52 | ✅ Native | Lowest word error rate, native streaming |
+| [Whisper](https://github.com/openai/whisper) | tiny → large | 90+ | ⚠️ Chunked | Broad language coverage |
+| [Parakeet-TDT](https://catalog.ngc.nvidia.com/orgs/nvidia/collections/parakeet-tdt-0.6b) | 0.6B | English | ⚠️ Chunked | Fast, pre-formatted output with punctuation |
 
-### ⚡ What Murmur Adds on Top of Whisper
+Switch backends with a single flag:
 
-Raw Whisper is a CLI inference tool. Murmur turns it into a seamless dictation system:
+```bash
+murmur start --backend qwen3-asr    # Best accuracy + native streaming
+murmur start --backend whisper      # Maximum language support
+murmur start --backend parakeet     # Fast English with auto-punctuation
+```
 
-- **Two recording modes** — Push to Talk (hold to record) or Open Mic (toggle on/off), with instant paste at your cursor that preserves clipboard contents
-- **Live streaming (preview)** — see partial transcriptions appear in real time as you speak
-- **Spoken punctuation** — say "period", "comma", "question mark", "new paragraph", etc. and they're converted to symbols
-- **Filler word removal** — automatically strips "um", "uh", "er", "ah", and other verbal fillers
-- **Noise suppression** — built-in audio denoising cleans up background noise before transcription
-- **Speech detection** — voice activity detection and hallucination filtering ensure only real speech is transcribed
-- **System tray UI** — control model, language, mode, hotkey, and all settings from the menu bar
+### ⚡ Real-Time Streaming
 
-### 🔒 Privacy
+Murmur delivers live partial transcriptions as you speak. For backends with native streaming support (Qwen3-ASR), text flows smoothly with append-only updates — no flickering or re-typing. Whisper uses an overlap-stitch approach for streaming approximation.
 
-100% local. Audio is captured, transcribed on your CPU/GPU, and discarded. No network requests are ever made except to download the Whisper model on first run.
+### 🔒 Privacy First
+
+Everything runs on your hardware. Audio is captured, transcribed, and discarded — never written to disk, never sent over the network. The only network requests murmur ever makes are to download model weights on first run.
+
+- No cloud APIs, no telemetry, no data collection
+- Audio processed entirely in memory
+- Models downloaded once, run forever offline
 
 ### 🚀 Performance
 
@@ -53,12 +58,25 @@ Murmur is built in Rust with an optimized audio pipeline designed for low-latenc
 
 | Metric | Detail |
 |---|---|
-| **Pre-roll buffer** | 200 ms of audio captured before you press the hotkey — your first words are never clipped |
+| **Pre-roll buffer** | 200 ms of audio captured before you press the hotkey — first words are never clipped |
 | **Minimum audio** | Processes recordings as short as 0.25 seconds |
 | **Streaming latency** | Partial results update every ~300 ms while speaking |
-| **In-memory pipeline** | Zero disk I/O by default — audio is recorded and transcribed entirely in memory |
-| **GPU acceleration** | Metal (Apple Silicon), CUDA (NVIDIA), and Vulkan (cross-vendor) for faster-than-real-time inference |
-| **Distil-Whisper** | Distilled models run significantly faster while maintaining near-original accuracy |
+| **In-memory pipeline** | Zero disk I/O — audio is recorded and transcribed entirely in memory |
+| **GPU acceleration** | Metal (Apple Silicon), CUDA (NVIDIA), Vulkan (cross-vendor) |
+| **Quantized models** | INT4/INT8 inference for faster speed with minimal accuracy loss |
+
+### 🛠️ Dictation Intelligence
+
+Raw speech recognition is just the foundation. Murmur adds layers that make dictation practical:
+
+- **Two recording modes** — Push to Talk (hold to record) or Open Mic (toggle on/off), with instant paste at your cursor that preserves clipboard contents
+- **Spoken punctuation** — say "period", "comma", "question mark", "new paragraph" and they're converted to symbols
+- **Filler word removal** — automatically strips "um", "uh", "er", "ah" and other verbal fillers
+- **Noise suppression** — built-in audio denoising cleans up background noise before transcription
+- **Speech detection** — voice activity detection and hallucination filtering ensure only real speech is transcribed
+- **Smart vocabulary biasing** — provide domain-specific terms and murmur prioritizes them during transcription
+- **Context-aware formatting** — detects the active application and adjusts transcription formatting automatically
+- **System tray UI** — control model, backend, language, mode, hotkey, and all settings from the menu bar
 
 ## Install
 
@@ -80,16 +98,6 @@ irm https://github.com/jafreck/murmur/releases/latest/download/install.ps1 | iex
 
 The installer downloads the correct binary for your platform, installs it, and registers murmur as a service that starts at login.
 
-To install a specific version:
-
-```bash
-# macOS / Linux
-MURMUR_VERSION=v0.1.0 bash <(curl -sSfL https://github.com/jafreck/murmur/releases/latest/download/install.sh)
-
-# Windows
-.\scripts\install.ps1 -Version v0.1.0
-```
-
 ### Homebrew (macOS / Linux)
 
 ```bash
@@ -101,12 +109,11 @@ brew install jafreck/murmur/murmur
 ```bash
 git clone https://github.com/jafreck/murmur.git
 cd murmur
-cargo build --release
+cargo build --release --features metal     # Whisper backend (default)
+cargo build --release --features metal,onnx # + Qwen3-ASR & Parakeet backends
 ```
 
-The binary is at `target/release/murmur`.
-
-#### GPU acceleration (optional)
+#### GPU acceleration
 
 ```bash
 # macOS Apple Silicon (Metal)
@@ -128,11 +135,16 @@ cargo install murmur
 ## Usage
 
 ```bash
-# Start the dictation daemon (system tray)
+# Start with default backend (Whisper)
 murmur start
 
-# Download a specific model
-murmur download-model base.en
+# Start with a specific backend
+murmur start --backend qwen3-asr
+
+# Download a model
+murmur download-model base.en                       # Whisper
+murmur download-model 0.6b --backend qwen3-asr      # Qwen3-ASR
+murmur download-model 0.6b-v2 --backend parakeet    # Parakeet
 
 # Set the hotkey
 murmur set-hotkey ctrl+shift+space
@@ -151,13 +163,14 @@ Edit the config file:
 ```json
 {
   "hotkey": "ctrl+shift+space",
-  "model_size": "base.en",
+  "asr_backend": "qwen3_asr",
+  "model_size": "0.6b",
+  "asr_quantization": "int4",
   "language": "en",
   "spoken_punctuation": false,
   "filler_word_removal": false,
   "noise_suppression": true,
   "translate_to_english": false,
-  "max_recordings": 0,
   "mode": "push_to_talk",
   "streaming": false,
   "vocabulary": []
@@ -166,24 +179,32 @@ Edit the config file:
 
 ### Models
 
-murmur uses [OpenAI Whisper](https://github.com/openai/whisper) models running locally via [whisper.cpp](https://github.com/ggml-org/whisper.cpp). Models are downloaded in GGML format on first run.
+Models are downloaded from HuggingFace on first run and cached locally. Each backend has its own model family:
 
-| Model | Disk Size | Memory | Speed | Accuracy | Best for |
-|---|---|---|---|---|---|
-| `tiny.en` | 75 MB | ~273 MB | Fastest | Lower | Quick notes |
-| **`base.en`** | **142 MB** | **~388 MB** | **Fast** | **Good** | **Most users (default)** |
-| `small.en` | 466 MB | ~852 MB | Moderate | Better | Technical terms |
-| `medium.en` | 1.5 GB | ~2.1 GB | Slower | Great | Maximum accuracy |
-| `large-v3-turbo` | 1.6 GB | ~2 GB | Moderate | Great | Multilingual |
-| `large` | 3 GB | ~3.9 GB | Slowest | Best | Highest accuracy |
+#### Qwen3-ASR (recommended)
 
-#### Distil-Whisper (faster alternatives)
+| Model | Quantization | Disk Size | WER (LibriSpeech) | Best for |
+|---|---|---|---|---|
+| **`0.6b`** | **INT4** | **~2 GB** | **5.16%** | **Fast, accurate (default)** |
+| `0.6b` | FP32 | ~3.3 GB | 4.42% | Maximum accuracy |
+| `1.7b` | INT4 | ~4 GB | 4.20% | Lowest error rate |
 
-[Distil-Whisper](https://github.com/huggingface/distil-whisper) models are distilled versions that run significantly faster while maintaining near-original accuracy. English-only.
+#### Whisper
 
-| Model | Disk Size | Memory | Speed | Accuracy | Best for |
-|---|---|---|---|---|---|
-| `distil-large-v3` | ~1.5 GB | ~2–3 GB | Fast | Great | Best distilled quality |
+| Model | Disk Size | Speed | Best for |
+|---|---|---|---|
+| `tiny.en` | 75 MB | Fastest | Quick notes |
+| **`base.en`** | **142 MB** | **Fast** | **Most users** |
+| `small.en` | 466 MB | Moderate | Technical terms |
+| `medium.en` | 1.5 GB | Slower | High accuracy |
+| `large-v3-turbo` | 1.6 GB | Moderate | Multilingual |
+| `distil-large-v3` | ~1.5 GB | Fast | Best distilled quality |
+
+#### Parakeet-TDT
+
+| Model | Quantization | Disk Size | Best for |
+|---|---|---|---|
+| **`0.6b-v2`** | **INT8** | **~500 MB** | **Fast English with auto-punctuation** |
 
 ## Platform Notes
 

@@ -1,5 +1,5 @@
 pub mod engine;
-#[cfg(feature = "onnx")]
+#[cfg(any(feature = "onnx", feature = "mlx"))]
 pub mod mel;
 #[cfg(feature = "mlx")]
 pub mod mlx_engine;

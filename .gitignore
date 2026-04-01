@@ -3,6 +3,34 @@
 # Experimental/vendored git repos
 _candle_cormel/
 _whisper_cpp/
+
+# Dependencies
 node_modules/
 
-*.DS_Store
+# macOS
+.DS_Store
+**/.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Rust
+**/*.rs.bk
+
+# ONNX models (large, downloaded at runtime)
+*.onnx
+*.onnx.data
+embed_tokens.bin
+
+# Environment
+.env
+.env.*

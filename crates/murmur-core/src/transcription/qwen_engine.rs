@@ -23,7 +23,7 @@ struct QwenModelConfig {
     #[allow(dead_code)]
     head_dim: usize,
     vocab_size: usize,
-    eos_token_id: u32,
+    eos_token_ids: Vec<u32>,
 }
 
 // ── Engine ───────────────────────────────────────────────────────────────
@@ -100,12 +100,21 @@ impl QwenEngine {
         let vocab_size = cj["vocab_size"].as_u64().unwrap_or(151936) as usize;
 
         // eos_token_id may be a scalar or an array in config.json.
-        let eos_token_id = match &cj["eos_token_id"] {
-            serde_json::Value::Array(arr) => {
-                arr.first().and_then(|v| v.as_u64()).unwrap_or(151643) as u32
-            }
-            v => v.as_u64().unwrap_or(151643) as u32,
+        // Both 151643 (<|endoftext|>) and 151645 (<|im_end|>) are EOS.
+        let eos_token_ids = match &cj["eos_token_id"] {
+            serde_json::Value::Array(arr) => arr
+                .iter()
+                .filter_map(|v| v.as_u64().map(|x| x as u32))
+                .collect(),
+            v => vec![v.as_u64().unwrap_or(151643) as u32],
         };
+        // Ensure both standard EOS tokens are included
+        let mut eos_set = eos_token_ids;
+        for &id in &[151643u32, 151645] {
+            if !eos_set.contains(&id) {
+                eos_set.push(id);
+            }
+        }
 
         let config = QwenModelConfig {
             hidden_size,
@@ -113,7 +122,7 @@ impl QwenEngine {
             num_key_value_heads,
             head_dim,
             vocab_size,
-            eos_token_id,
+            eos_token_ids: eos_set,
         };
 
         // -- Load ONNX sessions -----------------------------------------------
@@ -153,8 +162,9 @@ impl QwenEngine {
 
         log::info!(
             "QwenEngine loaded: hidden={hidden_size} layers={num_hidden_layers} \
-             kv_heads={num_key_value_heads} head_dim={head_dim} eos={eos_token_id} \
+             kv_heads={num_key_value_heads} head_dim={head_dim} eos={:?} \
              audio_offset={}",
+            config.eos_token_ids,
             prefix_tokens.len(),
         );
 
@@ -195,8 +205,8 @@ impl QwenEngine {
     /// Run encoder on raw 16 kHz mono f32 audio → features `[1, N, hidden]`.
     fn run_encoder(&self, samples: &[f32]) -> Result<ndarray::ArrayD<f32>> {
         let n_mels = 128usize;
-        let mel = compute_mel_spectrogram(samples, n_mels, 400, 160);
-        let n_frames = mel.len() / n_mels;
+        let mel = super::mel::whisper_mel(samples);
+        let n_frames = super::mel::mel_frame_count(samples.len());
 
         let mel_tensor = ndarray::Array3::from_shape_vec((1, n_mels, n_frames), mel)?;
         let mel_input = ort::value::Tensor::from_array(mel_tensor)?;
@@ -302,7 +312,7 @@ impl QwenEngine {
         let last_offset = logits_slice.len().saturating_sub(vocab_size);
         let mut next_token = argmax(&logits_slice[last_offset..]);
 
-        if next_token == self.config.eos_token_id {
+        if self.config.eos_token_ids.contains(&next_token) {
             return Ok(String::new());
         }
 
@@ -331,7 +341,7 @@ impl QwenEngine {
             next_token = argmax(&sl[off..]);
             current_pos += 1;
 
-            if next_token == self.config.eos_token_id {
+            if self.config.eos_token_ids.contains(&next_token) {
                 break;
             }
             generated_ids.push(next_token);
@@ -341,6 +351,9 @@ impl QwenEngine {
             .tokenizer
             .decode(&generated_ids, true)
             .map_err(|e| anyhow::anyhow!("Tokenizer decode failed: {e}"))?;
+
+        // Strip the "language ...<asr_text>" prefix that the model emits
+        let text = strip_asr_prefix(&text);
 
         Ok(text.trim().to_string())
     }
@@ -417,43 +430,73 @@ fn lookup_embedding(embed_tokens: &[f32], token_id: u32, hidden_size: usize) -> 
     }
 }
 
+/// Strip the `language ...<asr_text>` prefix that Qwen3-ASR emits.
+///
+/// The model's output typically starts with: `language English<asr_text>actual text here`
+/// We want just the actual transcription text.
+fn strip_asr_prefix(text: &str) -> String {
+    // Look for <asr_text> marker and take everything after it
+    if let Some(pos) = text.find("<asr_text>") {
+        return text[pos + "<asr_text>".len()..].to_string();
+    }
+    // Also handle the token form without angle brackets
+    if let Some(pos) = text.find("asr_text>") {
+        return text[pos + "asr_text>".len()..].to_string();
+    }
+    text.to_string()
+}
+
 /// Build the prompt prefix (before `<|audio_pad|>`), suffix (after), and
 /// the pad token ID from the tokenizer's vocabulary.
 ///
 /// Prompt layout:
 /// ```text
-/// <|startoftext|> system_prompt <|audio_bos|>   ← prefix
-/// <|audio_pad|> × N                             ← repeated per encoder output
-/// <|audio_eos|> <|transcribe|>                  ← suffix
+/// Build the Qwen3-ASR chat-template prompt tokens.
+///
+/// The exact prompt structure (from `src/prompt.py` in qwen3-asr-onnx):
+/// ```text
+/// <|im_start|>system\n<|im_end|>\n
+/// <|im_start|>user\n<|audio_start|><|audio_pad|>...<|audio_end|><|im_end|>\n
+/// <|im_start|>assistant\n
 /// ```
-fn build_prompt_template(tokenizer: &tokenizers::Tokenizer) -> (Vec<u32>, Vec<u32>, u32) {
-    let startoftext = tokenizer
-        .token_to_id("<|startoftext|>")
-        .or_else(|| tokenizer.token_to_id("<|im_start|>"))
-        .unwrap_or(151644);
-    let audio_bos = tokenizer.token_to_id("<|audio_bos|>").unwrap_or(151646);
-    let audio_pad = tokenizer
-        .token_to_id("<|AUDIO_PAD|>")
-        .or_else(|| tokenizer.token_to_id("<|audio_pad|>"))
-        .unwrap_or(151647);
-    let audio_eos = tokenizer.token_to_id("<|audio_eos|>").unwrap_or(151648);
-    let transcribe = tokenizer.token_to_id("<|transcribe|>").unwrap_or(151649);
+///
+/// Returns `(prefix, suffix, audio_pad_id)` where audio_pad tokens go between
+/// prefix and suffix.
+fn build_prompt_template(_tokenizer: &tokenizers::Tokenizer) -> (Vec<u32>, Vec<u32>, u32) {
+    // Hardcoded token IDs matching qwen3-asr-onnx/src/prompt.py.
+    // These are identical across all Qwen3-ASR model sizes.
+    const IM_START: u32 = 151644;
+    const IM_END: u32 = 151645;
+    const AUDIO_START: u32 = 151669;
+    const AUDIO_END: u32 = 151670;
+    const AUDIO_PAD: u32 = 151676;
+    const NEWLINE: u32 = 198;
+    const SYSTEM: u32 = 9125; // "system"
+    const USER: u32 = 882; // "user"
+    const ASSISTANT: u32 = 77091; // "assistant"
 
-    // Encode the system-prompt text sitting between <|startoftext|> and
-    // <|audio_bos|> in the standard ASR template.
-    let system_ids: Vec<u32> = tokenizer
-        .encode("system\nYou are a helpful assistant.", false)
-        .map(|enc| enc.get_ids().to_vec())
-        .unwrap_or_default();
+    // Prefix: everything before <|audio_pad|> tokens
+    let prefix = vec![
+        // System turn (empty)
+        IM_START,
+        SYSTEM,
+        NEWLINE,
+        IM_END,
+        NEWLINE,
+        // User turn start + audio_start
+        IM_START,
+        USER,
+        NEWLINE,
+        AUDIO_START,
+    ];
 
-    let mut prefix = Vec::with_capacity(1 + system_ids.len() + 1);
-    prefix.push(startoftext);
-    prefix.extend_from_slice(&system_ids);
-    prefix.push(audio_bos);
+    // Suffix: everything after <|audio_pad|> tokens
+    let suffix = vec![
+        AUDIO_END, IM_END, NEWLINE, // Assistant turn
+        IM_START, ASSISTANT, NEWLINE,
+    ];
 
-    let suffix = vec![audio_eos, transcribe];
-
-    (prefix, suffix, audio_pad)
+    (prefix, suffix, AUDIO_PAD)
 }
 
 /// Number of threads for ONNX inference.
@@ -474,47 +517,4 @@ fn load_fp16_to_f32(bytes: &[u8]) -> Vec<f32> {
             f16::from_bits(bits).to_f32()
         })
         .collect()
-}
-
-/// Compute mel spectrogram from raw audio samples.
-///
-/// Simplified placeholder: 16 kHz, 128 bins, 25 ms window (n_fft=400),
-/// 10 ms hop (hop_length=160). Will be replaced with a proper
-/// Whisper-style FFT + mel-filterbank implementation later.
-fn compute_mel_spectrogram(
-    samples: &[f32],
-    n_mels: usize,
-    n_fft: usize,
-    hop_length: usize,
-) -> Vec<f32> {
-    if samples.is_empty() || samples.len() < n_fft {
-        return vec![0.0; n_mels];
-    }
-
-    let n_frames = (samples.len().saturating_sub(n_fft)) / hop_length + 1;
-    if n_frames == 0 {
-        return vec![0.0; n_mels];
-    }
-
-    let mut mel = vec![0.0f32; n_mels * n_frames];
-
-    for frame_idx in 0..n_frames {
-        let start = frame_idx * hop_length;
-        let end = (start + n_fft).min(samples.len());
-        let frame = &samples[start..end];
-
-        if frame.is_empty() {
-            continue;
-        }
-
-        let energy: f32 = frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32;
-        let log_energy = (energy.max(1e-10)).ln();
-
-        for mel_bin in 0..n_mels {
-            let bin_weight = ((mel_bin as f32 + 1.0) / n_mels as f32).sqrt();
-            mel[mel_bin * n_frames + frame_idx] = log_energy * bin_weight;
-        }
-    }
-
-    mel
 }

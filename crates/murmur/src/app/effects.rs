@@ -140,6 +140,7 @@ pub(crate) fn tray_state_after_hotkey_capture(has_transcriber: bool) -> TrayStat
 }
 
 /// Whether the streaming pipeline has everything it needs to start.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StreamingReadiness {
     NoTranscriber,
@@ -148,6 +149,7 @@ pub(crate) enum StreamingReadiness {
 }
 
 /// Check whether the streaming pipeline can be started.
+#[cfg(test)]
 pub(crate) fn check_streaming_readiness(
     has_transcriber: bool,
     has_worker: bool,
@@ -515,16 +517,9 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
 }
 
 fn start_streaming(ctx: &mut EffectContext<'_>) {
-    match check_streaming_readiness(ctx.engine.is_some(), ctx.streaming_worker.is_some()) {
-        StreamingReadiness::NoTranscriber => {
-            info!("Model not loaded yet — cannot start streaming");
-            return;
-        }
-        StreamingReadiness::NoWorker => {
-            log::error!("No whisper worker available — cannot start streaming");
-            return;
-        }
-        StreamingReadiness::Ready => {}
+    if ctx.engine.is_none() {
+        info!("Model not loaded yet — cannot start streaming");
+        return;
     }
 
     let engine = ctx.engine.as_ref().map(Arc::clone).unwrap();
@@ -532,15 +527,14 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
     let sample_buffer = ctx.recorder.sample_buffer();
     let tx_app = ctx.tx.clone();
     let translate = ctx.state.translate_to_english;
-    let filler_removal = ctx.state.filler_word_removal;
+    let is_whisper = matches!(
+        ctx.config.asr_backend,
+        murmur_core::config::AsrBackend::Whisper
+    );
 
     let (streaming_tx, streaming_rx) = mpsc::channel::<streaming::StreamingEvent>();
 
-    // Forward streaming events to app messages, coalescing any stale
-    // events that queued up while the app was busy.  We keep the
-    // `replace_chars` from the first (oldest) event in the batch —
-    // it reflects what is actually on screen — and the `text` from
-    // the last (newest) event.
+    // Forward streaming events to app messages, coalescing stale events.
     std::thread::spawn(move || {
         while let Ok(event) = streaming_rx.recv() {
             match event {
@@ -551,11 +545,17 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
                     mut text,
                     replace_chars,
                 } => {
-                    // Drain any newer events that arrived while we blocked.
+                    let mut final_replace = replace_chars;
                     while let Ok(newer) = streaming_rx.try_recv() {
                         match newer {
-                            streaming::StreamingEvent::PartialText { text: t, .. } => {
+                            streaming::StreamingEvent::PartialText {
+                                text: t,
+                                replace_chars: r,
+                            } => {
                                 text = t;
+                                // For native streaming, each event replaces
+                                // all previous text, so use the latest replace_chars.
+                                final_replace = r;
                             }
                             streaming::StreamingEvent::SpeechDetected => {
                                 let _ = tx_app.send(AppMessage::SpeechActivity);
@@ -565,23 +565,30 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
 
                     let _ = tx_app.send(AppMessage::StreamingPartialText {
                         text,
-                        replace_chars,
+                        replace_chars: final_replace,
                     });
                 }
             }
         }
     });
 
-    let worker = ctx.streaming_worker.take().unwrap();
+    let handle = if is_whisper {
+        // Whisper: chunked overlap + word stitching via subprocess worker
+        let worker = ctx.streaming_worker.take();
+        let filler_removal = ctx.state.filler_word_removal;
+        streaming::start_streaming(
+            sample_buffer,
+            engine,
+            translate,
+            filler_removal,
+            streaming_tx,
+            worker,
+        )
+    } else {
+        // ONNX backends: native full-utterance streaming
+        streaming::start_native_streaming(sample_buffer, engine, translate, streaming_tx)
+    };
 
-    let handle = streaming::start_streaming(
-        sample_buffer,
-        engine,
-        translate,
-        filler_removal,
-        streaming_tx,
-        worker,
-    );
     *ctx.streaming_stop = Some(handle);
 }
 

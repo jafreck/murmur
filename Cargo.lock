@@ -3592,6 +3592,7 @@ dependencies = [
  "ndarray",
  "nnnoiseless",
  "ort",
+ "realfft",
  "regex",
  "reqwest",
  "serde",

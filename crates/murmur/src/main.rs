@@ -436,22 +436,25 @@ mod tests {
 
     #[test]
     fn test_cmd_set_model_valid() {
-        let mut original = config::Config::load();
-        original.asr_backend = AsrBackend::Whisper;
+        let original = config::Config::load();
+        // Ensure Whisper backend so "base.en" is valid
+        let mut tmp = original.clone();
+        tmp.asr_backend = AsrBackend::Whisper;
+        tmp.save().unwrap();
+        let result = cmd_set_model("base.en");
         let _ = original.save();
-        assert!(cmd_set_model("base.en").is_ok());
-        let _ = original.save();
+        assert!(result.is_ok());
     }
 
     #[test]
     fn test_cmd_set_model_prints_download_hint() {
-        // Use a model that almost certainly doesn't exist locally
-        let mut original = config::Config::load();
-        original.asr_backend = AsrBackend::Whisper;
+        let original = config::Config::load();
+        let mut tmp = original.clone();
+        tmp.asr_backend = AsrBackend::Whisper;
+        tmp.save().unwrap();
+        let result = cmd_set_model("tiny");
         let _ = original.save();
-        // "tiny" is a valid model but likely not downloaded
-        assert!(cmd_set_model("tiny").is_ok());
-        let _ = original.save();
+        assert!(result.is_ok());
     }
 
     #[test]

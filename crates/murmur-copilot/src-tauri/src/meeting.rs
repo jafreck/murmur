@@ -167,7 +167,7 @@ impl MeetingSession {
             self.config.translate_to_english,
             self.config.filler_word_removal,
             mic_tx,
-            mic_worker,
+            Some(mic_worker),
         );
         self.mic_streaming = Some(mic_handle);
 
@@ -187,7 +187,7 @@ impl MeetingSession {
                                 self.config.translate_to_english,
                                 self.config.filler_word_removal,
                                 sys_tx,
-                                sys_worker,
+                                Some(sys_worker),
                             );
                             self.sys_streaming = Some(sys_handle);
                             Some(sys_rx)

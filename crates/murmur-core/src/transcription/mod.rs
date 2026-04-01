@@ -1,4 +1,6 @@
 pub mod engine;
+#[cfg(feature = "onnx")]
+pub mod mel;
 pub mod model;
 #[cfg(feature = "onnx")]
 pub mod parakeet_engine;
@@ -21,7 +23,7 @@ pub use parakeet_engine::ParakeetEngine;
 pub use postprocess::process;
 #[cfg(feature = "onnx")]
 pub use qwen_engine::QwenEngine;
-pub use streaming::{start_streaming, StreamingEvent};
+pub use streaming::{start_native_streaming, start_streaming, StreamingEvent};
 pub use subprocess::SubprocessTranscriber;
 pub use transcriber::{
     build_initial_prompt, filter_novel_terms, find_model, model_exists, rank_vocabulary,

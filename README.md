@@ -8,6 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#platform-notes)
+[![Docs](https://img.shields.io/badge/docs-jafreck.github.io%2Fmurmur-7c6aef.svg)](https://jafreck.github.io/murmur/)
 
 No cloud, no API keys, no data collection.
 State-of-the-art speech recognition running entirely on your hardware.

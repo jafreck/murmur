@@ -149,10 +149,13 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: &Config) -> Self {
+        // Native-streaming backends (Qwen3-ASR, MLX, Parakeet) always stream;
+        // Whisper uses the explicit config toggle.
+        let streaming = config.streaming || config.asr_backend.supports_native_streaming();
         Self {
             is_pressed: false,
             mode: config.mode.clone(),
-            streaming: config.streaming,
+            streaming,
             spoken_punctuation: config.spoken_punctuation,
             filler_word_removal: config.filler_word_removal,
             translate_to_english: config.translate_to_english,

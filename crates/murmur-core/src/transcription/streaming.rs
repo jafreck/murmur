@@ -105,7 +105,8 @@ pub fn start_streaming(
     }
 }
 
-/// Start native streaming transcription for engines that support it (e.g. Qwen3-ASR).
+/// Start native streaming transcription for engines that support it
+/// (Qwen3-ASR, MLX, Parakeet).
 ///
 /// Unlike [`start_streaming`], this does **not** use chunked overlap or word
 /// stitching. Instead it periodically reads all accumulated audio and asks
@@ -115,6 +116,8 @@ pub fn start_native_streaming(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
     engine: Arc<dyn AsrEngine + Send + Sync>,
     translate: bool,
+    filler_word_removal: bool,
+    spoken_punctuation: bool,
     tx: mpsc::Sender<StreamingEvent>,
 ) -> StreamingHandle {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
@@ -126,6 +129,8 @@ pub fn start_native_streaming(
             sample_buffer,
             engine,
             translate,
+            filler_word_removal,
+            spoken_punctuation,
             tx,
             stop_rx,
             abort_flag_clone,
@@ -140,10 +145,13 @@ pub fn start_native_streaming(
 }
 
 /// Native streaming loop: transcribe accumulated audio on each tick.
+#[allow(clippy::too_many_arguments)]
 fn native_streaming_loop(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
     engine: Arc<dyn AsrEngine + Send + Sync>,
     translate: bool,
+    filler_word_removal: bool,
+    spoken_punctuation: bool,
     tx: mpsc::Sender<StreamingEvent>,
     stop_rx: mpsc::Receiver<()>,
     abort_flag: Arc<AtomicBool>,
@@ -198,12 +206,17 @@ fn native_streaming_loop(
                 if abort_flag.load(Ordering::Relaxed) {
                     break;
                 }
-                if !result.text.is_empty() && result.text != prev_text {
-                    // Compute the common prefix to avoid deleting and retyping
-                    // text that hasn't changed.
-                    if result.text.starts_with(&prev_text) {
-                        // New text extends the previous — just append the suffix
-                        let new_suffix = &result.text[prev_text.len()..];
+
+                // Apply postprocessing consistently with the batch path.
+                let text = if result.pre_formatted {
+                    result.text
+                } else {
+                    postprocess_text(&result.text, filler_word_removal, spoken_punctuation)
+                };
+
+                if !text.is_empty() && text != prev_text {
+                    if text.starts_with(&prev_text) {
+                        let new_suffix = &text[prev_text.len()..];
                         if !new_suffix.is_empty() {
                             let _ = tx.send(StreamingEvent::PartialText {
                                 text: new_suffix.to_string(),
@@ -211,14 +224,13 @@ fn native_streaming_loop(
                             });
                         }
                     } else {
-                        // Text changed (model revised earlier words) — replace all
                         let replace_chars = prev_text.chars().count();
                         let _ = tx.send(StreamingEvent::PartialText {
-                            text: result.text.clone(),
+                            text: text.clone(),
                             replace_chars,
                         });
                     }
-                    prev_text = result.text;
+                    prev_text = text;
                 }
             }
             Err(e) => {
@@ -228,6 +240,20 @@ fn native_streaming_loop(
 
         prev_len = current_len;
     }
+}
+
+// ── Internal (shared postprocessing) ───────────────────────────────────
+
+/// Apply postprocessing consistent with the batch transcription path.
+fn postprocess_text(raw: &str, filler_word_removal: bool, spoken_punctuation: bool) -> String {
+    let mut text = raw.to_string();
+    if filler_word_removal {
+        text = super::postprocess::remove_filler_words(&text);
+    }
+    if spoken_punctuation {
+        text = super::postprocess::process(&text);
+    }
+    super::postprocess::ensure_space_after_punctuation(&text)
 }
 
 // ── Internal (chunked Whisper streaming) ───────────────────────────────

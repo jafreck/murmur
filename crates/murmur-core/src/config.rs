@@ -94,6 +94,15 @@ impl std::fmt::Display for AsrBackend {
     }
 }
 
+impl AsrBackend {
+    /// Whether this backend supports native streaming (re-transcribe the
+    /// full accumulated buffer each tick). Backends that return `true` do
+    /// not need the Whisper subprocess worker or chunked overlap stitching.
+    pub fn supports_native_streaming(self) -> bool {
+        !matches!(self, AsrBackend::Whisper)
+    }
+}
+
 /// ONNX model quantization level.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

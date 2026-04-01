@@ -73,12 +73,16 @@ pub(crate) enum TranscribeDecision {
 /// Decide how to handle a stop-and-transcribe request.
 ///
 /// `max_recordings == 0` means in-memory mode where the streaming-skip
-/// optimisation applies.
+/// optimisation applies — but only for Whisper's chunked streaming.
+/// Native-streaming backends (Qwen3-ASR, MLX, Parakeet) always do a final
+/// batch pass because streaming was just a live preview and may have
+/// missed tail audio.
 pub(crate) fn decide_transcription(
     has_transcriber: bool,
     max_recordings: u32,
     streaming_was_active: bool,
     has_audio: bool,
+    native_streaming: bool,
 ) -> TranscribeDecision {
     if !has_transcriber {
         return TranscribeDecision::NoTranscriber;
@@ -86,7 +90,10 @@ pub(crate) fn decide_transcription(
     if !has_audio {
         return TranscribeDecision::NoAudio;
     }
-    if max_recordings == 0 && streaming_was_active {
+    // Only skip batch for Whisper-style chunked streaming, where the
+    // chunks + stitching already cover the full audio. Native streaming
+    // backends always get a final re-transcription of the complete audio.
+    if max_recordings == 0 && streaming_was_active && !native_streaming {
         return TranscribeDecision::SkipBatchStreamingDone;
     }
     TranscribeDecision::Transcribe
@@ -401,10 +408,17 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
 
     let has_engine = ctx.engine.is_some();
     let max_recordings = ctx.state.max_recordings;
+    let native_streaming = ctx.config.asr_backend.supports_native_streaming();
 
     // No-engine path: clean up both recorder modes and bail early.
     if matches!(
-        decide_transcription(has_engine, max_recordings, streaming_was_active, true),
+        decide_transcription(
+            has_engine,
+            max_recordings,
+            streaming_was_active,
+            true,
+            native_streaming
+        ),
         TranscribeDecision::NoTranscriber
     ) {
         info!("Model not loaded yet — ignoring transcription request");
@@ -427,7 +441,7 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
         let samples = ctx.recorder.stop_samples();
         let has_audio = samples.is_some();
 
-        match decide_transcription(true, 0, streaming_was_active, has_audio) {
+        match decide_transcription(true, 0, streaming_was_active, has_audio, native_streaming) {
             TranscribeDecision::NoAudio => {
                 info!("StopAndTranscribe called but no audio captured");
                 let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
@@ -471,7 +485,13 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
         let audio_path = ctx.recorder.stop();
         let has_audio = audio_path.is_some();
 
-        match decide_transcription(true, max_recordings, streaming_was_active, has_audio) {
+        match decide_transcription(
+            true,
+            max_recordings,
+            streaming_was_active,
+            has_audio,
+            native_streaming,
+        ) {
             TranscribeDecision::NoAudio => {
                 info!("StopAndTranscribe called but no active recording");
                 let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
@@ -585,8 +605,17 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
             worker,
         )
     } else {
-        // ONNX backends: native full-utterance streaming
-        streaming::start_native_streaming(sample_buffer, engine, translate, streaming_tx)
+        // Native streaming: re-transcribe the full accumulated buffer each tick.
+        let filler_removal = ctx.state.filler_word_removal;
+        let spoken_punctuation = ctx.state.spoken_punctuation;
+        streaming::start_native_streaming(
+            sample_buffer,
+            engine,
+            translate,
+            filler_removal,
+            spoken_punctuation,
+            streaming_tx,
+        )
     };
 
     *ctx.streaming_stop = Some(handle);
@@ -981,11 +1010,11 @@ mod tests {
     #[test]
     fn decide_no_transcriber() {
         assert_eq!(
-            decide_transcription(false, 0, false, false),
+            decide_transcription(false, 0, false, false, false),
             TranscribeDecision::NoTranscriber
         );
         assert_eq!(
-            decide_transcription(false, 10, true, true),
+            decide_transcription(false, 10, true, true, false),
             TranscribeDecision::NoTranscriber
         );
     }
@@ -993,7 +1022,7 @@ mod tests {
     #[test]
     fn decide_no_audio_in_memory() {
         assert_eq!(
-            decide_transcription(true, 0, false, false),
+            decide_transcription(true, 0, false, false, false),
             TranscribeDecision::NoAudio
         );
     }
@@ -1001,16 +1030,26 @@ mod tests {
     #[test]
     fn decide_no_audio_file_mode() {
         assert_eq!(
-            decide_transcription(true, 10, false, false),
+            decide_transcription(true, 10, false, false, false),
             TranscribeDecision::NoAudio
         );
     }
 
     #[test]
-    fn decide_streaming_skip_in_memory() {
+    fn decide_streaming_skip_in_memory_whisper() {
+        // Whisper chunked streaming: skip batch (chunks already cover full audio)
         assert_eq!(
-            decide_transcription(true, 0, true, true),
+            decide_transcription(true, 0, true, true, false),
             TranscribeDecision::SkipBatchStreamingDone
+        );
+    }
+
+    #[test]
+    fn decide_native_streaming_always_batch() {
+        // Native streaming: always do final batch (streaming was just a preview)
+        assert_eq!(
+            decide_transcription(true, 0, true, true, true),
+            TranscribeDecision::Transcribe
         );
     }
 
@@ -1018,7 +1057,7 @@ mod tests {
     fn decide_streaming_not_skipped_in_file_mode() {
         // In file mode (max_recordings > 0), streaming skip doesn't apply
         assert_eq!(
-            decide_transcription(true, 10, true, true),
+            decide_transcription(true, 10, true, true, false),
             TranscribeDecision::Transcribe
         );
     }
@@ -1026,7 +1065,7 @@ mod tests {
     #[test]
     fn decide_transcribe_in_memory() {
         assert_eq!(
-            decide_transcription(true, 0, false, true),
+            decide_transcription(true, 0, false, true, false),
             TranscribeDecision::Transcribe
         );
     }
@@ -1034,7 +1073,7 @@ mod tests {
     #[test]
     fn decide_transcribe_file_mode() {
         assert_eq!(
-            decide_transcription(true, 10, false, true),
+            decide_transcription(true, 10, false, true, false),
             TranscribeDecision::Transcribe
         );
     }
@@ -1045,7 +1084,7 @@ mod tests {
         for &streaming in &[true, false] {
             for &has_audio in &[true, false] {
                 assert_eq!(
-                    decide_transcription(false, 0, streaming, has_audio),
+                    decide_transcription(false, 0, streaming, has_audio, false),
                     TranscribeDecision::NoTranscriber
                 );
             }
@@ -1056,7 +1095,7 @@ mod tests {
     fn decide_no_audio_overrides_streaming() {
         // Even if streaming was active, no audio means nothing to do
         assert_eq!(
-            decide_transcription(true, 0, true, false),
+            decide_transcription(true, 0, true, false, false),
             TranscribeDecision::NoAudio
         );
     }

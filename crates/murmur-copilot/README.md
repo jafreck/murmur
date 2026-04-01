@@ -1,6 +1,9 @@
 # murmur-copilot
 
-A real-time meeting copilot built on top of [murmur](../../README.md). It provides a transparent overlay that live-transcribes meetings, generates AI-powered suggestions, and saves session history — all 100% on-device.
+> [!WARNING]
+> murmur-copilot is in preview and under active development. APIs and features may change.
+
+A local meeting assistant built on top of [murmur](../../README.md). It provides a transparent overlay that live-transcribes meetings, generates AI-powered suggestions, and saves session history — all 100% on-device.
 
 ## Features
 
@@ -9,7 +12,6 @@ A real-time meeting copilot built on top of [murmur](../../README.md). It provid
 - **LLM-powered suggestions** — contextual talking points and responses via a local Ollama model
 - **Meeting summaries** — auto-generate summaries and action items when a meeting ends
 - **Session history** — browse, review, and export past meetings as Markdown
-- **Stealth mode** — hide the overlay from screen capture, screen sharing, and screenshots (macOS)
 - **Speaker labelling** — transcript entries are tagged as "You" or "Remote"
 
 ## Prerequisites
@@ -67,7 +69,6 @@ murmur-copilot shares configuration with murmur via `~/.config/murmur/config.jso
 ```json
 {
   "system_audio_device": "BlackHole 2ch",
-  "stealth_mode": false,
   "llm_model": "phi3",
   "ollama_url": "http://localhost:11434",
   "sessions_dir": null,
@@ -78,7 +79,6 @@ murmur-copilot shares configuration with murmur via `~/.config/murmur/config.jso
 | Field | Default | Description |
 |---|---|---|
 | `system_audio_device` | `null` | Name of the virtual audio input device for remote audio |
-| `stealth_mode` | `false` | Hide overlay from screen capture on launch |
 | `llm_model` | `"phi3"` | Ollama model name for suggestions and summaries |
 | `ollama_url` | `"http://localhost:11434"` | Ollama API base URL |
 | `sessions_dir` | `null` | Custom directory for saved sessions (default: `~/.config/murmur-copilot/sessions/`) |
@@ -91,7 +91,6 @@ murmur-copilot shares configuration with murmur via `~/.config/murmur/config.jso
 3. **Get suggestions** — click "Get Suggestion" for AI-powered talking points
 4. **Stop the meeting** — click "Stop Meeting" to end; a summary is auto-generated if Ollama is running
 5. **Browse history** — click "📋 History" to view past meetings, export transcripts, or delete sessions
-6. **Stealth mode** — click "👁 Stealth" to hide the overlay from screen sharing (macOS only)
 
 ## Architecture
 
@@ -109,12 +108,12 @@ murmur-copilot
         ├── meeting.rs   # Meeting session + audio pipeline
         ├── session.rs   # Persistent session storage
         ├── llm.rs       # Ollama LLM integration
-        └── overlay.rs   # Window management + stealth mode
+        └── overlay.rs   # Window management
 ```
 
 ### Crate dependencies
 
-- **murmur-core** — audio capture, Whisper transcription, streaming, config, LLM abstractions
+- **murmur-core** — audio capture, ASR transcription, streaming, config, LLM abstractions
 - **tauri** — desktop app framework (window management, IPC, system tray)
 
 ## Platform support
@@ -123,7 +122,6 @@ murmur-copilot
 |---|---|---|---|
 | Microphone capture | ✅ | ✅ | ✅ |
 | System audio capture | ✅ (BlackHole) | ⬚ Stub | ⬚ Stub |
-| Stealth mode | ✅ | ⬚ Stub | ⬚ Stub |
 | LLM suggestions | ✅ | ✅ | ✅ |
 | Session history | ✅ | ✅ | ✅ |
 

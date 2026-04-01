@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>murmur — Local Voice Dictation</title>
-  <meta name="description" content="Voice dictation that never leaves your machine. murmur runs 100% on-device — no cloud, no accounts, no spying. Open-source, cross-platform, powered by whisper.cpp.">
+  <meta name="description" content="Voice dictation that never leaves your machine. murmur runs 100% on-device — no cloud, no accounts, no spying. Open-source, cross-platform, multi-engine ASR.">
   <meta property="og:title" content="murmur — Local Voice Dictation">
-  <meta property="og:description" content="Voice dictation that never leaves your machine. 100% on-device, no cloud, no accounts, no spying.">
+  <meta property="og:description" content="Voice dictation that never leaves your machine. 100% on-device, no cloud, no accounts, no spying. Multi-engine ASR with native streaming.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://jafreck.github.io/murmur/">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
@@ -421,12 +421,12 @@
     <div class="feature-card">
       <div class="icon">🔒</div>
       <h3>Completely Private</h3>
-      <p>Audio is recorded to a temp file, transcribed locally by whisper.cpp, then deleted. Zero network requests. Your voice never leaves your machine.</p>
+      <p>Audio is transcribed on-device and discarded immediately. Zero network requests. Your voice data never leaves your machine.</p>
     </div>
     <div class="feature-card">
       <div class="icon">⚡</div>
       <h3>Fast Transcription</h3>
-      <p>Optimized whisper.cpp engine with Metal, CUDA, and Vulkan GPU acceleration. Transcription completes in under a second for most phrases.</p>
+      <p>Optimized inference with Metal, CUDA, and Vulkan GPU acceleration. INT4/INT8 quantized models for faster speed with minimal accuracy loss.</p>
     </div>
     <div class="feature-card">
       <div class="icon">🖥️</div>
@@ -446,7 +446,7 @@
     <div class="feature-card">
       <div class="icon">🌍</div>
       <h3>Multilingual</h3>
-      <p>English-optimized models for speed, or large-v3-turbo for 90+ languages. Switch models with a single command.</p>
+      <p>Multiple ASR engines to choose from — up to 90+ languages with Whisper, highest accuracy with Qwen3-ASR, or fast formatted English with Parakeet.</p>
     </div>
     <div class="feature-card">
       <div class="icon">🧠</div>
@@ -458,30 +458,50 @@
 
 <!-- MODELS -->
 <section id="models">
-  <h2>Choose Your Model</h2>
-  <p class="section-sub">murmur uses <a href="https://github.com/openai/whisper">OpenAI Whisper</a> models running locally via <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a>. Models are downloaded in GGML format on first run. Pick the size that fits your needs.</p>
+  <h2>Choose Your Engine</h2>
+  <p class="section-sub">murmur supports multiple ASR backends — all running locally on your machine. Models are downloaded from HuggingFace on first run.</p>
+
+  <h3 style="color: var(--accent); margin-bottom: 0.5rem; font-size: 1.1rem;">Qwen3-ASR <span class="badge-rec">Recommended</span></h3>
   <table class="models-table">
     <thead>
-      <tr><th>Model</th><th>Size</th><th>Speed</th><th>Accuracy</th><th>Best For</th></tr>
+      <tr><th>Model</th><th>Size</th><th>WER</th><th>Streaming</th><th>Best For</th></tr>
+    </thead>
+    <tbody>
+      <tr class="recommended">
+        <td><code>0.6b</code> (INT4)</td><td>~2 GB</td><td>5.16%</td><td>✅ Native</td><td>Fast, accurate (default)</td>
+      </tr>
+      <tr>
+        <td><code>1.7b</code> (INT4)</td><td>~4 GB</td><td>4.20%</td><td>✅ Native</td><td>Lowest error rate</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="color: var(--text-dim); margin-top: 2rem; margin-bottom: 0.5rem; font-size: 1.1rem;">Whisper</h3>
+  <table class="models-table">
+    <thead>
+      <tr><th>Model</th><th>Size</th><th>Speed</th><th>Best For</th></tr>
     </thead>
     <tbody>
       <tr>
-        <td><code>tiny.en</code></td><td>75 MB</td><td>Fastest</td><td>Lower</td><td>Quick notes</td>
-      </tr>
-      <tr class="recommended">
-        <td><code>base.en</code><span class="badge-rec">Default</span></td><td>142 MB</td><td>Fast</td><td>Good</td><td>Most users</td>
+        <td><code>tiny.en</code></td><td>75 MB</td><td>Fastest</td><td>Quick notes</td>
       </tr>
       <tr>
-        <td><code>small.en</code></td><td>466 MB</td><td>Moderate</td><td>Better</td><td>Technical terms</td>
+        <td><code>base.en</code></td><td>142 MB</td><td>Fast</td><td>Lightweight English</td>
       </tr>
       <tr>
-        <td><code>medium.en</code></td><td>1.5 GB</td><td>Slower</td><td>Great</td><td>Maximum accuracy</td>
+        <td><code>large-v3-turbo</code></td><td>1.6 GB</td><td>Moderate</td><td>90+ languages</td>
       </tr>
+    </tbody>
+  </table>
+
+  <h3 style="color: var(--text-dim); margin-top: 2rem; margin-bottom: 0.5rem; font-size: 1.1rem;">Parakeet-TDT</h3>
+  <table class="models-table">
+    <thead>
+      <tr><th>Model</th><th>Size</th><th>Speed</th><th>Best For</th></tr>
+    </thead>
+    <tbody>
       <tr>
-        <td><code>large-v3-turbo</code></td><td>1.6 GB</td><td>Moderate</td><td>Great</td><td>Multilingual</td>
-      </tr>
-      <tr>
-        <td><code>large</code></td><td>3 GB</td><td>Slowest</td><td>Best</td><td>Highest accuracy</td>
+        <td><code>0.6b-v2</code> (INT8)</td><td>~500 MB</td><td>Fast</td><td>English with auto-punctuation</td>
       </tr>
     </tbody>
   </table>
@@ -539,9 +559,10 @@ murmur start
 <span class="comment"># Clone and build</span>
 git clone https://github.com/jafreck/murmur.git
 cd murmur
-cargo build --release
+cargo build --release --features metal       <span class="comment"># Whisper only</span>
+cargo build --release --features metal,onnx  <span class="comment"># + Qwen3-ASR &amp; Parakeet</span>
 
-<span class="comment"># With GPU acceleration</span>
+<span class="comment"># GPU acceleration</span>
 cargo build --release --features metal  <span class="comment"># macOS Apple Silicon</span>
 cargo build --release --features cuda   <span class="comment"># NVIDIA</span>
 cargo build --release --features vulkan <span class="comment"># Cross-vendor</span>
@@ -562,7 +583,7 @@ murmur start
     <a href="https://github.com/jafreck/murmur/issues">Issues</a>
     <a href="https://github.com/jafreck/murmur/blob/main/LICENSE">MIT License</a>
   </div>
-  <p>Built by <a href="https://github.com/jafreck">Jacob Freck</a> · Powered by <a href="https://github.com/ggml-org/whisper.cpp">whisper.cpp</a></p>
+  <p>Built by <a href="https://github.com/jafreck">Jacob Freck</a></p>
 </footer>
 
 <script>

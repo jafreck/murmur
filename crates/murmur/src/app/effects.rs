@@ -767,6 +767,19 @@ pub(super) fn create_engine_on_thread(
                  Rebuild with: cargo build --features onnx"
             );
         }
+        #[cfg(feature = "mlx")]
+        AsrBackend::Mlx => {
+            let model_dir = murmur_core::transcription::qwen3_asr_model_dir(model_size);
+            let engine = murmur_core::transcription::MlxEngine::new(&model_dir)?;
+            Ok(Box::new(engine))
+        }
+        #[cfg(not(feature = "mlx"))]
+        AsrBackend::Mlx => {
+            anyhow::bail!(
+                "MLX backend requires the 'mlx' feature. \
+                 Rebuild with: cargo build --features mlx"
+            );
+        }
     }
 }
 

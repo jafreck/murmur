@@ -26,6 +26,7 @@ ndarray = { version = "0.16", optional = true, default-features = false, feature
 tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
 half = { version = "2", optional = true }
 realfft = { version = "3", optional = true }
+mlx-rs = { version = "0.25", optional = true }
 
 [[bin]]
 name = "murmur-whisper-worker"
@@ -34,6 +35,7 @@ path = "src/bin/whisper_worker.rs"
 [features]
 default = []
 onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:half", "dep:realfft"]
+mlx = ["dep:mlx-rs", "dep:tokenizers", "dep:half", "dep:realfft"]
 cuda = ["whisper-rs/cuda"]
 metal = ["whisper-rs/metal"]
 vulkan = ["whisper-rs/vulkan"]

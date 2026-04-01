@@ -41,6 +41,7 @@ libappindicator = "0.9"
 [features]
 default = []
 onnx = ["murmur-core/onnx"]
+mlx = ["murmur-core/mlx"]
 cuda = ["murmur-core/cuda"]
 metal = ["murmur-core/metal"]
 vulkan = ["murmur-core/vulkan"]

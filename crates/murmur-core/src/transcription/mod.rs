@@ -1,6 +1,8 @@
 pub mod engine;
 #[cfg(feature = "onnx")]
 pub mod mel;
+#[cfg(feature = "mlx")]
+pub mod mlx_engine;
 pub mod model;
 #[cfg(feature = "onnx")]
 pub mod parakeet_engine;
@@ -14,6 +16,8 @@ pub mod vad;
 pub mod whisper_engine;
 
 pub use engine::{AsrEngine, StreamingState, TranscriptionResult};
+#[cfg(feature = "mlx")]
+pub use mlx_engine::MlxEngine;
 pub use model::{
     download, download_for_backend, download_onnx_model, model_exists_for_backend,
     onnx_model_exists, parakeet_model_dir, qwen3_asr_model_dir,

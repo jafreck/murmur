@@ -80,6 +80,7 @@ pub enum AsrBackend {
     Whisper,
     Qwen3Asr,
     Parakeet,
+    Mlx,
 }
 
 impl std::fmt::Display for AsrBackend {
@@ -88,6 +89,7 @@ impl std::fmt::Display for AsrBackend {
             AsrBackend::Whisper => write!(f, "Whisper"),
             AsrBackend::Qwen3Asr => write!(f, "Qwen3-ASR"),
             AsrBackend::Parakeet => write!(f, "Parakeet"),
+            AsrBackend::Mlx => write!(f, "MLX"),
         }
     }
 }
@@ -130,12 +132,15 @@ pub const QWEN3_ASR_MODELS: &[&str] = &["0.6b", "1.7b"];
 
 pub const PARAKEET_MODELS: &[&str] = &["0.6b-v2"];
 
+pub const MLX_MODELS: &[&str] = &["0.6b", "1.7b"];
+
 /// All supported models for a given backend.
 pub fn supported_models(backend: AsrBackend) -> &'static [&'static str] {
     match backend {
         AsrBackend::Whisper => WHISPER_MODELS,
         AsrBackend::Qwen3Asr => QWEN3_ASR_MODELS,
         AsrBackend::Parakeet => PARAKEET_MODELS,
+        AsrBackend::Mlx => MLX_MODELS,
     }
 }
 
@@ -389,6 +394,7 @@ impl Config {
             AsrBackend::Whisper => "base.en",
             AsrBackend::Qwen3Asr => "0.6b",
             AsrBackend::Parakeet => "0.6b-v2",
+            AsrBackend::Mlx => "0.6b",
         }
     }
 

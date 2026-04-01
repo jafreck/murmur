@@ -86,6 +86,7 @@ impl From<TrayAction> for AppMessage {
             TrayAction::CopyLastDictation => AppMessage::TrayCopyLast,
             TrayAction::SetModel(s) => AppMessage::TraySetModel(s),
             TrayAction::SetLanguage(c) => AppMessage::TraySetLanguage(c),
+            TrayAction::SetBackend(b) => AppMessage::TraySetBackend(b),
             TrayAction::ToggleSpokenPunctuation => AppMessage::TrayToggleSpokenPunctuation,
             TrayAction::ToggleFillerWordRemoval => AppMessage::TrayToggleFillerWordRemoval,
             TrayAction::SetMode(mode) => AppMessage::TraySetMode(mode),

@@ -140,7 +140,9 @@ fn state_mutations_produce_correct_config_on_disk() {
     h.send(AppMessage::TraySetModel("medium".into())); // multilingual model
     h.send(AppMessage::TraySetLanguage("ja".into()));
     h.send(AppMessage::TrayToggleSpokenPunctuation);
-    h.send(AppMessage::TrayToggleStreaming);
+    // Default backend (Qwen3Asr) auto-enables streaming, so toggle off then on.
+    h.send(AppMessage::TrayToggleStreaming); // true → false
+    h.send(AppMessage::TrayToggleStreaming); // false → true
     h.send(AppMessage::TraySetMode(InputMode::OpenMic));
     h.send(AppMessage::TrayToggleTranslate);
 
@@ -378,7 +380,9 @@ fn full_config_mutation_pipeline() {
         AppMessage::TraySetModel("large-v3-turbo".into()),
         AppMessage::TraySetLanguage("zh".into()),
         AppMessage::TrayToggleSpokenPunctuation,
-        AppMessage::TrayToggleStreaming,
+        // Default backend (Qwen3Asr) auto-enables streaming, so toggle off then on.
+        AppMessage::TrayToggleStreaming, // true → false
+        AppMessage::TrayToggleStreaming, // false → true
         AppMessage::TrayToggleTranslate,
         AppMessage::TraySetMode(InputMode::OpenMic),
     ];

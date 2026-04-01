@@ -388,13 +388,14 @@ fn toggle_spoken_punctuation() {
 #[test]
 fn toggle_streaming() {
     let mut h = Harness::new();
-    assert!(!h.state.streaming);
-
-    h.send(AppMessage::TrayToggleStreaming);
+    // Default backend (Qwen3Asr) auto-enables streaming.
     assert!(h.state.streaming);
 
     h.send(AppMessage::TrayToggleStreaming);
     assert!(!h.state.streaming);
+
+    h.send(AppMessage::TrayToggleStreaming);
+    assert!(h.state.streaming);
 }
 
 #[test]
@@ -521,7 +522,9 @@ fn to_config_round_trips_state() {
     h.send(AppMessage::TraySetLanguage("de".into()));
     h.send(AppMessage::TrayToggleSpokenPunctuation);
     h.send(AppMessage::TraySetMode(InputMode::OpenMic));
-    h.send(AppMessage::TrayToggleStreaming);
+    // Default backend auto-enables streaming, so toggle off then on.
+    h.send(AppMessage::TrayToggleStreaming); // true → false
+    h.send(AppMessage::TrayToggleStreaming); // false → true
     h.send(AppMessage::TrayToggleTranslate);
 
     let cfg = h.state.to_config(&base);
@@ -874,7 +877,9 @@ fn to_config_reflects_tray_mutations() {
     h.send(AppMessage::TraySetLanguage("de".into()));
     h.send(AppMessage::TrayToggleSpokenPunctuation);
     h.send(AppMessage::TraySetMode(InputMode::OpenMic));
-    h.send(AppMessage::TrayToggleStreaming);
+    // Default backend auto-enables streaming, so toggle off then on.
+    h.send(AppMessage::TrayToggleStreaming); // true → false
+    h.send(AppMessage::TrayToggleStreaming); // false → true
     h.send(AppMessage::TrayToggleTranslate);
 
     // Build config from state

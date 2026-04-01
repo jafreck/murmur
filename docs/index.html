@@ -539,7 +539,6 @@
     <button class="install-tab active" onclick="showTab('macos')">macOS / Linux</button>
     <button class="install-tab" onclick="showTab('windows')">Windows</button>
     <button class="install-tab" onclick="showTab('source')">From Source</button>
-    <button class="install-tab" onclick="showTab('crates')">crates.io</button>
   </div>
   <div class="install-panel active" id="panel-macos">
 <span class="comment"># One-line install — downloads the right binary for your platform</span>
@@ -566,13 +565,6 @@ cargo build --release --features metal,onnx  <span class="comment"># + Qwen3-ASR
 cargo build --release --features metal  <span class="comment"># macOS Apple Silicon</span>
 cargo build --release --features cuda   <span class="comment"># NVIDIA</span>
 cargo build --release --features vulkan <span class="comment"># Cross-vendor</span>
-  </div>
-  <div class="install-panel" id="panel-crates">
-<span class="comment"># Install from crates.io</span>
-cargo install murmur
-
-<span class="comment"># Then start dictating</span>
-murmur start
   </div>
 </section>
 

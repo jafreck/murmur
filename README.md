@@ -8,6 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](#platform-notes)
+[![Docs](https://img.shields.io/badge/docs-jafreck.github.io%2Fmurmur-7c6aef.svg)](https://jafreck.github.io/murmur/)
 
 No cloud, no API keys, no data collection.
 State-of-the-art speech recognition running entirely on your hardware.
@@ -21,24 +22,6 @@ State-of-the-art speech recognition running entirely on your hardware.
 3. Release — transcribed text is pasted at your cursor
 
 ## Features
-
-### 🎙️ Multi-Engine Speech Recognition
-
-Murmur supports multiple ASR (Automatic Speech Recognition) backends — all running locally on your machine. Choose the engine that best fits your needs:
-
-| Engine | Models | Languages | Streaming | Strengths |
-|---|---|---|---|---|
-| [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) | 0.6B, 1.7B | 52 | ✅ Native | Lowest word error rate, native streaming |
-| [Whisper](https://github.com/openai/whisper) | tiny → large | 90+ | ⚠️ Chunked | Broad language coverage |
-| [Parakeet-TDT](https://catalog.ngc.nvidia.com/orgs/nvidia/collections/parakeet-tdt-0.6b) | 0.6B | English | ⚠️ Chunked | Fast, pre-formatted output with punctuation |
-
-Switch backends with a single flag:
-
-```bash
-murmur start --backend qwen3-asr    # Best accuracy + native streaming
-murmur start --backend whisper      # Maximum language support
-murmur start --backend parakeet     # Fast English with auto-punctuation
-```
 
 ### ⚡ Real-Time Streaming
 
@@ -77,6 +60,24 @@ Murmur is built in Rust with an optimized audio pipeline designed for low-latenc
 | **In-memory pipeline** | Zero disk I/O — audio is recorded and transcribed entirely in memory |
 | **GPU acceleration** | Metal (Apple Silicon), CUDA (NVIDIA), Vulkan (cross-vendor) |
 | **Quantized models** | INT4/INT8 inference for faster speed with minimal accuracy loss |
+
+### 🎙️ Multi-Engine Speech Recognition
+
+Murmur supports multiple ASR (Automatic Speech Recognition) backends — all running locally on your machine. Choose the engine that best fits your needs:
+
+| Engine | Models | Languages | Streaming | Strengths |
+|---|---|---|---|---|
+| [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) | 0.6B, 1.7B | 52 | ✅ Native | Lowest word error rate, native streaming |
+| [Whisper](https://github.com/openai/whisper) | tiny → large | 90+ | ⚠️ Chunked | Broad language coverage |
+| [Parakeet-TDT](https://catalog.ngc.nvidia.com/orgs/nvidia/collections/parakeet-tdt-0.6b) | 0.6B | English | ⚠️ Chunked | Fast, pre-formatted output with punctuation |
+
+Switch backends with a single flag:
+
+```bash
+murmur start --backend qwen3-asr    # Best accuracy + native streaming
+murmur start --backend whisper      # Maximum language support
+murmur start --backend parakeet     # Fast English with auto-punctuation
+```
 
 ## Install
 

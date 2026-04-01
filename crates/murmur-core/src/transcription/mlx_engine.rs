@@ -35,6 +35,7 @@ struct ModelConfig {
     enc_output_dim: i32,
     enc_downsample_hidden: i32,
     enc_n_window: usize,
+    enc_n_window_infer: usize,
 
     // Text decoder
     dec_hidden_size: i32,
@@ -62,6 +63,7 @@ impl Default for ModelConfig {
             enc_output_dim: 1024,
             enc_downsample_hidden: 480,
             enc_n_window: 50,
+            enc_n_window_infer: 800,
 
             dec_hidden_size: 1024,
             dec_num_layers: 28,
@@ -112,6 +114,9 @@ impl ModelConfig {
             }
             if let Some(x) = enc.get("n_window").and_then(|x| x.as_i64()) {
                 cfg.enc_n_window = x as usize;
+            }
+            if let Some(x) = enc.get("n_window_infer").and_then(|x| x.as_i64()) {
+                cfg.enc_n_window_infer = x as usize;
             }
         }
 
@@ -209,7 +214,17 @@ fn load_conv2d(
     let mut conv = Conv2d::new(in_ch, out_ch, kernel)?;
     conv.stride = (stride, stride);
     conv.padding = (padding, padding);
-    conv.weight = Param::new(w(weights, &format!("{prefix}.weight"))?);
+
+    let mut w_arr = w(weights, &format!("{prefix}.weight"))?;
+    // Auto-detect and transpose Conv2d weights from PyTorch OIHW to MLX OHWI.
+    // MLX expects [O, kH, kW, I]; PyTorch saves [O, I, kH, kW].
+    // Detect by checking: if shape[1] == in_ch and shape[3] != in_ch, it's OIHW.
+    let shape = w_arr.shape().to_vec();
+    if shape.len() == 4 && shape[1] == in_ch && shape[3] != in_ch {
+        w_arr = w_arr.transpose_axes(&[0, 2, 3, 1])?;
+    }
+    conv.weight = Param::new(w_arr);
+
     if let Some(b) = weights.get(&format!("{prefix}.bias")) {
         conv.bias = Param::new(Some(b.clone()));
     } else {
@@ -256,15 +271,21 @@ fn load_embedding(
 
 fn sinusoidal_embeddings(max_len: i32, d_model: i32) -> Result<Array> {
     let half = d_model / 2;
+    // Match the official Qwen3-ASR formula (SinusoidsPositionEmbedding):
+    // log_timescale_increment = log(10000) / (half_dim - 1)
+    let log_timescale_inc = (10_000.0f32).ln() / (half - 1).max(1) as f32;
     let mut data = vec![0.0f32; (max_len * d_model) as usize];
     for pos in 0..max_len {
         for i in 0..half {
-            let angle = pos as f32 / (10_000.0f32).powf(2.0 * i as f32 / d_model as f32);
+            let inv_timescale = (-log_timescale_inc * i as f32).exp();
+            let angle = pos as f32 * inv_timescale;
             let idx_base = (pos * d_model) as usize;
-            data[idx_base + (2 * i) as usize] = angle.sin();
-            data[idx_base + (2 * i + 1) as usize] = angle.cos();
+            // Blocked layout: [sin(0)..sin(half-1), cos(0)..cos(half-1)]
+            data[idx_base + i as usize] = angle.sin();
+            data[idx_base + half as usize + i as usize] = angle.cos();
         }
     }
+    // Trim if d_model is odd
     Ok(Array::from_slice(&data, &[max_len, d_model]))
 }
 
@@ -340,6 +361,43 @@ fn narrow_last_dim(arr: &Array, start: i32, len: i32) -> Result<Array> {
 
 // ─── Audio Encoder ──────────────────────────────────────────────────
 
+/// Take columns `start .. start+len` from a `[rows, cols]` array.
+fn take_cols(arr: &Array, start: i32, len: i32) -> Result<Array> {
+    let indices: Vec<i32> = (start..start + len).collect();
+    let idx = Array::from_slice(&indices, &[len]);
+    arr.take_axis(&idx, 1).map_err(Into::into)
+}
+
+/// Create a block-diagonal additive attention mask for windowed encoder attention.
+///
+/// Tokens within the same window attend to each other; cross-window positions
+/// get `-inf`.  Returns `[1, 1, seq_len, seq_len]`.
+fn create_windowed_mask(seq_len: i32, cu_seqlens: &[i32]) -> Result<Array> {
+    let n = seq_len as usize;
+    let neg_inf = f32::NEG_INFINITY;
+    let mut data = vec![0.0f32; n * n];
+
+    // Assign each position to a window
+    let mut window_ids = vec![0u32; n];
+    for (win_idx, pair) in cu_seqlens.windows(2).enumerate() {
+        for pos in pair[0]..pair[1] {
+            window_ids[pos as usize] = win_idx as u32;
+        }
+    }
+
+    // Mask cross-window positions
+    for i in 0..n {
+        for j in 0..n {
+            if window_ids[i] != window_ids[j] {
+                data[i * n + j] = neg_inf;
+            }
+        }
+    }
+
+    let mask = Array::from_slice(&data, &[seq_len, seq_len]);
+    mask.expand_dims_axes(&[0, 1]).map_err(Into::into)
+}
+
 struct AudioAttention {
     q_proj: Linear,
     k_proj: Linear,
@@ -373,7 +431,7 @@ impl AudioAttention {
         })
     }
 
-    fn forward(&mut self, x: &Array) -> Result<Array> {
+    fn forward(&mut self, x: &Array, mask: Option<&Array>) -> Result<Array> {
         let shape = x.shape();
         let (b, seq, _d) = (shape[0], shape[1], shape[2]);
         let nh = self.num_heads as i32;
@@ -389,7 +447,13 @@ impl AudioAttention {
         let v = ops::reshape(&v, &[b, seq, nh, hd])?.transpose_axes(&[0, 2, 1, 3])?;
 
         let scale = Array::from_f32(1.0 / (hd as f32).sqrt());
-        let scores = ops::multiply(&ops::matmul(&q, &k.transpose_axes(&[0, 1, 3, 2])?)?, &scale)?;
+        let mut scores =
+            ops::multiply(&ops::matmul(&q, &k.transpose_axes(&[0, 1, 3, 2])?)?, &scale)?;
+
+        if let Some(m) = mask {
+            scores = ops::add(&scores, m)?;
+        }
+
         let attn = ops::softmax_axis(&scores, -1, None)?;
         let out = ops::matmul(&attn, &v)?;
 
@@ -462,10 +526,18 @@ impl AudioEncoderLayer {
     }
 
     fn forward(&mut self, x: &Array) -> Result<Array> {
+        self.forward_impl(x, None)
+    }
+
+    fn forward_masked(&mut self, x: &Array, mask: &Array) -> Result<Array> {
+        self.forward_impl(x, Some(mask))
+    }
+
+    fn forward_impl(&mut self, x: &Array, mask: Option<&Array>) -> Result<Array> {
         // Pre-norm attention
         let residual = x.clone();
         let h = self.self_attn_layer_norm.forward(x)?;
-        let h = self.self_attn.forward(&h)?;
+        let h = self.self_attn.forward(&h, mask)?;
         let x = ops::add(&residual, &h)?;
 
         // Pre-norm FFN
@@ -544,84 +616,151 @@ impl AudioEncoder {
     /// Returns `[1, audio_tokens, output_dim]`.
     fn forward(&mut self, mel_flat: &[f32], n_frames: usize) -> Result<Array> {
         let n_mels = N_MELS as i32;
-        let n_window = self.config.enc_n_window;
-        let window_frames = (n_window * 2) as i32; // 100
+        let chunk_size = (self.config.enc_n_window * 2) as i32; // e.g. 100
 
-        // Build [1, n_mels, n_frames, 1] (NHWC with C=1)
+        // mel_flat is [n_mels, n_frames] row-major.
         let mel = Array::from_slice(mel_flat, &[n_mels, n_frames as i32]);
-        // mel is [n_mels, n_frames]. Transpose to [n_frames, n_mels], then add batch & channel.
-        let mel = mel.transpose_axes(&[1, 0])?; // [n_frames, n_mels]
-        let mel = mel.expand_dims(0)?; // [1, n_frames, n_mels]
-        let mel = mel.expand_dims(-1)?; // [1, n_frames, n_mels, 1]
 
-        // Pad n_frames to multiple of window_frames for chunking
-        let nf = n_frames as i32;
-        let padded_nf = ((nf + window_frames - 1) / window_frames) * window_frames;
-        let mel = if padded_nf > nf {
-            let pad_shape = &[1, padded_nf - nf, n_mels, 1];
-            let pad = ops::zeros::<f32>(pad_shape)?;
-            ops::concatenate_axis(&[&mel, &pad], 1)?
+        // ── Per-chunk Conv2d processing ──
+        // Split mel into chunks of chunk_size frames along the time axis.
+        // Each chunk is processed independently through the conv stem.
+        let total_frames = n_frames as i32;
+        let n_full_chunks = total_frames / chunk_size;
+        let tail_frames = total_frames - n_full_chunks * chunk_size;
+
+        let mut chunk_conv_outputs: Vec<Array> = Vec::new();
+        let mut chunk_token_lens: Vec<i32> = Vec::new();
+
+        // Process full-size chunks
+        for c in 0..n_full_chunks {
+            let start = c * chunk_size;
+            let chunk_mel = take_cols(&mel, start, chunk_size)?;
+            let (conv_out, t_tokens) = self.conv_stem_single(&chunk_mel, n_mels, chunk_size)?;
+            chunk_conv_outputs.push(conv_out);
+            chunk_token_lens.push(t_tokens);
+        }
+
+        // Process tail chunk (if any)
+        if tail_frames > 0 {
+            let start = n_full_chunks * chunk_size;
+            let chunk_mel = take_cols(&mel, start, tail_frames)?;
+            let (conv_out, t_tokens) = self.conv_stem_single(&chunk_mel, n_mels, tail_frames)?;
+            chunk_conv_outputs.push(conv_out);
+            chunk_token_lens.push(t_tokens);
+        }
+
+        // Concatenate all chunks → [total_tokens, d_model]
+        let refs: Vec<&Array> = chunk_conv_outputs.iter().collect();
+        let mut x = if refs.len() == 1 {
+            refs[0].clone()
         } else {
-            mel
+            ops::concatenate_axis(refs.as_slice(), 0)?
         };
 
-        // Conv2d stem: [1, T, n_mels, 1] → [1, T/8, n_mels/8, dh]
-        let mut h = self.conv1.forward(&mel)?;
+        // ── Per-chunk sinusoidal position embeddings ──
+        // Each chunk gets PE starting from position 0 (matching the official encoder).
+        let max_chunk_tokens = *chunk_token_lens.iter().max().unwrap_or(&1);
+        let pe = sinusoidal_embeddings(max_chunk_tokens, self.config.enc_d_model)?;
+
+        let mut pe_parts: Vec<Array> = Vec::new();
+        for &ct in &chunk_token_lens {
+            let indices: Vec<i32> = (0..ct).collect();
+            let idx = Array::from_slice(&indices, &[ct]);
+            pe_parts.push(pe.take_axis(&idx, 0)?);
+        }
+        let pe_refs: Vec<&Array> = pe_parts.iter().collect();
+        let pe_full = if pe_refs.len() == 1 {
+            pe_refs[0].clone()
+        } else {
+            ops::concatenate_axis(pe_refs.as_slice(), 0)?
+        };
+        x = ops::add(&x, &pe_full)?;
+
+        // ── Windowed attention ──
+        // Build window boundaries for block-diagonal attention.
+        // n_window_infer controls how many mel frames each attention window spans.
+        // tokens_per_window = tokens_per_chunk * (n_window_infer / chunk_size)
+        let total_tokens = x.shape()[0];
+        let tokens_per_window = if !chunk_token_lens.is_empty() {
+            let n_window_infer = self.config.enc_n_window_infer as i32;
+            chunk_token_lens[0] * (n_window_infer / chunk_size).max(1)
+        } else {
+            total_tokens
+        };
+
+        let mut cu_seqlens: Vec<i32> = vec![0];
+        let mut pos = 0i32;
+        while pos < total_tokens {
+            let end = (pos + tokens_per_window).min(total_tokens);
+            cu_seqlens.push(end);
+            pos = end;
+        }
+
+        // Add batch dim: [total_tokens, d_model] → [1, total_tokens, d_model]
+        let mut h = x.expand_dims(0)?;
+
+        // Apply transformer layers with windowed attention
+        let num_windows = cu_seqlens.len() - 1;
+        if num_windows <= 1 {
+            // Single window: no mask needed
+            for layer in &mut self.layers {
+                h = layer.forward(&h)?;
+            }
+        } else {
+            // Create block-diagonal mask
+            let mask = create_windowed_mask(total_tokens, &cu_seqlens)?;
+            for layer in &mut self.layers {
+                h = layer.forward_masked(&h, &mask)?;
+            }
+        }
+
+        // Remove batch dim for post-processing
+        let h = ops::squeeze_axes(&h, &[0])?; // [total_tokens, d_model]
+        let h = h.expand_dims(0)?; // back to [1, total_tokens, d_model]
+
+        // ── Post-processing: LayerNorm → proj1 → GELU → proj2 ──
+        let mut out = self.post_ln.forward(&h)?;
+        out = self.proj1.forward(&out)?;
+        out = mlx_rs::nn::gelu(&out)?;
+        out = self.proj2.forward(&out)?;
+
+        Ok(out)
+    }
+
+    /// Run the Conv2d stem on a single mel chunk.
+    ///
+    /// `chunk_mel`: `[n_mels, chunk_frames]`.
+    /// Returns `(features, n_tokens)` where features is `[n_tokens, d_model]`.
+    fn conv_stem_single(
+        &mut self,
+        chunk_mel: &Array,
+        _n_mels: i32,
+        _chunk_frames: i32,
+    ) -> Result<(Array, i32)> {
+        // NHWC input: [1, H=n_mels, W=chunk_frames, C=1]
+        let x = chunk_mel.expand_dims(0)?.expand_dims(-1)?;
+
+        // Conv2d stem with GELU
+        let mut h = self.conv1.forward(&x)?;
         h = mlx_rs::nn::gelu(&h)?;
         h = self.conv2.forward(&h)?;
         h = mlx_rs::nn::gelu(&h)?;
         h = self.conv3.forward(&h)?;
         h = mlx_rs::nn::gelu(&h)?;
 
-        // h: [1, T/8, freq/8, dh] → flatten last two dims → [1, T/8, freq/8 * dh]
+        // h: [1, F'=n_mels/8, T'=time_tokens, C=dhs]
         let sh = h.shape().to_vec();
-        let (b, t8, f8, dh) = (sh[0], sh[1], sh[2], sh[3]);
-        let h = ops::reshape(&h, &[b, t8, f8 * dh])?;
+        let (_b, f_d, t_d, c_d) = (sh[0], sh[1], sh[2], sh[3]);
 
-        // Linear projection → [1, T/8, d_model]
-        let mut h = self.conv_out.forward(&h)?;
+        // Channel-major reshape matching PyTorch convention:
+        // [1, F', T', C] → transpose(0,2,3,1) → [1, T', C, F'] → reshape → [T', C*F']
+        let h = h.transpose_axes(&[0, 2, 3, 1])?; // [1, T', C, F']
+        let h = ops::reshape(&h, &[t_d, c_d * f_d])?; // [T', C*F']
 
-        // Add sinusoidal position embeddings
-        let pos_emb = sinusoidal_embeddings(t8, self.config.enc_d_model)?;
-        let pos_emb = pos_emb.expand_dims(0)?; // [1, T/8, d_model]
-        h = ops::add(&h, &pos_emb)?;
+        // Linear projection → [T', d_model]
+        let h = self.conv_out.forward(&h)?;
 
-        // Process in windows: split into chunks along the time axis
-        // Use ceiling division to ensure all tokens are processed
-        let tokens_per_window = (window_frames + 7) / 8; // 100 → 13 (matches reference)
-        let n_windows = (t8 + tokens_per_window - 1) / tokens_per_window;
-        let mut window_outputs = Vec::new();
-
-        for win in 0..n_windows {
-            let start = win * tokens_per_window;
-            let end = (start + tokens_per_window).min(t8);
-            let win_len = end - start;
-            let indices: Vec<i32> = (start..end).collect();
-            let idx = Array::from_slice(&indices, &[win_len]);
-            let mut chunk = h.take_axis(&idx, 1)?; // [1, win_len, d_model]
-
-            // Transformer layers (bidirectional)
-            for layer in &mut self.layers {
-                chunk = layer.forward(&chunk)?;
-            }
-            window_outputs.push(chunk);
-        }
-
-        // Concatenate windows → [1, total_tokens, d_model]
-        let refs: Vec<&Array> = window_outputs.iter().collect();
-        let mut out = if refs.len() == 1 {
-            refs[0].clone()
-        } else {
-            ops::concatenate_axis(refs.as_slice(), 1)?
-        };
-
-        // Post-processing: LayerNorm → GELU → proj1 → proj2
-        out = self.post_ln.forward(&out)?;
-        out = mlx_rs::nn::gelu(&out)?;
-        out = self.proj1.forward(&out)?;
-        out = self.proj2.forward(&out)?;
-
-        Ok(out)
+        Ok((h, t_d))
     }
 }
 
@@ -1278,7 +1417,7 @@ impl AsrEngine for MlxEngine {
         let text = strip_asr_prefix(&raw_text);
         Ok(TranscriptionResult {
             text,
-            pre_formatted: true,
+            pre_formatted: false,
         })
     }
 
@@ -1307,7 +1446,7 @@ impl AsrEngine for MlxEngine {
         let text = strip_asr_prefix(&self.decode_tokens(&token_ids));
         Ok(TranscriptionResult {
             text,
-            pre_formatted: true,
+            pre_formatted: false,
         })
     }
 

@@ -278,6 +278,18 @@ pub fn apply_effect(
             ctx.tray.set_mode(&mode);
             info!("Mode changed to: {mode}");
         }
+        AppEffect::SetBackend(backend) => {
+            ctx.config.asr_backend = backend;
+            let default_model = ctx.config.default_model_for_backend().to_string();
+            ctx.config.model_size = default_model.clone();
+            ctx.state.model_size = default_model.clone();
+            ctx.tray.set_model(&default_model);
+            ctx.tray.sync_config(ctx.config);
+            info!(
+                "Backend changed to: {backend}; model reset to {default_model}. \
+                 Restart murmur for the Model menu to update."
+            );
+        }
         AppEffect::ReloadTranscriber(generation) => {
             *ctx.engine = None;
             ctx.tray.set_state(TrayState::Loading);
@@ -891,8 +903,8 @@ mod tests {
         );
         assert!(!diff.model_or_language_changed);
         assert!(!diff.hotkey_changed);
-        // Default model is "base.en" (English-only), so language menu is disabled
-        assert!(!diff.language_menu_enabled);
+        // Default model is "0.6b" (Qwen3-ASR), so language menu is enabled
+        assert!(diff.language_menu_enabled);
         assert_eq!(diff.effective_language, "en");
     }
 

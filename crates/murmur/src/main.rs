@@ -29,6 +29,9 @@ enum Commands {
         /// ASR backend engine (whisper, qwen3-asr, parakeet)
         #[arg(long)]
         backend: Option<String>,
+        /// Model size to use (e.g. "0.6b", "base.en")
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Set the push-to-talk hotkey
     SetHotkey {
@@ -86,7 +89,11 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Some(Commands::Start { notes, backend }) => cmd_start(notes, backend),
+        Some(Commands::Start {
+            notes,
+            backend,
+            model,
+        }) => cmd_start(notes, backend, model),
         Some(Commands::SetHotkey { key }) => cmd_set_hotkey(&key),
         Some(Commands::GetHotkey) => cmd_get_hotkey(),
         Some(Commands::SetModel { size }) => cmd_set_model(&size),
@@ -110,23 +117,28 @@ fn main() {
     }
 }
 
-fn cmd_start(notes: bool, backend: Option<String>) -> Result<()> {
+fn cmd_start(notes: bool, backend: Option<String>, model: Option<String>) -> Result<()> {
     println!("murmur v{VERSION}");
-    if let Some(ref backend_str) = backend {
+    if backend.is_some() || model.is_some() {
         let mut cfg = config::Config::load();
-        cfg.asr_backend = match backend_str.as_str() {
-            "whisper" => AsrBackend::Whisper,
-            "qwen3-asr" | "qwen3_asr" | "qwen" => AsrBackend::Qwen3Asr,
-            "parakeet" => AsrBackend::Parakeet,
-            "mlx" => AsrBackend::Mlx,
-            _ => anyhow::bail!(
-                "Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet, mlx"
-            ),
-        };
-        // Set default model size for the new backend if current one is invalid
-        let valid_models = config::supported_models(cfg.asr_backend);
-        if !valid_models.contains(&cfg.model_size.as_str()) {
-            cfg.model_size = cfg.default_model_for_backend().to_string();
+        if let Some(ref backend_str) = backend {
+            cfg.asr_backend = match backend_str.as_str() {
+                "whisper" => AsrBackend::Whisper,
+                "qwen3-asr" | "qwen3_asr" | "qwen" => AsrBackend::Qwen3Asr,
+                "parakeet" => AsrBackend::Parakeet,
+                "mlx" => AsrBackend::Mlx,
+                _ => anyhow::bail!(
+                    "Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet, mlx"
+                ),
+            };
+            // Set default model size for the new backend if current one is invalid
+            let valid_models = config::supported_models(cfg.asr_backend);
+            if !valid_models.contains(&cfg.model_size.as_str()) {
+                cfg.model_size = cfg.default_model_for_backend().to_string();
+            }
+        }
+        if let Some(ref model_str) = model {
+            cfg.model_size = model_str.clone();
         }
         cfg.save()?;
     }

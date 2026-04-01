@@ -15,6 +15,7 @@ pub enum AppMessage {
     TrayCopyLast,
     TraySetModel(String),
     TraySetLanguage(String),
+    TraySetBackend(murmur_core::config::AsrBackend),
     TrayToggleSpokenPunctuation,
     TrayToggleFillerWordRemoval,
     TraySetMode(InputMode),
@@ -78,6 +79,8 @@ pub enum AppEffect {
     /// Enable or disable the language submenu (disabled for English-only models).
     SetLanguageMenuEnabled(bool),
     SetTrayMode(InputMode),
+    /// Update the ASR backend and reset the model to the backend's default.
+    SetBackend(murmur_core::config::AsrBackend),
     /// Download the model if needed and rebuild the Transcriber in a background thread.
     ReloadTranscriber(u64),
     /// Enter hotkey capture mode — the listener should capture the next key press.
@@ -201,6 +204,7 @@ impl AppState {
             AppMessage::TrayQuit => vec![AppEffect::Quit],
             AppMessage::TraySetModel(size) => self.on_set_model(size),
             AppMessage::TraySetLanguage(code) => self.on_set_language(code),
+            AppMessage::TraySetBackend(backend) => self.on_set_backend(*backend),
             AppMessage::TrayToggleSpokenPunctuation => self.on_toggle_spoken_punctuation(),
             AppMessage::TrayToggleFillerWordRemoval => self.on_toggle_filler_word_removal(),
             AppMessage::TraySetMode(mode) => self.on_set_mode(mode),
@@ -481,6 +485,15 @@ impl AppState {
         effects
     }
 
+    fn on_set_backend(&mut self, backend: murmur_core::config::AsrBackend) -> Vec<AppEffect> {
+        self.reload_generation += 1;
+        vec![
+            AppEffect::SetBackend(backend),
+            AppEffect::SaveConfig,
+            AppEffect::ReloadTranscriber(self.reload_generation),
+        ]
+    }
+
     fn on_set_language(&mut self, code: &str) -> Vec<AppEffect> {
         if crate::config::is_english_only_model(&self.model_size) {
             // English-only model — ignore language change, reset tray to English
@@ -590,7 +603,7 @@ mod tests {
             noise_suppression: true,
             max_recordings: 0,
             last_transcription: None,
-            model_size: "base.en".to_string(),
+            model_size: "0.6b".to_string(),
             language: "en".to_string(),
             streaming_active: false,
             streaming_chars_emitted: 0,

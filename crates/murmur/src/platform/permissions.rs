@@ -68,6 +68,49 @@ pub fn check_accessibility() -> bool {
     trusted
 }
 
+/// Open the Accessibility pane in System Settings.
+#[cfg(target_os = "macos")]
+pub fn open_accessibility_settings() {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        .spawn();
+}
+
+/// Poll until Accessibility permission is granted (checks every 2 seconds).
+#[cfg(target_os = "macos")]
+pub fn wait_for_accessibility() {
+    use std::ffi::c_void;
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
+    }
+
+    loop {
+        let trusted = unsafe { AXIsProcessTrustedWithOptions(std::ptr::null()) };
+        if trusted {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+}
+
+/// Re-exec the current process with the same arguments.
+///
+/// This is the standard Unix trick to pick up permission changes that are
+/// only checked at process launch. The new process inherits the granted
+/// Accessibility permission.
+#[cfg(target_os = "macos")]
+pub fn re_exec() -> ! {
+    use std::os::unix::process::CommandExt;
+
+    let exe = std::env::current_exe().expect("failed to get current exe path");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let err = std::process::Command::new(&exe).args(&args).exec();
+    // exec() only returns on error
+    panic!("re-exec failed: {err}");
+}
+
 #[cfg(target_os = "windows")]
 pub fn check_accessibility() -> bool {
     // Windows does not require special permissions for keyboard hooks.

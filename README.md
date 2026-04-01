@@ -127,12 +127,6 @@ cargo build --release --features cuda
 cargo build --release --features vulkan
 ```
 
-### From crates.io
-
-```bash
-cargo install murmur
-```
-
 ## Usage
 
 ```bash

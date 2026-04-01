@@ -76,8 +76,8 @@ pub struct AppContextConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AsrBackend {
-    #[default]
     Whisper,
+    #[default]
     Qwen3Asr,
     Parakeet,
 }
@@ -326,7 +326,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             hotkey: default_hotkey().to_string(),
-            model_size: "base.en".to_string(),
+            model_size: "0.6b".to_string(),
             asr_backend: AsrBackend::default(),
             asr_quantization: AsrQuantization::default(),
             language: "en".to_string(),
@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let cfg = Config::default();
-        assert_eq!(cfg.model_size, "base.en");
+        assert_eq!(cfg.model_size, "0.6b");
         assert_eq!(cfg.language, "en");
         assert!(!cfg.spoken_punctuation);
         assert_eq!(cfg.max_recordings, 0);
@@ -640,7 +640,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("nonexistent.json");
         let loaded = Config::load_from(&path);
-        assert_eq!(loaded.model_size, "base.en");
+        assert_eq!(loaded.model_size, "0.6b");
         // Should have created the default config file
         assert!(path.exists());
     }
@@ -649,7 +649,7 @@ mod tests {
     fn test_parse_invalid_json_returns_default() {
         let path = std::path::Path::new("/tmp/test_invalid.json");
         let cfg = Config::parse("not valid json", path);
-        assert_eq!(cfg.model_size, "base.en");
+        assert_eq!(cfg.model_size, "0.6b");
     }
 
     #[test]

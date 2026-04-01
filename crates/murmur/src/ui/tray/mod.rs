@@ -54,6 +54,7 @@ pub enum TrayAction {
     CopyLastDictation,
     SetModel(String),
     SetLanguage(String),
+    SetBackend(config::AsrBackend),
     ToggleSpokenPunctuation,
     ToggleFillerWordRemoval,
     SetMode(InputMode),
@@ -164,6 +165,7 @@ pub struct MenuActionMap {
     model_ids: Vec<(MenuId, String)>,
     language_ids: Vec<(MenuId, String)>,
     mode_ids: Vec<(MenuId, InputMode)>,
+    backend_ids: Vec<(MenuId, config::AsrBackend)>,
 }
 
 impl MenuActionMap {
@@ -172,6 +174,7 @@ impl MenuActionMap {
         model_ids: Vec<(MenuId, String)>,
         language_ids: Vec<(MenuId, String)>,
         mode_ids: Vec<(MenuId, InputMode)>,
+        backend_ids: Vec<(MenuId, config::AsrBackend)>,
     ) -> Self {
         Self {
             quit_id: ids.quit,
@@ -190,6 +193,7 @@ impl MenuActionMap {
             model_ids,
             language_ids,
             mode_ids,
+            backend_ids,
         }
     }
 
@@ -246,6 +250,12 @@ impl MenuActionMap {
         for (id, mode) in &self.mode_ids {
             if event_id == id {
                 return Some(TrayAction::SetMode(mode.clone()));
+            }
+        }
+
+        for (id, backend) in &self.backend_ids {
+            if event_id == id {
+                return Some(TrayAction::SetBackend(*backend));
             }
         }
 
@@ -312,6 +322,7 @@ pub struct TrayController {
     model_entries: Vec<RadioEntry<String>>,
     language_entries: Vec<RadioEntry<String>>,
     mode_entries: Vec<RadioEntry<InputMode>>,
+    backend_entries: Vec<RadioEntry<config::AsrBackend>>,
 
     spoken_punct_item: CheckMenuItem,
     filler_removal_item: CheckMenuItem,
@@ -323,7 +334,6 @@ pub struct TrayController {
 
     status_item: MenuItem,
     hotkey_item: MenuItem,
-    backend_item: MenuItem,
     update_item: MenuItem,
 
     idle_icon: Icon,
@@ -364,7 +374,17 @@ impl TrayController {
     pub fn new(config: &Config) -> Result<Self> {
         let status_item = MenuItem::new("murmur: Idle", false, None);
         let hotkey_item = MenuItem::new(format!("Hotkey: {}", config.hotkey), false, None);
-        let backend_item = MenuItem::new(format!("Backend: {}", config.asr_backend), false, None);
+
+        let backend_submenu = Submenu::new("Backend", true);
+        let backend_choices: Vec<(&str, config::AsrBackend)> = vec![
+            ("Qwen3-ASR", config::AsrBackend::Qwen3Asr),
+            ("Whisper", config::AsrBackend::Whisper),
+            ("Parakeet", config::AsrBackend::Parakeet),
+        ];
+        let (backend_entries, backend_ids) =
+            build_radio_submenu(&backend_submenu, &backend_choices, |b| {
+                *b == config.asr_backend
+            })?;
 
         let set_hotkey = MenuItem::new("Set Hotkey…", true, None);
         let set_hotkey_id = set_hotkey.id().clone();
@@ -442,10 +462,10 @@ impl TrayController {
 
         let menu = Menu::new();
         menu.append(&status_item)?;
-        menu.append(&backend_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&copy_last)?;
         menu.append(&PredefinedMenuItem::separator())?;
+        menu.append(&backend_submenu)?;
         menu.append(&model_submenu)?;
         menu.append(&lang_submenu)?;
         menu.append(&hotkey_item)?;
@@ -484,6 +504,7 @@ impl TrayController {
             model_ids,
             language_ids,
             mode_ids,
+            backend_ids,
         );
 
         let dark_mode = is_dark_mode();
@@ -553,6 +574,7 @@ impl TrayController {
             model_entries,
             language_entries,
             mode_entries,
+            backend_entries,
             spoken_punct_item,
             filler_removal_item,
             streaming_item,
@@ -561,7 +583,6 @@ impl TrayController {
             app_mode_item,
             status_item,
             hotkey_item,
-            backend_item,
             update_item,
             idle_icon,
             recording_icon,
@@ -852,8 +873,9 @@ impl TrayController {
         self.set_language(&config.language);
         self.set_mode(&config.mode);
         self.set_hotkey(&config.hotkey);
-        self.backend_item
-            .set_text(format!("Backend: {}", config.asr_backend));
+        update_radio_entries(&self.backend_entries, &config.asr_backend, |b| {
+            b.to_string()
+        });
         self.spoken_punct_item
             .set_checked(config.spoken_punctuation);
         self.filler_removal_item
@@ -1280,6 +1302,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            vec![],
         );
         assert_eq!(map.match_event(&quit_id), Some(TrayAction::Quit));
     }
@@ -1292,6 +1315,7 @@ mod tests {
                 copy_last: id.clone(),
                 ..default_ids()
             },
+            vec![],
             vec![],
             vec![],
             vec![],
@@ -1310,6 +1334,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::OpenConfig));
     }
@@ -1322,6 +1347,7 @@ mod tests {
                 reload_config: id.clone(),
                 ..default_ids()
             },
+            vec![],
             vec![],
             vec![],
             vec![],
@@ -1340,6 +1366,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            vec![],
         );
         assert_eq!(
             map.match_event(&id),
@@ -1355,6 +1382,7 @@ mod tests {
             vec![],
             vec![],
             vec![(id.clone(), InputMode::PushToTalk)],
+            vec![],
         );
         assert_eq!(
             map.match_event(&id),
@@ -1373,6 +1401,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::ToggleStreaming));
     }
@@ -1385,6 +1414,7 @@ mod tests {
                 translate: id.clone(),
                 ..default_ids()
             },
+            vec![],
             vec![],
             vec![],
             vec![],
@@ -1403,6 +1433,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            vec![],
         );
         assert_eq!(map.match_event(&id), Some(TrayAction::SetHotkey));
     }
@@ -1413,6 +1444,7 @@ mod tests {
         let map = MenuActionMap::new(
             default_ids(),
             vec![(model_id.clone(), "base.en".to_string())],
+            vec![],
             vec![],
             vec![],
         );
@@ -1430,6 +1462,7 @@ mod tests {
             vec![],
             vec![(lang_id.clone(), "fr".to_string())],
             vec![],
+            vec![],
         );
         assert_eq!(
             map.match_event(&lang_id),
@@ -1439,7 +1472,7 @@ mod tests {
 
     #[test]
     fn menu_action_map_unknown_id() {
-        let map = MenuActionMap::new(default_ids(), vec![], vec![], vec![]);
+        let map = MenuActionMap::new(default_ids(), vec![], vec![], vec![], vec![]);
         assert_eq!(map.match_event(&MenuId::new("unknown")), None);
     }
 
@@ -1453,6 +1486,7 @@ mod tests {
                 (m1.clone(), "tiny.en".to_string()),
                 (m2.clone(), "large".to_string()),
             ],
+            vec![],
             vec![],
             vec![],
         );

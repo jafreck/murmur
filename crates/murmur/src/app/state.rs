@@ -138,6 +138,8 @@ pub struct AppState {
     pub wake_word_initiated: bool,
     /// Application mode: Dictation (paste at cursor) or Notes (overlay + wake word).
     pub app_mode: AppMode,
+    /// The ASR backend, used to decide whether native streaming is available.
+    pub asr_backend: murmur_core::config::AsrBackend,
     /// Accumulated overlay text for the current session.
     pub overlay_text: String,
     /// The configured stop phrase for wake-word-initiated sessions.
@@ -152,13 +154,10 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: &Config) -> Self {
-        // Native-streaming backends (Qwen3-ASR, MLX, Parakeet) always stream;
-        // Whisper uses the explicit config toggle.
-        let streaming = config.streaming || config.asr_backend.supports_native_streaming();
         Self {
             is_pressed: false,
             mode: config.mode.clone(),
-            streaming,
+            streaming: config.streaming,
             spoken_punctuation: config.spoken_punctuation,
             filler_word_removal: config.filler_word_removal,
             translate_to_english: config.translate_to_english,
@@ -173,6 +172,7 @@ impl AppState {
             capturing_hotkey: false,
             wake_word_initiated: false,
             app_mode: config.app_mode,
+            asr_backend: config.asr_backend,
             overlay_text: String::new(),
             stop_phrase: config.stop_phrase.clone(),
             last_speech_at: None,
@@ -239,14 +239,16 @@ impl AppState {
 
     fn start_recording_effects(&mut self) -> Vec<AppEffect> {
         self.is_pressed = true;
-        self.streaming_active = self.streaming;
+        // Native-streaming backends always stream, regardless of the config toggle.
+        let use_streaming = self.streaming || self.asr_backend.supports_native_streaming();
+        self.streaming_active = use_streaming;
         self.streaming_chars_emitted = 0;
         self.last_speech_at = Some(std::time::Instant::now());
         let path = self.recording_output_path();
         // Set tray state first so the icon updates immediately.
         let mut effects = vec![AppEffect::SetTrayState(TrayState::Recording)];
         effects.push(AppEffect::StartRecording(path));
-        if self.streaming {
+        if use_streaming {
             effects.push(AppEffect::StartStreaming);
         }
         if self.is_notes_mode() {
@@ -264,7 +266,8 @@ impl AppState {
         self.wake_word_initiated = false;
         self.last_speech_at = None;
         let mut effects = Vec::new();
-        if self.streaming {
+        let use_streaming = self.streaming || self.asr_backend.supports_native_streaming();
+        if use_streaming {
             effects.push(AppEffect::StopStreaming);
         }
         // Dispatch transcription first (synchronous cleanup happens here),
@@ -423,7 +426,10 @@ impl AppState {
                         text: text.to_string(),
                         replace_chars: streamed_chars,
                     });
-                } else if !was_streaming {
+                } else {
+                    // Either streaming wasn't active, or it was but produced
+                    // no output yet (e.g. short audio, VAD filtered). Insert
+                    // the batch transcription directly.
                     effects.push(AppEffect::InsertText(text.to_string()));
                 }
             }
@@ -611,6 +617,7 @@ mod tests {
             capturing_hotkey: false,
             wake_word_initiated: false,
             app_mode: AppMode::Dictation,
+            asr_backend: murmur_core::config::AsrBackend::Whisper,
             overlay_text: String::new(),
             stop_phrase: "murmur stop".to_string(),
             last_speech_at: None,

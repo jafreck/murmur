@@ -112,6 +112,13 @@ pub fn qwen3_asr_model_dir(model_size: &str) -> PathBuf {
         .join(format!("qwen3-asr-{model_size}"))
 }
 
+/// Return the directory where MLX Qwen3-ASR models are stored.
+pub fn mlx_model_dir(model_size: &str) -> PathBuf {
+    Config::dir()
+        .join("models")
+        .join(format!("mlx-qwen3-asr-{model_size}"))
+}
+
 /// Return the directory where Parakeet ONNX models are stored.
 pub fn parakeet_model_dir(model_size: &str) -> PathBuf {
     Config::dir()

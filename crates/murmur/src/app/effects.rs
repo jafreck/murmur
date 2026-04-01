@@ -769,7 +769,7 @@ pub(super) fn create_engine_on_thread(
         }
         #[cfg(feature = "mlx")]
         AsrBackend::Mlx => {
-            let model_dir = murmur_core::transcription::qwen3_asr_model_dir(model_size);
+            let model_dir = murmur_core::transcription::mlx_model_dir(model_size);
             let engine = murmur_core::transcription::MlxEngine::new(&model_dir)?;
             Ok(Box::new(engine))
         }

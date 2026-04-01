@@ -48,10 +48,8 @@ struct ModelConfig {
     dec_rms_norm_eps: f32,
 
     // Special token IDs
-    eos_token_id: u32,
-    audio_start_token_id: u32,
-    audio_end_token_id: u32,
-    transcribe_token_id: u32,
+    eos_token_ids: Vec<u32>,
+    audio_token_id: u32,
 }
 
 impl Default for ModelConfig {
@@ -59,7 +57,7 @@ impl Default for ModelConfig {
         Self {
             enc_d_model: 896,
             enc_num_layers: 18,
-            enc_num_heads: 16,
+            enc_num_heads: 14,
             enc_ffn_dim: 3584,
             enc_output_dim: 1024,
             enc_downsample_hidden: 480,
@@ -75,10 +73,8 @@ impl Default for ModelConfig {
             dec_rope_theta: 1_000_000.0,
             dec_rms_norm_eps: 1e-6,
 
-            eos_token_id: 151_645,
-            audio_start_token_id: 151_646,
-            audio_end_token_id: 151_647,
-            transcribe_token_id: 151_648,
+            eos_token_ids: vec![151_643, 151_645],
+            audio_token_id: 151_676,
         }
     }
 }
@@ -89,7 +85,13 @@ impl ModelConfig {
         let text = std::fs::read_to_string(path).context("reading config.json")?;
         let v: serde_json::Value = serde_json::from_str(&text)?;
 
-        if let Some(enc) = v.get("audio_encoder") {
+        // HuggingFace config uses nested thinker_config.{audio_config, text_config}
+        let thinker = v.get("thinker_config").unwrap_or(&v);
+
+        if let Some(enc) = thinker
+            .get("audio_config")
+            .or_else(|| v.get("audio_encoder"))
+        {
             if let Some(x) = enc.get("d_model").and_then(|x| x.as_i64()) {
                 cfg.enc_d_model = x as i32;
             }
@@ -105,9 +107,15 @@ impl ModelConfig {
             if let Some(x) = enc.get("output_dim").and_then(|x| x.as_i64()) {
                 cfg.enc_output_dim = x as i32;
             }
+            if let Some(x) = enc.get("downsample_hidden_size").and_then(|x| x.as_i64()) {
+                cfg.enc_downsample_hidden = x as i32;
+            }
+            if let Some(x) = enc.get("n_window").and_then(|x| x.as_i64()) {
+                cfg.enc_n_window = x as usize;
+            }
         }
 
-        if let Some(dec) = v.get("text_config") {
+        if let Some(dec) = thinker.get("text_config") {
             if let Some(x) = dec.get("hidden_size").and_then(|x| x.as_i64()) {
                 cfg.dec_hidden_size = x as i32;
             }
@@ -131,8 +139,30 @@ impl ModelConfig {
             }
         }
 
-        if let Some(x) = v.get("eos_token_id").and_then(|x| x.as_u64()) {
-            cfg.eos_token_id = x as u32;
+        // audio_token_id lives directly under thinker_config
+        if let Some(x) = thinker.get("audio_token_id").and_then(|x| x.as_u64()) {
+            cfg.audio_token_id = x as u32;
+        }
+
+        // eos_token_id: may be scalar or array; always ensure both 151643 and 151645
+        match v.get("eos_token_id") {
+            Some(serde_json::Value::Array(arr)) => {
+                cfg.eos_token_ids = arr
+                    .iter()
+                    .filter_map(|x| x.as_u64().map(|v| v as u32))
+                    .collect();
+            }
+            Some(x) => {
+                if let Some(id) = x.as_u64() {
+                    cfg.eos_token_ids = vec![id as u32];
+                }
+            }
+            None => {}
+        }
+        for &id in &[151_643u32, 151_645] {
+            if !cfg.eos_token_ids.contains(&id) {
+                cfg.eos_token_ids.push(id);
+            }
         }
 
         Ok(cfg)
@@ -1034,6 +1064,16 @@ impl Qwen3AsrModel {
 
     /// Full transcription pipeline: encode audio → prefill → greedy decode.
     fn transcribe(&mut self, samples: &[f32], abort_flag: &Arc<AtomicBool>) -> Result<Vec<u32>> {
+        // Chat-template token IDs (identical across all Qwen3-ASR sizes)
+        const IM_START: i32 = 151644;
+        const IM_END: i32 = 151645;
+        const AUDIO_START: i32 = 151669;
+        const AUDIO_END: i32 = 151670;
+        const NEWLINE: i32 = 198;
+        const SYSTEM: i32 = 9125;
+        const USER: i32 = 882;
+        const ASSISTANT: i32 = 77091;
+
         // 1. Mel spectrogram
         let mel_flat = mel::whisper_mel(samples);
         let n_frames = mel::mel_frame_count(samples.len());
@@ -1041,23 +1081,34 @@ impl Qwen3AsrModel {
         // 2. Encode audio
         let audio_embeds = self.encoder.forward(&mel_flat, n_frames)?;
         // audio_embeds: [1, audio_tokens, output_dim]
+        log::debug!("MLX encoder output shape: {:?}", audio_embeds.shape());
 
-        // 3. Build prefix: <|startofaudio|>
-        let start_tok = Array::from_slice(&[self.config.audio_start_token_id as i32], &[1, 1]);
-        let start_emb = self.decoder.embed_tokens.forward(&start_tok)?;
+        // 3. Build prefix tokens:
+        //    <|im_start|>system\n<|im_end|>\n<|im_start|>user\n<|audio_start|>
+        let prefix_ids_vec = vec![
+            IM_START,
+            SYSTEM,
+            NEWLINE,
+            IM_END,
+            NEWLINE,
+            IM_START,
+            USER,
+            NEWLINE,
+            AUDIO_START,
+        ];
+        let prefix_len_tok = prefix_ids_vec.len() as i32;
+        let prefix_ids = Array::from_slice(&prefix_ids_vec, &[1, prefix_len_tok]);
+        let prefix_emb = self.decoder.embed_tokens.forward(&prefix_ids)?;
 
-        // 4. Build suffix: <|endofaudio|> <|transcribe|>
-        let suffix_ids = Array::from_slice(
-            &[
-                self.config.audio_end_token_id as i32,
-                self.config.transcribe_token_id as i32,
-            ],
-            &[1, 2],
-        );
+        // 4. Build suffix tokens:
+        //    <|audio_end|><|im_end|>\n<|im_start|>assistant\n
+        let suffix_ids_vec = vec![AUDIO_END, IM_END, NEWLINE, IM_START, ASSISTANT, NEWLINE];
+        let suffix_len_tok = suffix_ids_vec.len() as i32;
+        let suffix_ids = Array::from_slice(&suffix_ids_vec, &[1, suffix_len_tok]);
         let suffix_emb = self.decoder.embed_tokens.forward(&suffix_ids)?;
 
-        // 5. Concatenate: start_emb + audio_embeds + suffix_emb → [1, total, hidden]
-        let prefix_embeds = ops::concatenate_axis(&[&start_emb, &audio_embeds, &suffix_emb], 1)?;
+        // 5. Concatenate: prefix_emb + audio_embeds + suffix_emb → [1, total, hidden]
+        let prefix_embeds = ops::concatenate_axis(&[&prefix_emb, &audio_embeds, &suffix_emb], 1)?;
         let prefix_len = prefix_embeds.shape()[1];
 
         // 6. Prefill: run through decoder with causal mask
@@ -1077,13 +1128,19 @@ impl Qwen3AsrModel {
         let mut next_token = argmax_last_token(&logits)?;
         let mut offset = prefix_len;
 
-        for _ in 0..MAX_GEN_TOKENS {
+        log::debug!(
+            "MLX prefill done: prefix_len={prefix_len}, first_token={next_token}, eos={:?}",
+            self.config.eos_token_ids
+        );
+
+        for step in 0..MAX_GEN_TOKENS {
             if abort_flag.load(Ordering::Relaxed) {
                 break;
             }
 
             let tok_id = next_token;
-            if tok_id == self.config.eos_token_id {
+            if self.config.eos_token_ids.contains(&tok_id) {
+                log::debug!("MLX decode: EOS at step {step}, token {tok_id}");
                 break;
             }
             generated.push(tok_id);
@@ -1103,6 +1160,11 @@ impl Qwen3AsrModel {
             next_token = argmax_last_token(&step_logits)?;
         }
 
+        log::debug!(
+            "MLX decode: generated {} tokens: {:?}",
+            generated.len(),
+            &generated[..generated.len().min(10)]
+        );
         Ok(generated)
     }
 }
@@ -1141,6 +1203,17 @@ fn load_all_safetensors(dir: &Path) -> Result<HashMap<String, Array>> {
         all.extend(shard);
     }
     Ok(all)
+}
+
+/// Strip the `language ...<asr_text>` prefix that Qwen3-ASR emits.
+fn strip_asr_prefix(text: &str) -> String {
+    if let Some(pos) = text.find("<asr_text>") {
+        return text[pos + "<asr_text>".len()..].to_string();
+    }
+    if let Some(pos) = text.find("asr_text>") {
+        return text[pos + "asr_text>".len()..].to_string();
+    }
+    text.to_string()
 }
 
 // ─── MlxEngine (public API) ────────────────────────────────────────
@@ -1197,7 +1270,12 @@ impl AsrEngine for MlxEngine {
         let abort = Arc::new(AtomicBool::new(false));
         let mut model = self.model.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
         let token_ids = model.transcribe(samples, &abort)?;
-        let text = self.decode_tokens(&token_ids);
+        let raw_text = self.decode_tokens(&token_ids);
+        log::debug!(
+            "MLX raw decoded: '{raw_text}' from {} tokens",
+            token_ids.len()
+        );
+        let text = strip_asr_prefix(&raw_text);
         Ok(TranscriptionResult {
             text,
             pre_formatted: true,
@@ -1226,7 +1304,7 @@ impl AsrEngine for MlxEngine {
 
         let mut model = self.model.lock().map_err(|e| anyhow::anyhow!("{e}"))?;
         let token_ids = model.transcribe(&st.accumulated_samples, abort_flag)?;
-        let text = self.decode_tokens(&token_ids);
+        let text = strip_asr_prefix(&self.decode_tokens(&token_ids));
         Ok(TranscriptionResult {
             text,
             pre_formatted: true,

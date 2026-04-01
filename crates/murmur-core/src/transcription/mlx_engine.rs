@@ -273,14 +273,16 @@ fn apply_rope(x: &Array, cos: &Array, sin: &Array, offset: i32) -> Result<Array>
     let x1 = narrow_last_dim(x, 0, half)?;
     let x2 = narrow_last_dim(x, half, half)?;
 
-    // rotated = concat(-x2, x1, dim=-1)
-    let neg_x2 = ops::negative(&x2)?;
-    let rotated = ops::concatenate_axis(&[&neg_x2, &x1], -1)?;
+    // result = x1 * cos - x2 * sin, x2 * cos + x1 * sin (standard RoPE)
+    let a1 = ops::multiply(&x1, &cos_slice)?;
+    let b1 = ops::multiply(&x2, &sin_slice)?;
+    let out1 = ops::subtract(&a1, &b1)?;
 
-    // result = x * cos + rotated * sin
-    let a = ops::multiply(x, &cos_slice)?;
-    let b = ops::multiply(&rotated, &sin_slice)?;
-    ops::add(&a, &b).map_err(Into::into)
+    let a2 = ops::multiply(&x2, &cos_slice)?;
+    let b2 = ops::multiply(&x1, &sin_slice)?;
+    let out2 = ops::add(&a2, &b2)?;
+
+    ops::concatenate_axis(&[&out1, &out2], -1).map_err(Into::into)
 }
 
 /// Slice `arr` along dim-0: `arr[offset .. offset+len, :]`
@@ -555,16 +557,18 @@ impl AudioEncoder {
         h = ops::add(&h, &pos_emb)?;
 
         // Process in windows: split into chunks along the time axis
-        let tokens_per_window = window_frames / 8; // 100/8 ≈ 12-13
-        let n_windows = t8 / tokens_per_window;
+        // Use ceiling division to ensure all tokens are processed
+        let tokens_per_window = (window_frames + 7) / 8; // 100 → 13 (matches reference)
+        let n_windows = (t8 + tokens_per_window - 1) / tokens_per_window;
         let mut window_outputs = Vec::new();
 
         for win in 0..n_windows {
             let start = win * tokens_per_window;
-            let end = start + tokens_per_window;
+            let end = (start + tokens_per_window).min(t8);
+            let win_len = end - start;
             let indices: Vec<i32> = (start..end).collect();
-            let idx = Array::from_slice(&indices, &[tokens_per_window]);
-            let mut chunk = h.take_axis(&idx, 1)?; // [1, tokens_per_window, d_model]
+            let idx = Array::from_slice(&indices, &[win_len]);
+            let mut chunk = h.take_axis(&idx, 1)?; // [1, win_len, d_model]
 
             // Transformer layers (bidirectional)
             for layer in &mut self.layers {

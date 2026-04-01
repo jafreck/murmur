@@ -3,7 +3,7 @@
 //! Parameters match Whisper / Qwen3-ASR: 16 kHz, 128 mel bins, 25 ms window
 //! (n_fft = 400), 10 ms hop (hop_length = 160), Hann window, 0–8 kHz.
 
-#![cfg(feature = "onnx")]
+#![cfg(any(feature = "onnx", feature = "mlx"))]
 
 use realfft::RealFftPlanner;
 

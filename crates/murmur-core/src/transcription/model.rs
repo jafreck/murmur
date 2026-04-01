@@ -112,6 +112,13 @@ pub fn qwen3_asr_model_dir(model_size: &str) -> PathBuf {
         .join(format!("qwen3-asr-{model_size}"))
 }
 
+/// Return the directory where MLX Qwen3-ASR models are stored.
+pub fn mlx_model_dir(model_size: &str) -> PathBuf {
+    Config::dir()
+        .join("models")
+        .join(format!("mlx-qwen3-asr-{model_size}"))
+}
+
 /// Return the directory where Parakeet ONNX models are stored.
 pub fn parakeet_model_dir(model_size: &str) -> PathBuf {
     Config::dir()
@@ -234,6 +241,11 @@ pub fn download_onnx_model(
         AsrBackend::Whisper => {
             anyhow::bail!("Use download() for Whisper models");
         }
+        AsrBackend::Mlx => {
+            anyhow::bail!(
+                "MLX model download not yet implemented — stub engine does not need weights"
+            );
+        }
     };
 
     std::fs::create_dir_all(&dir).context("Failed to create model directory")?;
@@ -278,6 +290,7 @@ pub fn onnx_model_exists(
         ),
         AsrBackend::Parakeet => (parakeet_model_dir(model_size), parakeet_files(quantization)),
         AsrBackend::Whisper => return super::transcriber::model_exists(model_size),
+        AsrBackend::Mlx => return false,
     };
 
     files.iter().all(|f| dir.join(f).exists())
@@ -295,6 +308,11 @@ pub fn download_for_backend(
         AsrBackend::Qwen3Asr | AsrBackend::Parakeet => {
             download_onnx_model(backend, model_size, quantization, on_progress)
         }
+        AsrBackend::Mlx => {
+            anyhow::bail!(
+                "MLX model download not yet implemented — stub engine does not need weights"
+            );
+        }
     }
 }
 
@@ -309,6 +327,7 @@ pub fn model_exists_for_backend(
         AsrBackend::Qwen3Asr | AsrBackend::Parakeet => {
             onnx_model_exists(backend, model_size, quantization)
         }
+        AsrBackend::Mlx => false,
     }
 }
 

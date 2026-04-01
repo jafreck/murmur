@@ -152,10 +152,13 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(config: &Config) -> Self {
+        // Native-streaming backends (Qwen3-ASR, MLX, Parakeet) default to
+        // streaming enabled. The user can still toggle it off via the tray.
+        let streaming = config.streaming || config.asr_backend.supports_native_streaming();
         Self {
             is_pressed: false,
             mode: config.mode.clone(),
-            streaming: config.streaming,
+            streaming,
             spoken_punctuation: config.spoken_punctuation,
             filler_word_removal: config.filler_word_removal,
             translate_to_english: config.translate_to_english,
@@ -420,7 +423,10 @@ impl AppState {
                         text: text.to_string(),
                         replace_chars: streamed_chars,
                     });
-                } else if !was_streaming {
+                } else {
+                    // Either streaming wasn't active, or it was but produced
+                    // no output yet (e.g. short audio, VAD filtered). Insert
+                    // the batch transcription directly.
                     effects.push(AppEffect::InsertText(text.to_string()));
                 }
             }

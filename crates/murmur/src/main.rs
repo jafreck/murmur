@@ -126,8 +126,9 @@ fn cmd_start(notes: bool, backend: Option<String>, model: Option<String>) -> Res
                 "whisper" => AsrBackend::Whisper,
                 "qwen3-asr" | "qwen3_asr" | "qwen" => AsrBackend::Qwen3Asr,
                 "parakeet" => AsrBackend::Parakeet,
+                "mlx" => AsrBackend::Mlx,
                 _ => anyhow::bail!(
-                    "Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet"
+                    "Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet, mlx"
                 ),
             };
             // Set default model size for the new backend if current one is invalid
@@ -242,7 +243,10 @@ fn cmd_download_model(size: &str, backend_str: &str) -> Result<()> {
         "whisper" => AsrBackend::Whisper,
         "qwen3-asr" | "qwen3_asr" | "qwen" => AsrBackend::Qwen3Asr,
         "parakeet" => AsrBackend::Parakeet,
-        _ => anyhow::bail!("Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet"),
+        "mlx" => AsrBackend::Mlx,
+        _ => {
+            anyhow::bail!("Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet, mlx")
+        }
     };
 
     let cfg = config::Config::load();

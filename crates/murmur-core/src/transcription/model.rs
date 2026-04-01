@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-use crate::config::Config;
+use crate::config::{AsrBackend, AsrQuantization, Config};
 
 const BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 
@@ -99,6 +99,217 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
 
     log::info!("Model downloaded to {}", dest_path.display());
     Ok(dest_path)
+}
+
+// ---------------------------------------------------------------------------
+// ONNX model helpers
+// ---------------------------------------------------------------------------
+
+/// Return the directory where Qwen3-ASR ONNX models are stored.
+pub fn qwen3_asr_model_dir(model_size: &str) -> PathBuf {
+    Config::dir()
+        .join("models")
+        .join(format!("qwen3-asr-{model_size}"))
+}
+
+/// Return the directory where Parakeet ONNX models are stored.
+pub fn parakeet_model_dir(model_size: &str) -> PathBuf {
+    Config::dir()
+        .join("models")
+        .join(format!("parakeet-{model_size}"))
+}
+
+fn qwen3_asr_hf_repo(model_size: &str) -> String {
+    format!("andrewleech/qwen3-asr-{model_size}-onnx")
+}
+
+fn parakeet_hf_repo(_model_size: &str) -> &'static str {
+    "istupakov/parakeet-tdt-0.6b-v3-onnx"
+}
+
+fn qwen3_asr_files(quantization: AsrQuantization) -> Vec<&'static str> {
+    match quantization {
+        AsrQuantization::Int4 => vec![
+            "encoder.int4.onnx",
+            "decoder_init.int4.onnx",
+            "decoder_step.int4.onnx",
+            "decoder_weights.int4.data",
+            "embed_tokens.bin",
+            "tokenizer.json",
+            "config.json",
+        ],
+        _ => vec![
+            "encoder.onnx",
+            "decoder_init.onnx",
+            "decoder_step.onnx",
+            "decoder_weights.data",
+            "embed_tokens.bin",
+            "tokenizer.json",
+            "config.json",
+        ],
+    }
+}
+
+fn parakeet_files(quantization: AsrQuantization) -> Vec<&'static str> {
+    match quantization {
+        AsrQuantization::Int8 => vec!["model.int8.onnx", "tokenizer.json"],
+        _ => vec!["model.onnx", "tokenizer.json"],
+    }
+}
+
+/// Download a single file from HuggingFace into `dest_dir`, using an atomic
+/// `.part` rename.  `file_progress` is called with bytes-so-far for this file.
+fn download_hf_file(
+    repo: &str,
+    filename: &str,
+    dest_dir: &std::path::Path,
+    file_progress: impl Fn(u64, u64),
+) -> Result<()> {
+    let dest = dest_dir.join(filename);
+    if dest.exists() {
+        log::info!("  {} already present, skipping", filename);
+        // Report full progress for this file so the caller can advance.
+        if let Ok(meta) = std::fs::metadata(&dest) {
+            file_progress(meta.len(), meta.len());
+        }
+        return Ok(());
+    }
+
+    let url = format!("https://huggingface.co/{repo}/resolve/main/{filename}");
+    log::info!("  downloading {filename} from {url}");
+
+    let response = reqwest::blocking::get(&url).context("Failed to connect to HuggingFace")?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Download of {filename} failed with HTTP status {}",
+            response.status()
+        );
+    }
+
+    let total = response.content_length().unwrap_or(0);
+    let mut reader = response;
+
+    let part_path = dest_dir.join(format!("{filename}.part"));
+    let mut file = File::create(&part_path).context("Failed to create temporary file")?;
+
+    let mut downloaded: u64 = 0;
+    let mut buf = [0u8; 8192];
+
+    loop {
+        let n = reader.read(&mut buf).context("Download read error")?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buf[..n]).context("Write error")?;
+        downloaded += n as u64;
+        file_progress(downloaded, total);
+    }
+
+    drop(file);
+
+    std::fs::rename(&part_path, &dest).context("Failed to move downloaded file to final path")?;
+    Ok(())
+}
+
+/// Download all ONNX model files for the given backend, model size, and
+/// quantization level. Returns the model directory path.
+pub fn download_onnx_model(
+    backend: AsrBackend,
+    model_size: &str,
+    quantization: AsrQuantization,
+    on_progress: impl Fn(f64),
+) -> Result<PathBuf> {
+    let (dir, repo, files): (PathBuf, String, Vec<&str>) = match backend {
+        AsrBackend::Qwen3Asr => (
+            qwen3_asr_model_dir(model_size),
+            qwen3_asr_hf_repo(model_size),
+            qwen3_asr_files(quantization),
+        ),
+        AsrBackend::Parakeet => (
+            parakeet_model_dir(model_size),
+            parakeet_hf_repo(model_size).to_owned(),
+            parakeet_files(quantization),
+        ),
+        AsrBackend::Whisper => {
+            anyhow::bail!("Use download() for Whisper models");
+        }
+    };
+
+    std::fs::create_dir_all(&dir).context("Failed to create model directory")?;
+
+    let file_count = files.len() as f64;
+    for (idx, filename) in files.iter().enumerate() {
+        let base_frac = idx as f64 / file_count;
+        download_hf_file(&repo, filename, &dir, |downloaded, total| {
+            let file_frac = if total > 0 {
+                downloaded as f64 / total as f64
+            } else {
+                0.0
+            };
+            on_progress((base_frac + file_frac / file_count) * 100.0);
+        })?;
+    }
+
+    on_progress(100.0);
+
+    // Validate all files are present
+    for filename in &files {
+        let path = dir.join(filename);
+        if !path.exists() {
+            anyhow::bail!("Expected file {} is missing after download", filename);
+        }
+    }
+
+    log::info!("ONNX model downloaded to {}", dir.display());
+    Ok(dir)
+}
+
+/// Check whether all required ONNX model files are present on disk.
+pub fn onnx_model_exists(
+    backend: AsrBackend,
+    model_size: &str,
+    quantization: AsrQuantization,
+) -> bool {
+    let (dir, files): (PathBuf, Vec<&str>) = match backend {
+        AsrBackend::Qwen3Asr => (
+            qwen3_asr_model_dir(model_size),
+            qwen3_asr_files(quantization),
+        ),
+        AsrBackend::Parakeet => (parakeet_model_dir(model_size), parakeet_files(quantization)),
+        AsrBackend::Whisper => return super::transcriber::model_exists(model_size),
+    };
+
+    files.iter().all(|f| dir.join(f).exists())
+}
+
+/// Download the model for the given backend configuration.
+pub fn download_for_backend(
+    backend: AsrBackend,
+    model_size: &str,
+    quantization: AsrQuantization,
+    on_progress: impl Fn(f64),
+) -> Result<PathBuf> {
+    match backend {
+        AsrBackend::Whisper => download(model_size, on_progress),
+        AsrBackend::Qwen3Asr | AsrBackend::Parakeet => {
+            download_onnx_model(backend, model_size, quantization, on_progress)
+        }
+    }
+}
+
+/// Check if the model exists for the given backend.
+pub fn model_exists_for_backend(
+    backend: AsrBackend,
+    model_size: &str,
+    quantization: AsrQuantization,
+) -> bool {
+    match backend {
+        AsrBackend::Whisper => super::transcriber::model_exists(model_size),
+        AsrBackend::Qwen3Asr | AsrBackend::Parakeet => {
+            onnx_model_exists(backend, model_size, quantization)
+        }
+    }
 }
 
 /// Check GGML/GGJT/GGUF magic bytes at the start of the file.

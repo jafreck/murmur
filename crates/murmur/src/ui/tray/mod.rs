@@ -323,6 +323,7 @@ pub struct TrayController {
 
     status_item: MenuItem,
     hotkey_item: MenuItem,
+    backend_item: MenuItem,
     update_item: MenuItem,
 
     idle_icon: Icon,
@@ -363,6 +364,7 @@ impl TrayController {
     pub fn new(config: &Config) -> Result<Self> {
         let status_item = MenuItem::new("murmur: Idle", false, None);
         let hotkey_item = MenuItem::new(format!("Hotkey: {}", config.hotkey), false, None);
+        let backend_item = MenuItem::new(format!("Backend: {}", config.asr_backend), false, None);
 
         let set_hotkey = MenuItem::new("Set Hotkey…", true, None);
         let set_hotkey_id = set_hotkey.id().clone();
@@ -371,7 +373,7 @@ impl TrayController {
         let copy_last_id = copy_last.id().clone();
 
         let model_submenu = Submenu::new("Model", true);
-        let model_items: Vec<(&str, String)> = crate::config::SUPPORTED_MODELS
+        let model_items: Vec<(&str, String)> = crate::config::supported_models(config.asr_backend)
             .iter()
             .map(|&s| (s, s.to_string()))
             .collect();
@@ -440,6 +442,7 @@ impl TrayController {
 
         let menu = Menu::new();
         menu.append(&status_item)?;
+        menu.append(&backend_item)?;
         menu.append(&PredefinedMenuItem::separator())?;
         menu.append(&copy_last)?;
         menu.append(&PredefinedMenuItem::separator())?;
@@ -558,6 +561,7 @@ impl TrayController {
             app_mode_item,
             status_item,
             hotkey_item,
+            backend_item,
             update_item,
             idle_icon,
             recording_icon,
@@ -848,6 +852,8 @@ impl TrayController {
         self.set_language(&config.language);
         self.set_mode(&config.mode);
         self.set_hotkey(&config.hotkey);
+        self.backend_item
+            .set_text(format!("Backend: {}", config.asr_backend));
         self.spoken_punct_item
             .set_checked(config.spoken_punctuation);
         self.filler_removal_item

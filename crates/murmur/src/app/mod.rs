@@ -17,9 +17,9 @@ use crate::config::{AppMode, Config};
 use crate::input::hotkey::{self, HotkeyManager};
 use crate::input::keycodes;
 use crate::platform::permissions;
-use crate::transcription::transcriber::Transcriber;
 use crate::ui::tray::{TrayAction, TrayController};
 use crate::VERSION;
+use murmur_core::transcription::AsrEngine;
 
 use tray_icon::menu::MenuEvent;
 use tray_icon::TrayIconEvent;
@@ -163,50 +163,33 @@ pub fn run(notes_mode: bool) -> Result<()> {
     });
 
     // Load the model on a background thread so the tray appears immediately.
-    let mut transcriber: Option<Arc<Transcriber>> = None;
+    let mut engine: Option<Arc<dyn AsrEngine + Send + Sync>> = None;
     let mut streaming_worker: Option<murmur_core::transcription::SubprocessTranscriber> = None;
     {
+        let backend = config.asr_backend;
         let model_size = config.model_size.clone();
         let language = config.language.clone();
+        let quantization = config.asr_quantization;
         let tx_load = tx.clone();
+
+        // Warn about streaming limitations for non-Whisper backends
+        if config.streaming && !matches!(backend, murmur_core::config::AsrBackend::Whisper) {
+            info!(
+                "Streaming with {backend} uses chunk-based fallback \
+                 (subprocess streaming is Whisper-only)"
+            );
+        }
+
         std::thread::spawn(move || {
-            if !crate::transcription::transcriber::model_exists(&model_size) {
-                info!("Downloading {model_size} model...");
-                let last_pct = std::cell::Cell::new(u32::MAX);
-                if let Err(e) = crate::transcription::model::download(&model_size, |percent| {
-                    let pct = percent as u32;
-                    if pct != last_pct.get() {
-                        last_pct.set(pct);
-                        eprint!("\rDownloading {model_size} model... {pct}%");
-                    }
-                }) {
-                    error!("Failed to download model '{model_size}': {e}");
-                    let _ = tx_load.send(AppMessage::TranscriptionError(format!(
-                        "Failed to download model '{model_size}': {e}"
-                    )));
-                    return;
-                }
-                eprintln!();
-            }
-
-            let Some(model_path) = crate::transcription::transcriber::find_model(&model_size)
-            else {
-                error!("Model '{model_size}' not found after download");
-                let _ = tx_load.send(AppMessage::TranscriptionError(format!(
-                    "Model '{model_size}' not found after download"
-                )));
-                return;
-            };
-
-            match Transcriber::new(&model_path, &language) {
-                Ok(t) => {
-                    info!("Model '{model_size}' loaded");
-                    let _ = tx_load.send(AppMessage::TranscriberReady(Arc::new(t), 0));
+            match effects::create_engine_on_thread(backend, &model_size, &language, quantization) {
+                Ok(e) => {
+                    info!("{backend} model '{model_size}' loaded");
+                    let _ = tx_load.send(AppMessage::EngineReady(Arc::from(e), 0));
                 }
                 Err(e) => {
-                    error!("Failed to load model '{model_size}': {e}");
+                    error!("Failed to load {backend} model '{model_size}': {e}");
                     let _ = tx_load.send(AppMessage::TranscriptionError(format!(
-                        "Failed to load model '{model_size}': {e}"
+                        "Failed to load {backend} model '{model_size}': {e}"
                     )));
                 }
             }
@@ -313,27 +296,34 @@ pub fn run(notes_mode: bool) -> Result<()> {
         }
 
         while let Ok(msg) = rx.try_recv() {
-            // TranscriberReady carries an Arc that must be moved out,
+            // EngineReady carries an Arc that must be moved out,
             // so handle it directly instead of going through the state machine.
-            if let AppMessage::TranscriberReady(new_t, generation) = msg {
+            if let AppMessage::EngineReady(new_engine, generation) = msg {
                 if generation == state.reload_generation {
                     // Pre-spawn the whisper worker subprocess so streaming
                     // starts instantly without model-loading delay.
-                    match murmur_core::transcription::SubprocessTranscriber::new(
-                        new_t.model_path(),
-                        new_t.language(),
-                    ) {
-                        Ok(w) => {
-                            streaming_worker = Some(w);
-                            info!("Whisper worker subprocess ready");
-                        }
-                        Err(e) => {
-                            error!("Failed to spawn whisper worker: {e}");
+                    // Only applicable for the Whisper backend.
+                    if matches!(config.asr_backend, murmur_core::config::AsrBackend::Whisper) {
+                        if let Some(model_path) =
+                            murmur_core::transcription::find_model(&config.model_size)
+                        {
+                            match murmur_core::transcription::SubprocessTranscriber::new(
+                                &model_path,
+                                &config.language,
+                            ) {
+                                Ok(w) => {
+                                    streaming_worker = Some(w);
+                                    info!("Whisper worker subprocess ready");
+                                }
+                                Err(e) => {
+                                    error!("Failed to spawn whisper worker: {e}");
+                                }
+                            }
                         }
                     }
-                    transcriber = Some(new_t);
+                    engine = Some(new_engine);
                     tray.set_state(crate::ui::tray::TrayState::Idle);
-                    info!("Transcriber ready");
+                    info!("ASR engine ready");
                     if generation == 0 {
                         println!("Ready.");
                         // Start wake word detector now that the main model is loaded
@@ -375,7 +365,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
                     }
                 } else {
                     info!(
-                        "Discarding stale transcriber reload (gen {generation}, current {})",
+                        "Discarding stale engine reload (gen {generation}, current {})",
                         state.reload_generation
                     );
                 }
@@ -431,7 +421,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
                     effect,
                     &mut EffectContext {
                         recorder: &mut recorder,
-                        transcriber: &mut transcriber,
+                        engine: &mut engine,
                         tray: &mut tray,
                         config: &mut config,
                         state: &mut state,
@@ -479,7 +469,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
                 effect,
                 &mut EffectContext {
                     recorder: &mut recorder,
-                    transcriber: &mut transcriber,
+                    engine: &mut engine,
                     tray: &mut tray,
                     config: &mut config,
                     state: &mut state,

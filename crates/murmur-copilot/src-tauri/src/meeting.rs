@@ -6,7 +6,9 @@ use log::{info, warn};
 use murmur_core::{
     audio::{AudioRecorder, SystemAudioCapturer},
     config::Config,
-    transcription::{start_streaming, streaming::StreamingHandle, StreamingEvent, Transcriber},
+    transcription::{
+        start_streaming, streaming::StreamingHandle, AsrEngine, StreamingEvent, WhisperEngine,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -41,7 +43,9 @@ pub struct MeetingSession {
     state: SessionState,
     recorder: AudioRecorder,
     system_capturer: Option<SystemAudioCapturer>,
-    transcriber: Arc<Transcriber>,
+    transcriber: Arc<dyn AsrEngine + Send + Sync>,
+    model_path: std::path::PathBuf,
+    language: String,
     mic_streaming: Option<StreamingHandle>,
     sys_streaming: Option<StreamingHandle>,
     transcript: Arc<Mutex<Vec<TranscriptEntry>>>,
@@ -72,7 +76,8 @@ impl MeetingSession {
                 .expect("failed to download whisper model")
             });
 
-        let transcriber = Arc::new(Transcriber::new(&model_path, &config.language)?);
+        let transcriber: Arc<dyn AsrEngine + Send + Sync> =
+            Arc::new(WhisperEngine::new(&model_path, &config.language)?);
         let mut recorder = AudioRecorder::with_noise_suppression(config.noise_suppression);
         recorder.warm()?;
 
@@ -92,6 +97,8 @@ impl MeetingSession {
             recorder,
             system_capturer,
             transcriber,
+            model_path: model_path.clone(),
+            language: config.language.clone(),
             mic_streaming: None,
             sys_streaming: None,
             transcript: Arc::new(Mutex::new(Vec::new())),
@@ -151,8 +158,8 @@ impl MeetingSession {
 
         let (mic_tx, mic_rx) = mpsc::channel::<StreamingEvent>();
         let mic_worker = murmur_core::transcription::SubprocessTranscriber::new(
-            self.transcriber.model_path(),
-            self.transcriber.language(),
+            &self.model_path,
+            &self.language,
         )?;
         let mic_handle = start_streaming(
             mic_samples,
@@ -160,7 +167,7 @@ impl MeetingSession {
             self.config.translate_to_english,
             self.config.filler_word_removal,
             mic_tx,
-            mic_worker,
+            Some(mic_worker),
         );
         self.mic_streaming = Some(mic_handle);
 
@@ -169,8 +176,8 @@ impl MeetingSession {
             match capturer.start() {
                 Ok(sys_samples) => {
                     match murmur_core::transcription::SubprocessTranscriber::new(
-                        self.transcriber.model_path(),
-                        self.transcriber.language(),
+                        &self.model_path,
+                        &self.language,
                     ) {
                         Ok(sys_worker) => {
                             let (sys_tx, sys_rx) = mpsc::channel::<StreamingEvent>();
@@ -180,7 +187,7 @@ impl MeetingSession {
                                 self.config.translate_to_english,
                                 self.config.filler_word_removal,
                                 sys_tx,
-                                sys_worker,
+                                Some(sys_worker),
                             );
                             self.sys_streaming = Some(sys_handle);
                             Some(sys_rx)

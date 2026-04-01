@@ -3,6 +3,7 @@ use murmur::config;
 use murmur::input::keycodes;
 use murmur::transcription::{model, transcriber};
 use murmur::VERSION;
+use murmur_core::config::AsrBackend;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -25,6 +26,9 @@ enum Commands {
         /// Enable notes mode for this session
         #[arg(long)]
         notes: bool,
+        /// ASR backend engine (whisper, qwen3-asr, parakeet)
+        #[arg(long)]
+        backend: Option<String>,
     },
     /// Set the push-to-talk hotkey
     SetHotkey {
@@ -48,6 +52,9 @@ enum Commands {
         /// Model size (defaults to "base.en")
         #[arg(default_value = "base.en")]
         size: String,
+        /// ASR backend for the model (whisper, qwen3-asr, parakeet)
+        #[arg(long, default_value = "whisper")]
+        backend: String,
     },
     /// Check for updates and install the latest version
     Update {
@@ -79,12 +86,12 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Some(Commands::Start { notes }) => cmd_start(notes),
+        Some(Commands::Start { notes, backend }) => cmd_start(notes, backend),
         Some(Commands::SetHotkey { key }) => cmd_set_hotkey(&key),
         Some(Commands::GetHotkey) => cmd_get_hotkey(),
         Some(Commands::SetModel { size }) => cmd_set_model(&size),
         Some(Commands::SetLanguage { code }) => cmd_set_language(&code),
-        Some(Commands::DownloadModel { size }) => cmd_download_model(&size),
+        Some(Commands::DownloadModel { size, backend }) => cmd_download_model(&size, &backend),
         Some(Commands::Update { check }) => cmd_update(check),
         Some(Commands::Status) => cmd_status(),
         Some(Commands::Overlay) => murmur::ui::overlay::run_overlay(),
@@ -103,8 +110,23 @@ fn main() {
     }
 }
 
-fn cmd_start(notes: bool) -> Result<()> {
+fn cmd_start(notes: bool, backend: Option<String>) -> Result<()> {
     println!("murmur v{VERSION}");
+    if let Some(ref backend_str) = backend {
+        let mut cfg = config::Config::load();
+        cfg.asr_backend = match backend_str.as_str() {
+            "whisper" => AsrBackend::Whisper,
+            "qwen3-asr" | "qwen3_asr" | "qwen" => AsrBackend::Qwen3Asr,
+            "parakeet" => AsrBackend::Parakeet,
+            _ => anyhow::bail!("Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet"),
+        };
+        // Set default model size for the new backend if current one is invalid
+        let valid_models = config::supported_models(cfg.asr_backend);
+        if !valid_models.contains(&cfg.model_size.as_str()) {
+            cfg.model_size = cfg.default_model_for_backend().to_string();
+        }
+        cfg.save()?;
+    }
     app::run(notes)
 }
 
@@ -142,10 +164,17 @@ fn cmd_set_model(size: &str) -> Result<()> {
 }
 
 pub fn validate_model(size: &str) -> Result<()> {
-    if !config::SUPPORTED_MODELS.contains(&size) {
+    let cfg = config::Config::load();
+    validate_model_for_backend(size, cfg.asr_backend)
+}
+
+fn validate_model_for_backend(size: &str, backend: AsrBackend) -> Result<()> {
+    let valid = config::supported_models(backend);
+    if !valid.contains(&size) {
         anyhow::bail!(
-            "Unknown model '{size}'. Available: {}",
-            config::SUPPORTED_MODELS.join(", ")
+            "Unknown model '{size}' for {} backend. Available: {}",
+            backend,
+            valid.join(", ")
         );
     }
     Ok(())
@@ -180,6 +209,7 @@ pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
         "murmur v{VERSION}\n\
          Config:       {}\n\
          Hotkey:       {}\n\
+         Backend:      {}\n\
          Model:        {}\n\
          Model ready:  {model_ready_str}\n\
          Language:     {lang_name} ({})\n\
@@ -187,20 +217,48 @@ pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
          Streaming:    {streaming_str}",
         config::Config::file_path().display(),
         cfg.hotkey,
+        cfg.asr_backend,
         cfg.model_size,
         cfg.language,
     )
 }
 
-fn cmd_download_model(size: &str) -> Result<()> {
+fn cmd_download_model(size: &str, backend_str: &str) -> Result<()> {
+    let backend = match backend_str {
+        "whisper" => AsrBackend::Whisper,
+        "qwen3-asr" | "qwen3_asr" | "qwen" => AsrBackend::Qwen3Asr,
+        "parakeet" => AsrBackend::Parakeet,
+        _ => anyhow::bail!("Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet"),
+    };
+
+    let cfg = config::Config::load();
     let last_pct = std::cell::Cell::new(u32::MAX);
-    model::download(size, |percent| {
-        let pct = percent as u32;
-        if pct != last_pct.get() {
-            last_pct.set(pct);
-            eprint!("\rDownloading {size} model... {pct}%");
+
+    match backend {
+        AsrBackend::Whisper => {
+            model::download(size, |percent| {
+                let pct = percent as u32;
+                if pct != last_pct.get() {
+                    last_pct.set(pct);
+                    eprint!("\rDownloading {size} model... {pct}%");
+                }
+            })?;
         }
-    })?;
+        _ => {
+            murmur_core::transcription::download_for_backend(
+                backend,
+                size,
+                cfg.asr_quantization,
+                |percent| {
+                    let pct = percent as u32;
+                    if pct != last_pct.get() {
+                        last_pct.set(pct);
+                        eprint!("\rDownloading {backend} {size} model... {pct}%");
+                    }
+                },
+            )?;
+        }
+    }
     eprintln!();
     println!("Model downloaded.");
     Ok(())
@@ -249,20 +307,24 @@ mod tests {
 
     #[test]
     fn test_validate_model_valid() {
-        assert!(validate_model("base.en").is_ok());
-        assert!(validate_model("tiny.en").is_ok());
-        assert!(validate_model("small.en").is_ok());
-        assert!(validate_model("medium.en").is_ok());
-        assert!(validate_model("large-v3-turbo").is_ok());
-        assert!(validate_model("large").is_ok());
-        assert!(validate_model("distil-large-v3").is_ok());
+        assert!(validate_model_for_backend("base.en", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("tiny.en", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("small.en", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("medium.en", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("large-v3-turbo", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("large", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("distil-large-v3", AsrBackend::Whisper).is_ok());
+        assert!(validate_model_for_backend("0.6b", AsrBackend::Qwen3Asr).is_ok());
+        assert!(validate_model_for_backend("1.7b", AsrBackend::Qwen3Asr).is_ok());
+        assert!(validate_model_for_backend("0.6b-v2", AsrBackend::Parakeet).is_ok());
     }
 
     #[test]
     fn test_validate_model_invalid() {
-        assert!(validate_model("nonexistent").is_err());
-        assert!(validate_model("").is_err());
-        assert!(validate_model("huge").is_err());
+        assert!(validate_model_for_backend("nonexistent", AsrBackend::Whisper).is_err());
+        assert!(validate_model_for_backend("", AsrBackend::Whisper).is_err());
+        assert!(validate_model_for_backend("huge", AsrBackend::Whisper).is_err());
+        assert!(validate_model_for_backend("base.en", AsrBackend::Qwen3Asr).is_err());
     }
 
     #[test]
@@ -375,17 +437,24 @@ mod tests {
     #[test]
     fn test_cmd_set_model_valid() {
         let original = config::Config::load();
-        assert!(cmd_set_model("base.en").is_ok());
+        // Ensure Whisper backend so "base.en" is valid
+        let mut tmp = original.clone();
+        tmp.asr_backend = AsrBackend::Whisper;
+        tmp.save().unwrap();
+        let result = cmd_set_model("base.en");
         let _ = original.save();
+        assert!(result.is_ok());
     }
 
     #[test]
     fn test_cmd_set_model_prints_download_hint() {
-        // Use a model that almost certainly doesn't exist locally
         let original = config::Config::load();
-        // "tiny" is a valid model but likely not downloaded
-        assert!(cmd_set_model("tiny").is_ok());
+        let mut tmp = original.clone();
+        tmp.asr_backend = AsrBackend::Whisper;
+        tmp.save().unwrap();
+        let result = cmd_set_model("tiny");
         let _ = original.save();
+        assert!(result.is_ok());
     }
 
     #[test]

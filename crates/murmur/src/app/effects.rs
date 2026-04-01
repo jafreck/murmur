@@ -9,11 +9,11 @@ use crate::config::Config;
 use crate::input::hotkey::{CaptureFlag, SharedHotkeyConfig};
 use crate::input::inserter::TextInserter;
 use crate::notes::NotesManager;
-use crate::transcription::transcriber::Transcriber;
 use crate::transcription::{model, postprocess, streaming};
 use crate::ui::overlay::OverlayHandle;
 use crate::ui::tray::{TrayController, TrayState};
 use murmur_core::input::wake_word::WakeWordHandle;
+use murmur_core::transcription::AsrEngine;
 
 use super::{AppEffect, AppMessage, AppState};
 
@@ -140,6 +140,7 @@ pub(crate) fn tray_state_after_hotkey_capture(has_transcriber: bool) -> TrayStat
 }
 
 /// Whether the streaming pipeline has everything it needs to start.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StreamingReadiness {
     NoTranscriber,
@@ -148,6 +149,7 @@ pub(crate) enum StreamingReadiness {
 }
 
 /// Check whether the streaming pipeline can be started.
+#[cfg(test)]
 pub(crate) fn check_streaming_readiness(
     has_transcriber: bool,
     has_worker: bool,
@@ -165,7 +167,7 @@ pub(crate) fn check_streaming_readiness(
 
 pub struct EffectContext<'a> {
     pub recorder: &'a mut AudioRecorder,
-    pub transcriber: &'a mut Option<Arc<Transcriber>>,
+    pub engine: &'a mut Option<Arc<dyn AsrEngine + Send + Sync>>,
     pub tray: &'a mut TrayController,
     pub config: &'a mut Config,
     pub state: &'a mut AppState,
@@ -270,7 +272,7 @@ pub fn apply_effect(
             info!("Mode changed to: {mode}");
         }
         AppEffect::ReloadTranscriber(generation) => {
-            *ctx.transcriber = None;
+            *ctx.engine = None;
             ctx.tray.set_state(TrayState::Loading);
             reload_transcriber(ctx, generation);
         }
@@ -292,7 +294,7 @@ pub fn apply_effect(
                 error!("Invalid captured key: {key_name}");
             }
             ctx.tray
-                .set_state(tray_state_after_hotkey_capture(ctx.transcriber.is_some()));
+                .set_state(tray_state_after_hotkey_capture(ctx.engine.is_some()));
         }
         AppEffect::UpdateNoiseSuppression(enabled) => {
             ctx.recorder.set_noise_suppression(enabled);
@@ -377,12 +379,19 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
         handle.stop_and_join();
     }
 
-    // Re-spawn the worker for the next recording session
-    if ctx.streaming_worker.is_none() {
-        if let Some(transcriber) = ctx.transcriber.as_ref() {
+    // Re-spawn the whisper subprocess worker for the next recording session.
+    // Only applicable when the backend is Whisper.
+    if ctx.streaming_worker.is_none()
+        && ctx.engine.is_some()
+        && matches!(
+            ctx.config.asr_backend,
+            murmur_core::config::AsrBackend::Whisper
+        )
+    {
+        if let Some(model_path) = murmur_core::transcription::find_model(&ctx.state.model_size) {
             match murmur_core::transcription::SubprocessTranscriber::new(
-                transcriber.model_path(),
-                transcriber.language(),
+                &model_path,
+                &ctx.state.language,
             ) {
                 Ok(w) => *ctx.streaming_worker = Some(w),
                 Err(e) => error!("Failed to re-spawn whisper worker: {e}"),
@@ -390,12 +399,12 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
         }
     }
 
-    let has_transcriber = ctx.transcriber.is_some();
+    let has_engine = ctx.engine.is_some();
     let max_recordings = ctx.state.max_recordings;
 
-    // No-transcriber path: clean up both recorder modes and bail early.
+    // No-engine path: clean up both recorder modes and bail early.
     if matches!(
-        decide_transcription(has_transcriber, max_recordings, streaming_was_active, true),
+        decide_transcription(has_engine, max_recordings, streaming_was_active, true),
         TranscribeDecision::NoTranscriber
     ) {
         info!("Model not loaded yet — ignoring transcription request");
@@ -407,7 +416,7 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
         return;
     }
 
-    let transcriber = ctx.transcriber.as_ref().map(Arc::clone).unwrap();
+    let engine = ctx.engine.as_ref().map(Arc::clone).unwrap();
     let spoken_punctuation = ctx.state.spoken_punctuation;
     let filler_word_removal = ctx.state.filler_word_removal;
     let translate_to_english = ctx.state.translate_to_english;
@@ -431,13 +440,17 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
                 let samples = samples.expect("has_audio was true");
                 info!("Transcribing {} samples from memory...", samples.len());
                 std::thread::spawn(move || {
-                    match transcriber.transcribe_samples(&samples, translate_to_english) {
-                        Ok(raw) => {
-                            let text = postprocess_transcription(
-                                &raw,
-                                filler_word_removal,
-                                spoken_punctuation,
-                            );
+                    match engine.transcribe(&samples, translate_to_english) {
+                        Ok(result) => {
+                            let text = if result.pre_formatted {
+                                result.text
+                            } else {
+                                postprocess_transcription(
+                                    &result.text,
+                                    filler_word_removal,
+                                    spoken_punctuation,
+                                )
+                            };
                             if text.is_empty() {
                                 info!("Transcription produced no text (VAD likely detected no speech)");
                                 let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
@@ -467,22 +480,31 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
                 let audio_path = audio_path.expect("has_audio was true");
                 info!("Transcribing...");
                 std::thread::spawn(move || {
-                    let result = transcriber.transcribe(&audio_path, translate_to_english);
+                    let samples = murmur_core::transcription::read_wav_samples(&audio_path);
                     RecordingStore::prune(max_recordings);
-                    match result {
-                        Ok(raw) => {
-                            let text = postprocess_transcription(
-                                &raw,
-                                filler_word_removal,
-                                spoken_punctuation,
-                            );
-                            if text.is_empty() {
-                                info!("Transcription produced no text (VAD likely detected no speech)");
-                                let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
-                            } else {
-                                let _ = tx.send(AppMessage::TranscriptionDone(text));
+                    match samples {
+                        Ok(samples) => match engine.transcribe(&samples, translate_to_english) {
+                            Ok(result) => {
+                                let text = if result.pre_formatted {
+                                    result.text
+                                } else {
+                                    postprocess_transcription(
+                                        &result.text,
+                                        filler_word_removal,
+                                        spoken_punctuation,
+                                    )
+                                };
+                                if text.is_empty() {
+                                    info!("Transcription produced no text (VAD likely detected no speech)");
+                                    let _ = tx.send(AppMessage::TranscriptionDone(String::new()));
+                                } else {
+                                    let _ = tx.send(AppMessage::TranscriptionDone(text));
+                                }
                             }
-                        }
+                            Err(e) => {
+                                let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
+                            }
+                        },
                         Err(e) => {
                             let _ = tx.send(AppMessage::TranscriptionError(e.to_string()));
                         }
@@ -495,32 +517,24 @@ fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
 }
 
 fn start_streaming(ctx: &mut EffectContext<'_>) {
-    match check_streaming_readiness(ctx.transcriber.is_some(), ctx.streaming_worker.is_some()) {
-        StreamingReadiness::NoTranscriber => {
-            info!("Model not loaded yet — cannot start streaming");
-            return;
-        }
-        StreamingReadiness::NoWorker => {
-            log::error!("No whisper worker available — cannot start streaming");
-            return;
-        }
-        StreamingReadiness::Ready => {}
+    if ctx.engine.is_none() {
+        info!("Model not loaded yet — cannot start streaming");
+        return;
     }
 
-    let transcriber = ctx.transcriber.as_ref().map(Arc::clone).unwrap();
+    let engine = ctx.engine.as_ref().map(Arc::clone).unwrap();
     info!("Starting streaming transcription...");
     let sample_buffer = ctx.recorder.sample_buffer();
     let tx_app = ctx.tx.clone();
     let translate = ctx.state.translate_to_english;
-    let filler_removal = ctx.state.filler_word_removal;
+    let is_whisper = matches!(
+        ctx.config.asr_backend,
+        murmur_core::config::AsrBackend::Whisper
+    );
 
     let (streaming_tx, streaming_rx) = mpsc::channel::<streaming::StreamingEvent>();
 
-    // Forward streaming events to app messages, coalescing any stale
-    // events that queued up while the app was busy.  We keep the
-    // `replace_chars` from the first (oldest) event in the batch —
-    // it reflects what is actually on screen — and the `text` from
-    // the last (newest) event.
+    // Forward streaming events to app messages, coalescing stale events.
     std::thread::spawn(move || {
         while let Ok(event) = streaming_rx.recv() {
             match event {
@@ -531,11 +545,17 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
                     mut text,
                     replace_chars,
                 } => {
-                    // Drain any newer events that arrived while we blocked.
+                    let mut final_replace = replace_chars;
                     while let Ok(newer) = streaming_rx.try_recv() {
                         match newer {
-                            streaming::StreamingEvent::PartialText { text: t, .. } => {
+                            streaming::StreamingEvent::PartialText {
+                                text: t,
+                                replace_chars: r,
+                            } => {
                                 text = t;
+                                // For native streaming, each event replaces
+                                // all previous text, so use the latest replace_chars.
+                                final_replace = r;
                             }
                             streaming::StreamingEvent::SpeechDetected => {
                                 let _ = tx_app.send(AppMessage::SpeechActivity);
@@ -545,23 +565,30 @@ fn start_streaming(ctx: &mut EffectContext<'_>) {
 
                     let _ = tx_app.send(AppMessage::StreamingPartialText {
                         text,
-                        replace_chars,
+                        replace_chars: final_replace,
                     });
                 }
             }
         }
     });
 
-    let worker = ctx.streaming_worker.take().unwrap();
+    let handle = if is_whisper {
+        // Whisper: chunked overlap + word stitching via subprocess worker
+        let worker = ctx.streaming_worker.take();
+        let filler_removal = ctx.state.filler_word_removal;
+        streaming::start_streaming(
+            sample_buffer,
+            engine,
+            translate,
+            filler_removal,
+            streaming_tx,
+            worker,
+        )
+    } else {
+        // ONNX backends: native full-utterance streaming
+        streaming::start_native_streaming(sample_buffer, engine, translate, streaming_tx)
+    };
 
-    let handle = streaming::start_streaming(
-        sample_buffer,
-        transcriber,
-        translate,
-        filler_removal,
-        streaming_tx,
-        worker,
-    );
     *ctx.streaming_stop = Some(handle);
 }
 
@@ -640,49 +667,107 @@ fn reload_config(ctx: &mut EffectContext<'_>) -> Result<(bool, Vec<AppEffect>)> 
 fn reload_transcriber(ctx: &mut EffectContext<'_>, generation: u64) {
     let model_size = ctx.state.model_size.clone();
     let language = ctx.state.language.clone();
+    let backend = ctx.config.asr_backend;
+    let quantization = ctx.config.asr_quantization;
     let tx = ctx.tx.clone();
-    info!("Loading model '{model_size}'...");
+    info!("Loading {backend} model '{model_size}'...");
 
     std::thread::spawn(move || {
-        if !crate::transcription::transcriber::model_exists(&model_size) {
-            info!("Downloading {model_size} model...");
-            let last_milestone = std::cell::Cell::new(u32::MAX);
-            if let Err(e) = model::download(&model_size, |percent| {
-                let milestone = percent as u32 / 10 * 10;
-                if milestone != last_milestone.get() {
-                    last_milestone.set(milestone);
-                    info!("Downloading {model_size}... {milestone}%");
-                }
-            }) {
-                error!("Failed to download model '{model_size}': {e}");
-                let _ = tx.send(AppMessage::TranscriptionError(format!(
-                    "Failed to download model '{model_size}': {e}"
-                )));
-                return;
-            }
-        }
-
-        let Some(model_path) = crate::transcription::transcriber::find_model(&model_size) else {
-            error!("Model '{model_size}' not found after download");
-            let _ = tx.send(AppMessage::TranscriptionError(format!(
-                "Model '{model_size}' not found after download"
-            )));
-            return;
-        };
-
-        match Transcriber::new(&model_path, &language) {
-            Ok(t) => {
-                info!("Model '{model_size}' loaded successfully");
-                let _ = tx.send(AppMessage::TranscriberReady(Arc::new(t), generation));
+        match create_engine_on_thread(backend, &model_size, &language, quantization) {
+            Ok(engine) => {
+                info!("{backend} model '{model_size}' loaded successfully");
+                let _ = tx.send(AppMessage::EngineReady(Arc::from(engine), generation));
             }
             Err(e) => {
-                error!("Failed to load model '{model_size}': {e}");
+                error!("Failed to load {backend} model '{model_size}': {e}");
                 let _ = tx.send(AppMessage::TranscriptionError(format!(
-                    "Failed to load model '{model_size}': {e}"
+                    "Failed to load {backend} model '{model_size}': {e}"
                 )));
             }
         }
     });
+}
+
+/// Download (if needed) and instantiate an ASR engine on a background thread.
+pub(super) fn create_engine_on_thread(
+    backend: murmur_core::config::AsrBackend,
+    model_size: &str,
+    language: &str,
+    #[allow(unused_variables)] quantization: murmur_core::config::AsrQuantization,
+) -> anyhow::Result<Box<dyn AsrEngine + Send + Sync>> {
+    use murmur_core::config::AsrBackend;
+
+    match backend {
+        AsrBackend::Whisper => {
+            if !murmur_core::transcription::model_exists(model_size) {
+                info!("Downloading {model_size} model...");
+                let last_milestone = std::cell::Cell::new(u32::MAX);
+                model::download(model_size, |percent| {
+                    let milestone = percent as u32 / 10 * 10;
+                    if milestone != last_milestone.get() {
+                        last_milestone.set(milestone);
+                        info!("Downloading {model_size}... {milestone}%");
+                    }
+                })?;
+            }
+
+            let model_path = murmur_core::transcription::find_model(model_size)
+                .ok_or_else(|| anyhow::anyhow!("Model not found: {model_size}"))?;
+            let engine = murmur_core::transcription::WhisperEngine::new(&model_path, language)?;
+            Ok(Box::new(engine))
+        }
+        #[cfg(feature = "onnx")]
+        AsrBackend::Qwen3Asr => {
+            if !murmur_core::transcription::model_exists_for_backend(
+                AsrBackend::Qwen3Asr,
+                model_size,
+                quantization,
+            ) {
+                info!("Downloading Qwen3-ASR model...");
+                murmur_core::transcription::download_for_backend(
+                    AsrBackend::Qwen3Asr,
+                    model_size,
+                    quantization,
+                    |p| {
+                        let milestone = p as u32 / 10 * 10;
+                        info!("Downloading Qwen3-ASR... {milestone}%");
+                    },
+                )?;
+            }
+            let model_dir = murmur_core::transcription::qwen3_asr_model_dir(model_size);
+            let engine = murmur_core::transcription::QwenEngine::new(&model_dir, quantization)?;
+            Ok(Box::new(engine))
+        }
+        #[cfg(feature = "onnx")]
+        AsrBackend::Parakeet => {
+            if !murmur_core::transcription::model_exists_for_backend(
+                AsrBackend::Parakeet,
+                model_size,
+                quantization,
+            ) {
+                info!("Downloading Parakeet model...");
+                murmur_core::transcription::download_for_backend(
+                    AsrBackend::Parakeet,
+                    model_size,
+                    quantization,
+                    |p| {
+                        let milestone = p as u32 / 10 * 10;
+                        info!("Downloading Parakeet... {milestone}%");
+                    },
+                )?;
+            }
+            let model_dir = murmur_core::transcription::parakeet_model_dir(model_size);
+            let engine = murmur_core::transcription::ParakeetEngine::new(&model_dir, quantization)?;
+            Ok(Box::new(engine))
+        }
+        #[cfg(not(feature = "onnx"))]
+        AsrBackend::Qwen3Asr | AsrBackend::Parakeet => {
+            anyhow::bail!(
+                "ONNX backends require the 'onnx' feature. \
+                 Rebuild with: cargo build --features onnx"
+            );
+        }
+    }
 }
 
 fn start_wake_word(ctx: &mut EffectContext<'_>) {

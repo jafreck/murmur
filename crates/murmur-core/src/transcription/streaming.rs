@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use super::transcriber::Transcriber;
+use super::engine::AsrEngine;
 use crate::audio::capture::TARGET_RATE;
 
 // ── Configuration ──────────────────────────────────────────────────────
@@ -75,11 +75,11 @@ impl StreamingHandle {
 /// Returns a [`StreamingHandle`] that can stop and join the thread.
 pub fn start_streaming(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
-    transcriber: Arc<Transcriber>,
+    engine: Arc<dyn AsrEngine + Send + Sync>,
     translate: bool,
     filler_word_removal: bool,
     tx: mpsc::Sender<StreamingEvent>,
-    worker: super::subprocess::SubprocessTranscriber,
+    worker: Option<super::subprocess::SubprocessTranscriber>,
 ) -> StreamingHandle {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
     let abort_flag = Arc::new(AtomicBool::new(false));
@@ -88,7 +88,7 @@ pub fn start_streaming(
     let join_handle = std::thread::spawn(move || {
         streaming_loop(
             sample_buffer,
-            transcriber,
+            engine,
             translate,
             filler_word_removal,
             tx,
@@ -105,18 +105,143 @@ pub fn start_streaming(
     }
 }
 
-// ── Internal ───────────────────────────────────────────────────────────
+/// Start native streaming transcription for engines that support it (e.g. Qwen3-ASR).
+///
+/// Unlike [`start_streaming`], this does **not** use chunked overlap or word
+/// stitching. Instead it periodically reads all accumulated audio and asks
+/// the engine to transcribe the full utterance, sending the complete text as
+/// a replacement each time.
+pub fn start_native_streaming(
+    sample_buffer: Arc<Mutex<Vec<f32>>>,
+    engine: Arc<dyn AsrEngine + Send + Sync>,
+    translate: bool,
+    tx: mpsc::Sender<StreamingEvent>,
+) -> StreamingHandle {
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let abort_flag = Arc::new(AtomicBool::new(false));
+    let abort_flag_clone = Arc::clone(&abort_flag);
+
+    let join_handle = std::thread::spawn(move || {
+        native_streaming_loop(
+            sample_buffer,
+            engine,
+            translate,
+            tx,
+            stop_rx,
+            abort_flag_clone,
+        );
+    });
+
+    StreamingHandle {
+        stop_tx,
+        abort_flag,
+        join_handle: Some(join_handle),
+    }
+}
+
+/// Native streaming loop: transcribe accumulated audio on each tick.
+fn native_streaming_loop(
+    sample_buffer: Arc<Mutex<Vec<f32>>>,
+    engine: Arc<dyn AsrEngine + Send + Sync>,
+    translate: bool,
+    tx: mpsc::Sender<StreamingEvent>,
+    stop_rx: mpsc::Receiver<()>,
+    abort_flag: Arc<AtomicBool>,
+) {
+    let min_samples = (MIN_NEW_AUDIO_SECS * TARGET_RATE as f32) as usize;
+    let mut prev_len: usize = 0;
+    let mut prev_text = String::new();
+
+    loop {
+        // Check for stop signal
+        match stop_rx.try_recv() {
+            Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
+            Err(mpsc::TryRecvError::Empty) => {}
+        }
+
+        let current_len = match sample_buffer.lock() {
+            Ok(b) => b.len(),
+            Err(e) => e.into_inner().len(),
+        };
+
+        // Wait for enough new audio
+        let new_samples = current_len.saturating_sub(prev_len);
+        if new_samples < min_samples {
+            std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+            continue;
+        }
+
+        // Read all accumulated samples
+        let samples: Vec<f32> = match sample_buffer.lock() {
+            Ok(b) => b.clone(),
+            Err(e) => e.into_inner().clone(),
+        };
+
+        if samples.is_empty() {
+            std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+            continue;
+        }
+
+        // VAD check on just the new audio
+        let new_start = prev_len.min(samples.len());
+        if !super::vad::contains_speech(&samples[new_start..]) {
+            prev_len = current_len;
+            std::thread::sleep(std::time::Duration::from_millis(POLL_INTERVAL_MS));
+            continue;
+        }
+
+        let _ = tx.send(StreamingEvent::SpeechDetected);
+
+        // Transcribe the full utterance
+        match engine.transcribe(&samples, translate) {
+            Ok(result) => {
+                if abort_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                if !result.text.is_empty() && result.text != prev_text {
+                    // Compute the common prefix to avoid deleting and retyping
+                    // text that hasn't changed.
+                    if result.text.starts_with(&prev_text) {
+                        // New text extends the previous — just append the suffix
+                        let new_suffix = &result.text[prev_text.len()..];
+                        if !new_suffix.is_empty() {
+                            let _ = tx.send(StreamingEvent::PartialText {
+                                text: new_suffix.to_string(),
+                                replace_chars: 0,
+                            });
+                        }
+                    } else {
+                        // Text changed (model revised earlier words) — replace all
+                        let replace_chars = prev_text.chars().count();
+                        let _ = tx.send(StreamingEvent::PartialText {
+                            text: result.text.clone(),
+                            replace_chars,
+                        });
+                    }
+                    prev_text = result.text;
+                }
+            }
+            Err(e) => {
+                log::error!("Native streaming transcription failed: {e}");
+            }
+        }
+
+        prev_len = current_len;
+    }
+}
+
+// ── Internal (chunked Whisper streaming) ───────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
 fn streaming_loop(
     sample_buffer: Arc<Mutex<Vec<f32>>>,
-    _transcriber: Arc<Transcriber>,
+    engine: Arc<dyn AsrEngine + Send + Sync>,
     translate: bool,
     filler_word_removal: bool,
     tx: mpsc::Sender<StreamingEvent>,
     stop_rx: mpsc::Receiver<()>,
     _abort_flag: Arc<AtomicBool>,
-    mut worker: super::subprocess::SubprocessTranscriber,
+    mut worker: Option<super::subprocess::SubprocessTranscriber>,
 ) {
     let min_new_samples = (MIN_NEW_AUDIO_SECS * TARGET_RATE as f32) as usize;
     let max_chunk_samples = (MAX_CHUNK_SECS * TARGET_RATE as f32) as usize;
@@ -145,6 +270,7 @@ fn streaming_loop(
                     }
                     emit_chunk(
                         &mut worker,
+                        &engine,
                         &chunk,
                         translate,
                         filler_word_removal,
@@ -190,6 +316,7 @@ fn streaming_loop(
 
         emit_chunk(
             &mut worker,
+            &engine,
             &chunk,
             translate,
             filler_word_removal,
@@ -207,18 +334,29 @@ fn streaming_loop(
 
 /// Transcribe a chunk and emit only the new (stitched) words.
 fn emit_chunk(
-    worker: &mut super::subprocess::SubprocessTranscriber,
+    worker: &mut Option<super::subprocess::SubprocessTranscriber>,
+    engine: &Arc<dyn AsrEngine + Send + Sync>,
     chunk: &[f32],
     translate: bool,
     filler_word_removal: bool,
     committed_words: &mut Vec<String>,
     tx: &mpsc::Sender<StreamingEvent>,
 ) {
-    let text = match worker.transcribe(chunk, translate) {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("Streaming transcription failed: {e}");
-            return;
+    let text = if let Some(ref mut w) = worker {
+        match w.transcribe(chunk, translate) {
+            Ok(t) => t,
+            Err(e) => {
+                log::error!("Streaming transcription failed: {e}");
+                return;
+            }
+        }
+    } else {
+        match engine.transcribe(chunk, translate) {
+            Ok(result) => result.text,
+            Err(e) => {
+                log::error!("Streaming transcription failed: {e}");
+                return;
+            }
         }
     };
 

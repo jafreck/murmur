@@ -175,7 +175,9 @@ impl LinuxIconCache {
 
 impl Drop for LinuxIconCache {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
+        if let Err(e) = std::fs::remove_dir_all(&self.dir) {
+            log::debug!("Failed to clean up icon cache dir: {e}");
+        }
     }
 }
 

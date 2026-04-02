@@ -10,8 +10,8 @@ mod helpers;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use murmur::audio::{mix_to_mono, TARGET_RATE};
-use murmur::transcription::vad;
+use murmur_core::audio::{mix_to_mono, TARGET_RATE};
+use murmur_core::transcription::vad;
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Constants
@@ -424,7 +424,7 @@ fn golden_concurrent_buffer_access() {
 
 #[test]
 fn golden_postprocess_throughput() {
-    use murmur::transcription::postprocess;
+    use murmur_core::transcription::postprocess;
 
     let input = "um hello uh world er this is ah a test hmm of the uh system";
     let expected_no_fillers = "hello world this is a test of the system";
@@ -445,7 +445,7 @@ fn golden_postprocess_throughput() {
 
 #[test]
 fn golden_spoken_punctuation_throughput() {
-    use murmur::transcription::postprocess;
+    use murmur_core::transcription::postprocess;
 
     let input = "Hello comma world period How are you question mark";
 
@@ -474,7 +474,7 @@ fn golden_spoken_punctuation_throughput() {
 #[test]
 fn golden_state_machine_idle_check() {
     use murmur::app::AppState;
-    use murmur::config::Config;
+    use murmur_core::config::Config;
 
     let config = Config::default();
     let mut state = AppState::new(&config);

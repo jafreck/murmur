@@ -233,6 +233,7 @@ impl AudioRecorder {
                 if let Ok(mut guard) = self.shared.writer.lock() {
                     if let Some(ref mut w) = *guard {
                         for &sample in &pre_roll_data {
+                            // Hot audio path: logging per-sample errors would be too noisy
                             let _ = w.write_sample(f32_to_i16(sample));
                         }
                     }
@@ -284,7 +285,9 @@ impl AudioRecorder {
         // Finalize the WAV file
         if let Ok(mut guard) = self.shared.writer.lock() {
             if let Some(writer) = guard.take() {
-                let _ = writer.finalize();
+                if let Err(e) = writer.finalize() {
+                    log::warn!("Failed to finalize WAV file: {e}");
+                }
             }
         }
 

@@ -8,10 +8,10 @@
 mod helpers;
 
 use murmur::app::{AppEffect, AppMessage, AppState};
-use murmur::config::{Config, InputMode};
-use murmur::transcription::model;
-use murmur::transcription::streaming;
 use murmur::ui::tray::TrayState;
+use murmur_core::config::{Config, InputMode};
+use murmur_core::transcription::model;
+use murmur_core::transcription::streaming;
 
 // ── Test Harness ────────────────────────────────────────────────────────
 
@@ -265,18 +265,18 @@ fn ggml_file_validation() {
 #[test]
 fn vad_detects_silence() {
     let samples = vec![0.0f32; 16_000];
-    assert!(!murmur::transcription::vad::contains_speech(&samples));
+    assert!(!murmur_core::transcription::vad::contains_speech(&samples));
 }
 
 #[test]
 fn vad_detects_no_speech_in_empty() {
-    assert!(!murmur::transcription::vad::contains_speech(&[]));
+    assert!(!murmur_core::transcription::vad::contains_speech(&[]));
 }
 
 #[test]
 fn vad_detects_no_speech_near_zero() {
     let samples = vec![0.001f32; 1000];
-    assert!(!murmur::transcription::vad::contains_speech(&samples));
+    assert!(!murmur_core::transcription::vad::contains_speech(&samples));
 }
 
 #[test]

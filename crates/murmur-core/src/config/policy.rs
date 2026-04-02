@@ -22,7 +22,10 @@ impl Config {
                 .filter(|l| !l.is_empty() && !l.starts_with('#'))
                 .map(String::from)
                 .collect(),
-            Err(_) => Vec::new(),
+            Err(e) => {
+                log::debug!("Could not read vocab file {}: {e}", path.display());
+                Vec::new()
+            }
         }
     }
 

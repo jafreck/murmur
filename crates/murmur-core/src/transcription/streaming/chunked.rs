@@ -90,13 +90,19 @@ fn streaming_loop(
                 // Final chunk: transcribe remaining audio with overlap.
                 let total = match sample_buffer.lock() {
                     Ok(b) => b.len(),
-                    Err(e) => e.into_inner().len(),
+                    Err(e) => {
+                        log::warn!("Sample buffer mutex poisoned");
+                        e.into_inner().len()
+                    }
                 };
                 let start = consumed_boundary.saturating_sub(overlap_samples);
                 if total > start {
                     chunk.clear();
                     {
-                        let buf = sample_buffer.lock().unwrap_or_else(|e| e.into_inner());
+                        let buf = sample_buffer.lock().unwrap_or_else(|e| {
+                            log::warn!("Sample buffer mutex poisoned");
+                            e.into_inner()
+                        });
                         chunk.extend_from_slice(&buf[start..total]);
                     }
                     emit_chunk(
@@ -116,7 +122,10 @@ fn streaming_loop(
 
         let total_samples = match sample_buffer.lock() {
             Ok(b) => b.len(),
-            Err(e) => e.into_inner().len(),
+            Err(e) => {
+                log::warn!("Sample buffer mutex poisoned");
+                e.into_inner().len()
+            }
         };
 
         if !has_enough_new_audio(total_samples, consumed_boundary, min_new_samples) {
@@ -133,7 +142,10 @@ fn streaming_loop(
 
         chunk.clear();
         {
-            let buf = sample_buffer.lock().unwrap_or_else(|e| e.into_inner());
+            let buf = sample_buffer.lock().unwrap_or_else(|e| {
+                log::warn!("Sample buffer mutex poisoned");
+                e.into_inner()
+            });
             chunk.extend_from_slice(&buf[chunk_start..chunk_end]);
         }
 

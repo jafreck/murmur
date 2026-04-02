@@ -62,6 +62,7 @@ impl WakeWordHandle {
 
     /// Stop and join the detector thread.
     pub fn stop(mut self) {
+        // Best-effort shutdown: receiver may have already dropped
         let _ = self.stop_tx.send(());
         if let Some(handle) = self.join_handle.take() {
             let _ = handle.join();
@@ -165,7 +166,10 @@ where
 
         // Wait for enough audio
         let samples: Vec<f32> = {
-            let buf = ring_buffer.lock().unwrap_or_else(|e| e.into_inner());
+            let buf = ring_buffer.lock().unwrap_or_else(|e| {
+                log::warn!("Ring buffer mutex poisoned");
+                e.into_inner()
+            });
             if buf.len() < WINDOW_SAMPLES {
                 drop(buf);
                 std::thread::sleep(std::time::Duration::from_millis(current_poll_ms));
@@ -178,7 +182,10 @@ where
 
         // Trim the ring buffer to prevent unbounded growth
         {
-            let mut buf = ring_buffer.lock().unwrap_or_else(|e| e.into_inner());
+            let mut buf = ring_buffer.lock().unwrap_or_else(|e| {
+                log::warn!("Ring buffer mutex poisoned");
+                e.into_inner()
+            });
             if buf.len() > WINDOW_SAMPLES * 3 {
                 let drain_to = buf.len() - WINDOW_SAMPLES * 2;
                 buf.drain(..drain_to);

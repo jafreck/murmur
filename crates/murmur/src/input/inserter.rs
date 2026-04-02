@@ -59,10 +59,14 @@ impl TextInserter {
             thread::sleep(Duration::from_millis(400));
             match saved {
                 SavedClipboard::Text(prev) => {
-                    let _ = Clipboard::new().map(|mut cb| cb.set_text(prev));
+                    if let Err(e) = Clipboard::new().and_then(|mut cb| cb.set_text(prev)) {
+                        log::debug!("Failed to restore clipboard text: {e}");
+                    }
                 }
                 SavedClipboard::Image(img) => {
-                    let _ = Clipboard::new().map(|mut cb| cb.set_image(img));
+                    if let Err(e) = Clipboard::new().and_then(|mut cb| cb.set_image(img)) {
+                        log::debug!("Failed to restore clipboard image: {e}");
+                    }
                 }
                 SavedClipboard::Empty => {}
             }

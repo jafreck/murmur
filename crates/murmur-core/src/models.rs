@@ -142,7 +142,12 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
             "Existing model file at {} is invalid (possibly a partial download), re-downloading",
             dest_path.display()
         );
-        let _ = std::fs::remove_file(&dest_path);
+        if let Err(e) = std::fs::remove_file(&dest_path) {
+            log::warn!(
+                "Failed to remove invalid model file {}: {e}",
+                dest_path.display()
+            );
+        }
     }
 
     std::fs::create_dir_all(&models_dir).context("Failed to create models directory")?;
@@ -186,7 +191,12 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
 
     // Validate before promoting to the final path
     if !is_valid_ggml_file(&part_path) {
-        let _ = std::fs::remove_file(&part_path);
+        if let Err(e) = std::fs::remove_file(&part_path) {
+            log::warn!(
+                "Failed to clean up partial download {}: {e}",
+                part_path.display()
+            );
+        }
         anyhow::bail!(
             "Downloaded file is not a valid GGML model. \
              Check your network connection or try from a different network."

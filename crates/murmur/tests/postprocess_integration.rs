@@ -3,7 +3,7 @@
 //! These test realistic multi-sentence transcription inputs flowing through
 //! the full postprocessing pipeline — beyond the unit-level single-replacement tests.
 
-use murmur::transcription::postprocess;
+use murmur_core::transcription::postprocess;
 
 // ═══════════════════════════════════════════════════════════════════════
 //  Realistic multi-sentence dictation

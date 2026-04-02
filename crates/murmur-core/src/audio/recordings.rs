@@ -16,7 +16,7 @@ impl RecordingStore {
 
     pub fn ensure_dir_at(dir: &std::path::Path) {
         if let Err(e) = std::fs::create_dir_all(dir) {
-            eprintln!("Warning: could not create recordings directory: {e}");
+            log::warn!("Could not create recordings directory: {e}");
         }
     }
 
@@ -72,10 +72,7 @@ impl RecordingStore {
 
         for (path, _) in recordings.into_iter().skip(max_count as usize) {
             if let Err(e) = std::fs::remove_file(&path) {
-                eprintln!(
-                    "Warning: could not remove old recording {}: {e}",
-                    path.display()
-                );
+                log::warn!("Could not remove old recording {}: {e}", path.display());
             }
         }
     }

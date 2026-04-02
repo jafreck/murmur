@@ -4,7 +4,7 @@
 mod helpers;
 
 use hound::{SampleFormat, WavReader};
-use murmur::audio::{f32_to_i16, mix_to_mono, TARGET_RATE, WHISPER_WAV_SPEC};
+use murmur_core::audio::{f32_to_i16, mix_to_mono, TARGET_RATE, WHISPER_WAV_SPEC};
 
 // ═══════════════════════════════════════════════════════════════════════
 //  WHISPER_WAV_SPEC correctness
@@ -252,7 +252,7 @@ fn stereo_to_mono_wav_pipeline() {
 
 #[test]
 fn read_wav_samples_from_written_file() {
-    use murmur::transcription::model_discovery::read_wav_samples;
+    use murmur_core::transcription::model_discovery::read_wav_samples;
 
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("readable.wav");
@@ -274,7 +274,7 @@ fn read_wav_samples_from_written_file() {
 
 #[test]
 fn read_wav_samples_nonexistent_file_errors() {
-    use murmur::transcription::model_discovery::read_wav_samples;
+    use murmur_core::transcription::model_discovery::read_wav_samples;
 
     let result = read_wav_samples(std::path::Path::new("/nonexistent/audio.wav"));
     assert!(result.is_err());

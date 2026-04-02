@@ -6,7 +6,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use hound::{SampleFormat, WavSpec, WavWriter};
-use murmur::config::Config;
+use murmur_core::config::Config;
 
 /// The WAV spec Whisper expects.
 pub const WHISPER_SPEC: WavSpec = WavSpec {

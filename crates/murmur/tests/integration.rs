@@ -5,8 +5,8 @@
 //! (microphone, display, model files).
 
 use murmur::app::{AppEffect, AppMessage, AppState};
-use murmur::config::{Config, InputMode};
 use murmur::ui::tray::TrayState;
+use murmur_core::config::{Config, InputMode};
 
 // ── Test Harness ──────────────────────────────────────────────────────
 
@@ -736,7 +736,7 @@ fn regression_stale_error_during_recording() {
 /// not the state machine. This test verifies postprocess::process works correctly.
 #[test]
 fn regression_spoken_punctuation_processes_all_types() {
-    use murmur::transcription::postprocess;
+    use murmur_core::transcription::postprocess;
 
     let cases = [
         ("hello period", "."),

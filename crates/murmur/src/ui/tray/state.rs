@@ -68,7 +68,9 @@ impl TrayController {
                     _ => None,
                 };
                 if let Some(icon) = frame {
-                    let _ = self.tray.set_icon(Some(icon.clone()));
+                    if let Err(e) = self.tray.set_icon(Some(icon.clone())) {
+                        log::debug!("Failed to set tray icon: {e}");
+                    }
                 }
             }
         } else {
@@ -88,7 +90,9 @@ impl TrayController {
             }
         }
 
-        let _ = self.tray.set_tooltip(Some(tooltip));
+        if let Err(e) = self.tray.set_tooltip(Some(tooltip)) {
+            log::debug!("Failed to set tray tooltip: {e}");
+        }
         self.status_item.set_text(label);
         self.state = state;
     }
@@ -252,7 +256,9 @@ impl TrayController {
             return;
         }
 
-        let _ = self.tray.set_icon(Some(frames[idx].clone()));
+        if let Err(e) = self.tray.set_icon(Some(frames[idx].clone())) {
+            log::debug!("Failed to set tray animation frame: {e}");
+        }
 
         self.last_animation_frame = Some(Instant::now());
     }

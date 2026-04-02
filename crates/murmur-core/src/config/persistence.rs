@@ -18,7 +18,9 @@ impl Config {
     pub fn load() -> Self {
         Self::load_from(&Self::file_path()).unwrap_or_else(|_| {
             let config = Self::default();
-            let _ = config.save_to(&Self::file_path());
+            if let Err(e) = config.save_to(&Self::file_path()) {
+                log::warn!("Failed to save default config: {e}");
+            }
             config
         })
     }
@@ -39,7 +41,7 @@ impl Config {
         match serde_json::from_str::<Config>(contents) {
             Ok(config) => config,
             Err(e) => {
-                eprintln!("Warning: unable to parse {}: {e}", source.display());
+                log::warn!("Unable to parse {}: {e}", source.display());
                 Self::default()
             }
         }

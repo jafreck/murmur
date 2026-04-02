@@ -99,7 +99,7 @@ pub fn parse(input: &str) -> Option<ParsedHotkey> {
         .filter_map(|m| {
             let result = name_to_key(m);
             if result.is_none() {
-                eprintln!("Warning: unrecognized modifier '{m}' in hotkey '{input}' (ignored)");
+                log::warn!("Unrecognized modifier '{m}' in hotkey '{input}' (ignored)");
             }
             result
         })
@@ -119,7 +119,7 @@ fn name_to_key(name: &str) -> Option<Key> {
 
         #[cfg(not(target_os = "macos"))]
         {
-            eprintln!("Warning: Globe/fn key not available on this platform. Using F9 instead.");
+            log::warn!("Globe/fn key not available on this platform. Using F9 instead.");
             return Some(Key::F9);
         }
     }

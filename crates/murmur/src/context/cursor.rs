@@ -51,221 +51,87 @@ impl Default for CursorContext {
 }
 
 // ---------------------------------------------------------------------------
-// macOS implementation via raw Accessibility FFI
+// macOS implementation using shared platform::ax helpers
 // ---------------------------------------------------------------------------
 #[cfg(target_os = "macos")]
 mod macos {
     use super::{SurroundingText, CONTEXT_CHARS_AFTER, CONTEXT_CHARS_BEFORE};
-    use std::ffi::c_void;
-    use std::ptr;
-
-    // ── Core Foundation types ──────────────────────────────────────────
-
-    type CFTypeRef = *const c_void;
-    type CFStringRef = *const c_void;
-    type CFIndex = isize;
-    type AXUIElementRef = CFTypeRef;
-    type AXValueRef = CFTypeRef;
-    type AXError = i32;
-
-    const K_AX_ERROR_SUCCESS: AXError = 0;
-    const K_AX_VALUE_TYPE_CF_RANGE: u32 = 4;
-    const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
-
-    #[repr(C)]
-    #[derive(Debug, Copy, Clone)]
-    struct CFRange {
-        location: CFIndex,
-        length: CFIndex,
-    }
-
-    // ── FFI declarations ───────────────────────────────────────────────
-
-    #[link(name = "ApplicationServices", kind = "framework")]
-    extern "C" {
-        fn AXUIElementCreateSystemWide() -> AXUIElementRef;
-        fn AXUIElementCopyAttributeValue(
-            element: AXUIElementRef,
-            attribute: CFStringRef,
-            value: *mut CFTypeRef,
-        ) -> AXError;
-        fn AXValueGetValue(value: AXValueRef, value_type: u32, value_ptr: *mut c_void) -> bool;
-    }
-
-    #[link(name = "CoreFoundation", kind = "framework")]
-    extern "C" {
-        fn CFRelease(cf: CFTypeRef);
-        fn CFStringGetLength(theString: CFStringRef) -> CFIndex;
-        fn CFStringGetCString(
-            theString: CFStringRef,
-            buffer: *mut u8,
-            buffer_size: CFIndex,
-            encoding: u32,
-        ) -> bool;
-        fn CFStringCreateWithCString(
-            alloc: CFTypeRef,
-            c_str: *const u8,
-            encoding: u32,
-        ) -> CFStringRef;
-    }
-
-    // ── RAII guard for CFTypeRef ────────────────────────────────────────
-
-    /// Releases a Core Foundation reference on drop.
-    struct CfGuard(CFTypeRef);
-
-    impl Drop for CfGuard {
-        fn drop(&mut self) {
-            if !self.0.is_null() {
-                unsafe { CFRelease(self.0) };
-            }
-        }
-    }
-
-    // ── Helpers ────────────────────────────────────────────────────────
-
-    unsafe fn cfstring_to_string(cf_str: CFStringRef) -> Option<String> {
-        if cf_str.is_null() {
-            return None;
-        }
-        let len = CFStringGetLength(cf_str);
-        // UTF-8 can use up to 4 bytes per character, plus a NUL terminator.
-        let max_size = len * 4 + 1;
-        let mut buffer = vec![0u8; max_size as usize];
-        if CFStringGetCString(
-            cf_str,
-            buffer.as_mut_ptr(),
-            max_size,
-            K_CF_STRING_ENCODING_UTF8,
-        ) {
-            let nul_pos = buffer.iter().position(|&b| b == 0).unwrap_or(buffer.len());
-            Some(String::from_utf8_lossy(&buffer[..nul_pos]).into_owned())
-        } else {
-            None
-        }
-    }
-
-    /// Create a CFStringRef from a NUL-terminated byte literal.
-    /// The caller must release the returned reference (use `CfGuard`).
-    unsafe fn cfstring_create(s: &[u8]) -> CFStringRef {
-        CFStringCreateWithCString(ptr::null(), s.as_ptr(), K_CF_STRING_ENCODING_UTF8)
-    }
-
-    /// Copy an accessibility attribute from `element`.
-    /// The caller must release the returned reference (use `CfGuard`).
-    unsafe fn ax_copy_attr(element: AXUIElementRef, attr: CFStringRef) -> Option<CFTypeRef> {
-        let mut value: CFTypeRef = ptr::null();
-        let err = AXUIElementCopyAttributeValue(element, attr, &mut value);
-        if err == K_AX_ERROR_SUCCESS && !value.is_null() {
-            Some(value)
-        } else {
-            None
-        }
-    }
-
-    /// Extract a `CFRange` from an `AXValueRef`.
-    unsafe fn ax_value_to_range(value: AXValueRef) -> Option<CFRange> {
-        let mut range = CFRange {
-            location: 0,
-            length: 0,
-        };
-        let ok = AXValueGetValue(
-            value,
-            K_AX_VALUE_TYPE_CF_RANGE,
-            &mut range as *mut CFRange as *mut c_void,
-        );
-        if ok {
-            Some(range)
-        } else {
-            None
-        }
-    }
-
-    // ── Public entry point ─────────────────────────────────────────────
+    use crate::platform::ax;
 
     pub(super) fn get_surrounding_text() -> Option<SurroundingText> {
-        unsafe {
-            // 1. System-wide element
-            let system = AXUIElementCreateSystemWide();
-            if system.is_null() {
-                log::debug!("cursor context: failed to create system-wide AX element");
+        // 1. System-wide element
+        let system = ax::ax_system_wide();
+        if system.is_null() {
+            log::debug!("cursor context: failed to create system-wide AX element");
+            return None;
+        }
+
+        // Create attribute name strings at runtime (avoids linking HIServices sub-framework)
+        let attr_focused = ax::cfstring_create(b"AXFocusedUIElement\0");
+        let attr_value = ax::cfstring_create(b"AXValue\0");
+        let attr_range = ax::cfstring_create(b"AXSelectedTextRange\0");
+
+        // 2. Focused UI element
+        let focused = match ax::ax_copy_attr(system.0, attr_focused.0) {
+            Some(f) => f,
+            None => {
+                log::debug!("cursor context: no focused UI element");
                 return None;
             }
-            let _sys_guard = CfGuard(system);
+        };
 
-            // Create attribute name strings at runtime (avoids linking HIServices sub-framework)
-            let attr_focused = cfstring_create(b"AXFocusedUIElement\0");
-            let _g1 = CfGuard(attr_focused);
-            let attr_value = cfstring_create(b"AXValue\0");
-            let _g2 = CfGuard(attr_value);
-            let attr_range = cfstring_create(b"AXSelectedTextRange\0");
-            let _g3 = CfGuard(attr_range);
+        // 3. Text value
+        let value_ref = match ax::ax_copy_attr(focused.0, attr_value.0) {
+            Some(v) => v,
+            None => {
+                log::debug!("cursor context: focused element has no value attribute");
+                return None;
+            }
+        };
 
-            // 2. Focused UI element
-            let focused = match ax_copy_attr(system, attr_focused) {
-                Some(f) => f,
-                None => {
-                    log::debug!("cursor context: no focused UI element");
-                    return None;
-                }
-            };
-            let _focused_guard = CfGuard(focused);
+        let full_text = match ax::cfstring_to_string(value_ref.0) {
+            Some(t) => t,
+            None => {
+                log::debug!("cursor context: could not convert value to string");
+                return None;
+            }
+        };
 
-            // 3. Text value
-            let value_ref = match ax_copy_attr(focused, attr_value) {
-                Some(v) => v,
-                None => {
-                    log::debug!("cursor context: focused element has no value attribute");
-                    return None;
-                }
-            };
-            let _value_guard = CfGuard(value_ref);
+        // 4. Selected text range (cursor position)
+        let range_ref = match ax::ax_copy_attr(focused.0, attr_range.0) {
+            Some(r) => r,
+            None => {
+                log::debug!("cursor context: no selected text range attribute");
+                return None;
+            }
+        };
 
-            let full_text = match cfstring_to_string(value_ref) {
-                Some(t) => t,
-                None => {
-                    log::debug!("cursor context: could not convert value to string");
-                    return None;
-                }
-            };
+        let range = match ax::ax_value_to_range(range_ref.0) {
+            Some(r) => r,
+            None => {
+                log::debug!("cursor context: could not extract CFRange from AXValue");
+                return None;
+            }
+        };
 
-            // 4. Selected text range (cursor position)
-            let range_ref = match ax_copy_attr(focused, attr_range) {
-                Some(r) => r,
-                None => {
-                    log::debug!("cursor context: no selected text range attribute");
-                    return None;
-                }
-            };
-            let _range_guard = CfGuard(range_ref);
+        // 5. Split text around the cursor
+        let cursor_pos = range.location as usize;
 
-            let range = match ax_value_to_range(range_ref) {
-                Some(r) => r,
-                None => {
-                    log::debug!("cursor context: could not extract CFRange from AXValue");
-                    return None;
-                }
-            };
+        // Clamp to actual text length
+        let chars: Vec<char> = full_text.chars().collect();
+        let cursor_pos = cursor_pos.min(chars.len());
 
-            // 5. Split text around the cursor
-            let cursor_pos = range.location as usize;
+        let start = cursor_pos.saturating_sub(CONTEXT_CHARS_BEFORE);
+        let end = (cursor_pos + CONTEXT_CHARS_AFTER).min(chars.len());
 
-            // Clamp to actual text length
-            let chars: Vec<char> = full_text.chars().collect();
-            let cursor_pos = cursor_pos.min(chars.len());
+        let before: String = chars[start..cursor_pos].iter().collect();
+        let after: String = chars[cursor_pos..end].iter().collect();
 
-            let start = cursor_pos.saturating_sub(CONTEXT_CHARS_BEFORE);
-            let end = (cursor_pos + CONTEXT_CHARS_AFTER).min(chars.len());
-
-            let before: String = chars[start..cursor_pos].iter().collect();
-            let after: String = chars[cursor_pos..end].iter().collect();
-
-            Some(SurroundingText {
-                before,
-                after,
-                full_value: Some(full_text),
-            })
-        }
+        Some(SurroundingText {
+            before,
+            after,
+            full_value: Some(full_text),
+        })
     }
 }
 

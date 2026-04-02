@@ -13,6 +13,7 @@ mod model;
 use model::Qwen3AsrModel;
 
 use super::engine::{AsrEngine, StreamingState, TranscriptionResult};
+use super::postprocess::strip_asr_prefix;
 use anyhow::{Context, Result};
 use mlx_rs::module::Param;
 use mlx_rs::nn::{Conv2d, Embedding, LayerNorm, Linear, RmsNorm};
@@ -191,17 +192,6 @@ fn narrow_last_dim(arr: &Array, start: i32, len: i32) -> Result<Array> {
     arr.take_axis(&idx, ndim - 1).map_err(Into::into)
 }
 
-/// Strip the `language ...<asr_text>` prefix that Qwen3-ASR emits.
-fn strip_asr_prefix(text: &str) -> String {
-    if let Some(pos) = text.find("<asr_text>") {
-        return text[pos + "<asr_text>".len()..].to_string();
-    }
-    if let Some(pos) = text.find("asr_text>") {
-        return text[pos + "asr_text>".len()..].to_string();
-    }
-    text.to_string()
-}
-
 // ─── MlxEngine (public API) ────────────────────────────────────────
 
 pub struct MlxEngine {
@@ -220,8 +210,10 @@ impl StreamingState for MlxStreamingState {
     }
 }
 
-// Safety: `Array` is `Send` (verified in mlx-rs 0.25.3). We guard all model
-// access behind a `Mutex`, so concurrent `&self` calls are safe.
+// SAFETY: `Array` is `Send` (verified in mlx-rs 0.25.3).  All model state
+// is behind `Mutex<Qwen3AsrModel>`, so concurrent `&MlxEngine` access is
+// serialised.  The remaining fields (`tokenizer`, `model_name`) are
+// inherently `Sync` (immutable after construction).
 unsafe impl Sync for MlxEngine {}
 
 impl MlxEngine {

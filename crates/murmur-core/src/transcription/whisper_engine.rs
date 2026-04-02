@@ -18,8 +18,11 @@ impl StreamingState for WhisperStreamingState {
     }
 }
 
-// SAFETY: WhisperState is internally thread-safe for single-threaded use within
-// a streaming session. We only access it from one thread at a time.
+// SAFETY: WhisperState is !Send because whisper-rs wraps a raw C pointer.
+// We only ever access the state from one thread at a time within a single
+// streaming session, and never share it across concurrent tasks.  Moving
+// the owning Box<WhisperStreamingState> between threads is safe because
+// whisper.cpp's internal state has no thread-local or TLS dependencies.
 unsafe impl Send for WhisperStreamingState {}
 
 /// Whisper ASR engine backed by whisper-rs / whisper.cpp.

@@ -140,7 +140,7 @@ impl NativeIconCache {
         let image = match state {
             TrayState::Idle => &self.idle,
             TrayState::Recording | TrayState::Error => &self.recording,
-            TrayState::Transcribing | TrayState::Downloading => &self.transcribing,
+            TrayState::Transcribing => &self.transcribing,
             TrayState::Loading => &self.loading,
         };
         self.apply_nsimage(&image.nsimage);

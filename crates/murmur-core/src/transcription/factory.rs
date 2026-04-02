@@ -1,7 +1,4 @@
-//! Engine factory trait and default implementation.
-//!
-//! [`EngineFactory`] decouples engine construction from the app crate so
-//! consumers depend on the abstraction rather than concrete engine types.
+//! Engine factory for ASR engine construction.
 
 use anyhow::Result;
 
@@ -9,35 +6,10 @@ use crate::config::{AsrBackend, AsrQuantization};
 
 use super::engine::AsrEngine;
 
-/// Factory for creating ASR engines and managing their models.
+/// Factory that delegates to the concrete engine constructors
+/// and model helpers already in murmur-core.
 ///
 /// Constructed once at app startup and shared across threads.
-pub trait EngineFactory: Send + Sync {
-    /// Create an engine for the given backend/model/language combination.
-    fn create_engine(
-        &self,
-        backend: AsrBackend,
-        model: &str,
-        language: &str,
-        quantization: AsrQuantization,
-    ) -> Result<Box<dyn AsrEngine + Send + Sync>>;
-
-    /// Check if the model exists locally for the given backend.
-    fn model_exists(&self, backend: AsrBackend, model: &str, quantization: AsrQuantization)
-        -> bool;
-
-    /// Download the model for the given backend.
-    fn download_model(
-        &self,
-        backend: AsrBackend,
-        model: &str,
-        quantization: AsrQuantization,
-        progress: Box<dyn Fn(f64) + Send>,
-    ) -> Result<()>;
-}
-
-/// Default factory that delegates to the concrete engine constructors
-/// and model helpers already in murmur-core.
 pub struct DefaultEngineFactory;
 
 impl DefaultEngineFactory {
@@ -52,8 +24,8 @@ impl Default for DefaultEngineFactory {
     }
 }
 
-impl EngineFactory for DefaultEngineFactory {
-    fn create_engine(
+impl DefaultEngineFactory {
+    pub fn create_engine(
         &self,
         backend: AsrBackend,
         model: &str,
@@ -102,7 +74,7 @@ impl EngineFactory for DefaultEngineFactory {
         }
     }
 
-    fn model_exists(
+    pub fn model_exists(
         &self,
         backend: AsrBackend,
         model: &str,
@@ -111,7 +83,7 @@ impl EngineFactory for DefaultEngineFactory {
         super::model::model_exists_for_backend(backend, model, quantization)
     }
 
-    fn download_model(
+    pub fn download_model(
         &self,
         backend: AsrBackend,
         model: &str,

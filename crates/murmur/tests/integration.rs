@@ -343,8 +343,10 @@ fn set_model_triggers_reload() {
 
 #[test]
 fn set_language_triggers_reload() {
-    let mut config = Config::default();
-    config.set_model_size("base".to_string());
+    let config = Config {
+        model_size: "base".to_string(),
+        ..Default::default()
+    };
     let mut h = Harness::with_config(&config);
 
     let fx = h.send(AppMessage::TraySetLanguage("fr".into()));
@@ -356,8 +358,10 @@ fn set_language_triggers_reload() {
 
 #[test]
 fn reload_generation_increments_monotonically() {
-    let mut config = Config::default();
-    config.set_model_size("base".to_string());
+    let config = Config {
+        model_size: "base".to_string(),
+        ..Default::default()
+    };
     let mut h = Harness::with_config(&config);
 
     h.send(AppMessage::TraySetModel("small".into()));
@@ -526,13 +530,13 @@ fn to_config_round_trips_state() {
     h.send(AppMessage::TrayToggleTranslate);
 
     let cfg = h.state.to_config(&base);
-    assert_eq!(cfg.model_size(), "large");
-    assert_eq!(cfg.language(), "de");
-    assert!(cfg.spoken_punctuation());
-    assert_eq!(*cfg.mode(), InputMode::OpenMic);
-    assert!(cfg.streaming());
-    assert!(cfg.translate_to_english());
-    assert_eq!(cfg.hotkey(), base.hotkey(), "hotkey should come from base");
+    assert_eq!(cfg.model_size, "large");
+    assert_eq!(cfg.language, "de");
+    assert!(cfg.spoken_punctuation);
+    assert_eq!(cfg.mode, InputMode::OpenMic);
+    assert!(cfg.streaming);
+    assert!(cfg.translate_to_english);
+    assert_eq!(cfg.hotkey, base.hotkey, "hotkey should come from base");
 }
 
 #[test]
@@ -761,8 +765,10 @@ fn regression_spoken_punctuation_processes_all_types() {
 /// increasing generation counters.
 #[test]
 fn regression_rapid_model_changes_generation_counter() {
-    let mut config = Config::default();
-    config.set_model_size("base".to_string());
+    let config = Config {
+        model_size: "base".to_string(),
+        ..Default::default()
+    };
     let mut h = Harness::with_config(&config);
 
     let changes = [
@@ -862,8 +868,10 @@ fn transcription_result_during_recording_does_not_reset_tray() {
 
 #[test]
 fn to_config_reflects_tray_mutations() {
-    let mut base = Config::default();
-    base.set_model_size("base".to_string());
+    let base = Config {
+        model_size: "base".to_string(),
+        ..Default::default()
+    };
     let mut h = Harness::with_config(&base);
 
     // Mutate state through messages
@@ -878,15 +886,15 @@ fn to_config_reflects_tray_mutations() {
 
     // Build config from state
     let cfg = h.state.to_config(&base);
-    assert_eq!(cfg.model_size(), "small");
-    assert_eq!(cfg.language(), "de");
-    assert!(cfg.spoken_punctuation());
-    assert_eq!(*cfg.mode(), InputMode::OpenMic);
-    assert!(cfg.streaming());
-    assert!(cfg.translate_to_english());
+    assert_eq!(cfg.model_size, "small");
+    assert_eq!(cfg.language, "de");
+    assert!(cfg.spoken_punctuation);
+    assert_eq!(cfg.mode, InputMode::OpenMic);
+    assert!(cfg.streaming);
+    assert!(cfg.translate_to_english);
     // Hotkey and max_recordings come from base, not state
-    assert_eq!(cfg.hotkey(), base.hotkey());
-    assert_eq!(cfg.max_recordings(), base.max_recordings());
+    assert_eq!(cfg.hotkey, base.hotkey);
+    assert_eq!(cfg.max_recordings, base.max_recordings);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -895,8 +903,10 @@ fn to_config_reflects_tray_mutations() {
 
 #[test]
 fn streaming_push_to_talk_full_cycle() {
-    let mut config = Config::default();
-    config.set_streaming(true);
+    let config = Config {
+        streaming: true,
+        ..Default::default()
+    };
     let mut h = Harness::with_config(&config);
 
     // Press: start recording + streaming

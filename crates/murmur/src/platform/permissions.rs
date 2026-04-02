@@ -30,6 +30,11 @@ pub fn check_accessibility() -> bool {
     // Skip the system prompt in test builds to avoid opening System Settings in CI.
     let prompt = !cfg!(test);
 
+    // SAFETY: All CF pointers are obtained from Apple framework functions
+    // with correct types.  The dictionary (when built) is released after
+    // use.  `kAXTrustedCheckOptionPrompt` and `kCFBooleanTrue` are valid
+    // framework-provided global symbols.  Passing null to
+    // AXIsProcessTrustedWithOptions is documented as valid.
     let trusted = unsafe {
         if prompt {
             let keys: [*const c_void; 1] = [kAXTrustedCheckOptionPrompt];
@@ -87,6 +92,9 @@ pub fn wait_for_accessibility() {
     }
 
     loop {
+        // SAFETY: Passing null to AXIsProcessTrustedWithOptions is
+        // documented as valid (no-prompt check).  The function has no
+        // other preconditions.
         let trusted = unsafe { AXIsProcessTrustedWithOptions(std::ptr::null()) };
         if trusted {
             return;

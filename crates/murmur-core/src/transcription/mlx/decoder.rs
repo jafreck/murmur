@@ -248,8 +248,6 @@ pub(crate) struct TextDecoder {
     layers: Vec<TextDecoderLayer>,
     norm: RmsNorm,
     lm_head: Linear,
-    #[allow(dead_code)]
-    config: ModelConfig,
 }
 
 impl TextDecoder {
@@ -296,7 +294,6 @@ impl TextDecoder {
                 cfg.dec_rms_norm_eps,
             )?,
             lm_head,
-            config: cfg.clone(),
         })
     }
 

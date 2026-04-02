@@ -87,6 +87,10 @@ mod macos {
         let mut device_id: AudioDeviceID = 0;
         let mut size = std::mem::size_of::<AudioDeviceID>() as u32;
 
+        // SAFETY: We pass the system audio object with the correct property
+        // address for the default input device.  `device_id` is a valid
+        // stack-local AudioDeviceID and `size` matches its byte width.
+        // No qualifier data is needed for this property.
         let status = unsafe {
             AudioObjectGetPropertyData(
                 K_AUDIO_OBJECT_SYSTEM_OBJECT,
@@ -103,6 +107,10 @@ mod macos {
             return;
         }
 
+        // SAFETY: Same property address as the read above.  `device_id`
+        // contains the value just read, and its size matches the property
+        // type.  Writing the same device ID back is the intended nudge to
+        // trigger Bluetooth HFP profile activation.
         let status = unsafe {
             AudioObjectSetPropertyData(
                 K_AUDIO_OBJECT_SYSTEM_OBJECT,

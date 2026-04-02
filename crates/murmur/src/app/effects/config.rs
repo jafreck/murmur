@@ -30,17 +30,17 @@ pub(crate) fn compute_config_diff(
     old_hotkey: &str,
     new_config: &Config,
 ) -> ConfigDiff {
-    let english_only = crate::config::is_english_only_model(new_config.model_size());
-    let effective_language = if english_only && new_config.language() != "en" {
+    let english_only = crate::config::is_english_only_model(&new_config.model_size);
+    let effective_language = if english_only && new_config.language != "en" {
         "en".to_string()
     } else {
-        new_config.language().to_string()
+        new_config.language.clone()
     };
 
     ConfigDiff {
-        model_or_language_changed: new_config.model_size() != old_model
+        model_or_language_changed: new_config.model_size != old_model
             || effective_language != old_language,
-        hotkey_changed: new_config.hotkey() != old_hotkey,
+        hotkey_changed: new_config.hotkey != old_hotkey,
         language_menu_enabled: !english_only,
         effective_language,
     }
@@ -87,7 +87,7 @@ pub(super) fn reload_config(ctx: &mut EffectContext<'_>) -> Result<(bool, Vec<Ap
     let old_lang = ctx.state.language.clone();
     let old_generation = ctx.state.reload_generation;
 
-    let diff = compute_config_diff(&old_model, &old_lang, ctx.config.hotkey(), &new_config);
+    let diff = compute_config_diff(&old_model, &old_lang, &ctx.config.hotkey, &new_config);
 
     *ctx.state = AppState::new(&new_config);
     // Preserve reload_generation so in-flight reloads are correctly discarded
@@ -100,16 +100,16 @@ pub(super) fn reload_config(ctx: &mut EffectContext<'_>) -> Result<(bool, Vec<Ap
 
     // Update the hotkey listener if the hotkey changed
     if diff.hotkey_changed {
-        if let Some(parsed) = crate::input::keycodes::parse(new_config.hotkey()) {
+        if let Some(parsed) = crate::input::keycodes::parse(&new_config.hotkey) {
             if let Ok(mut hk) = ctx.hotkey_config.lock() {
                 *hk = (parsed.key, parsed.modifiers.into_iter().collect());
             }
-            info!("Hotkey updated to: {}", new_config.hotkey());
-            ctx.tray.set_hotkey(new_config.hotkey());
+            info!("Hotkey updated to: {}", new_config.hotkey);
+            ctx.tray.set_hotkey(&new_config.hotkey);
         } else {
             error!(
                 "Invalid hotkey in config: '{}', keeping previous",
-                new_config.hotkey()
+                new_config.hotkey
             );
         }
     }

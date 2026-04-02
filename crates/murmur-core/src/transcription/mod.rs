@@ -19,7 +19,7 @@ pub mod vad;
 pub mod whisper_engine;
 
 pub use engine::{AsrEngine, StreamingState, TranscriptionResult};
-pub use factory::{DefaultEngineFactory, EngineFactory};
+pub use factory::DefaultEngineFactory;
 #[cfg(feature = "mlx")]
 pub use mlx::MlxEngine;
 pub use model::{

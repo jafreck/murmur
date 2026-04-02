@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::config::{AsrBackend, AsrQuantization, Config};
@@ -150,51 +150,24 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
         }
     }
 
-    std::fs::create_dir_all(&models_dir).context("Failed to create models directory")?;
-
     let url = model_url(model_size);
     log::info!("Downloading {model_size} model from {url}...");
 
-    let response = reqwest::blocking::get(&url).context("Failed to connect to HuggingFace")?;
-
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "Download failed with HTTP status {}. Check your network connection.",
-            response.status()
-        );
-    }
-
-    let total = response.content_length().unwrap_or(0);
-    let mut reader = response;
-
-    // Write to a temporary file first, then rename atomically to avoid
-    // leaving a partial file at the final path if the process is killed.
-    let part_path = models_dir.join(format!("{filename}.part"));
-    let mut file = File::create(&part_path).context("Failed to create temporary model file")?;
-
-    let mut downloaded: u64 = 0;
-    let mut buf = [0u8; 8192];
-
-    loop {
-        let n = reader.read(&mut buf).context("Download read error")?;
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buf[..n]).context("Write error")?;
-        downloaded += n as u64;
+    let progress_adapter = |downloaded: u64, total: u64| {
         if total > 0 {
             on_progress(downloaded as f64 / total as f64 * 100.0);
         }
-    }
+    };
 
-    drop(file);
+    crate::util::download_to_file(&url, &dest_path, Some(&progress_adapter))?;
 
-    // Validate before promoting to the final path
-    if !is_valid_ggml_file(&part_path) {
-        if let Err(e) = std::fs::remove_file(&part_path) {
+    // Validate after download — remove the file if it's not a real GGML model
+    // (e.g. an HTML error page from a CDN).
+    if !is_valid_ggml_file(&dest_path) {
+        if let Err(e) = std::fs::remove_file(&dest_path) {
             log::warn!(
-                "Failed to clean up partial download {}: {e}",
-                part_path.display()
+                "Failed to clean up invalid download {}: {e}",
+                dest_path.display()
             );
         }
         anyhow::bail!(
@@ -202,9 +175,6 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
              Check your network connection or try from a different network."
         );
     }
-
-    std::fs::rename(&part_path, &dest_path)
-        .context("Failed to move downloaded model to final path")?;
 
     log::info!("Model downloaded to {}", dest_path.display());
     Ok(dest_path)
@@ -287,8 +257,9 @@ fn parakeet_files(quantization: AsrQuantization) -> Vec<&'static str> {
     }
 }
 
-/// Download a single file from HuggingFace into `dest_dir`, using an atomic
-/// `.part` rename.  `file_progress` is called with bytes-so-far for this file.
+/// Download a single file from HuggingFace into `dest_dir`, using
+/// [`crate::util::download_to_file`] for atomic temp-file-then-rename
+/// semantics.  `file_progress` is called with `(bytes_so_far, total)`.
 fn download_hf_file(
     repo: &str,
     filename: &str,
@@ -308,37 +279,7 @@ fn download_hf_file(
     let url = format!("https://huggingface.co/{repo}/resolve/main/{filename}");
     log::info!("  downloading {filename} from {url}");
 
-    let response = reqwest::blocking::get(&url).context("Failed to connect to HuggingFace")?;
-
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "Download of {filename} failed with HTTP status {}",
-            response.status()
-        );
-    }
-
-    let total = response.content_length().unwrap_or(0);
-    let mut reader = response;
-
-    let part_path = dest_dir.join(format!("{filename}.part"));
-    let mut file = File::create(&part_path).context("Failed to create temporary file")?;
-
-    let mut downloaded: u64 = 0;
-    let mut buf = [0u8; 8192];
-
-    loop {
-        let n = reader.read(&mut buf).context("Download read error")?;
-        if n == 0 {
-            break;
-        }
-        file.write_all(&buf[..n]).context("Write error")?;
-        downloaded += n as u64;
-        file_progress(downloaded, total);
-    }
-
-    drop(file);
-
-    std::fs::rename(&part_path, &dest).context("Failed to move downloaded file to final path")?;
+    crate::util::download_to_file(&url, &dest, Some(&file_progress))?;
     Ok(())
 }
 

@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+use crate::audio::resample::resample;
 use crate::audio::TARGET_RATE;
 use crate::transcription::engine::AsrEngine;
 use crate::transcription::vad;
@@ -357,7 +358,7 @@ fn open_capture_stream(buffer: Arc<Mutex<Vec<f32>>>) -> anyhow::Result<cpal::Str
             let samples_16k = if sample_rate == TARGET_RATE {
                 mono
             } else {
-                resample_simple(&mono, sample_rate, TARGET_RATE)
+                resample(&mono, sample_rate, TARGET_RATE)
             };
 
             if let Ok(mut buf) = buffer.try_lock() {
@@ -372,33 +373,6 @@ fn open_capture_stream(buffer: Arc<Mutex<Vec<f32>>>) -> anyhow::Result<cpal::Str
 
     stream.play()?;
     Ok(stream)
-}
-
-/// Simple linear resampling.
-fn resample_simple(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
-    if from_rate == to_rate || input.is_empty() {
-        return input.to_vec();
-    }
-    let ratio = from_rate as f64 / to_rate as f64;
-    let output_len = (input.len() as f64 / ratio) as usize;
-    let mut output = Vec::with_capacity(output_len);
-
-    for i in 0..output_len {
-        let src_pos = i as f64 * ratio;
-        let idx = src_pos as usize;
-        let frac = src_pos - idx as f64;
-
-        let sample = if idx + 1 < input.len() {
-            input[idx] * (1.0 - frac as f32) + input[idx + 1] * frac as f32
-        } else if idx < input.len() {
-            input[idx]
-        } else {
-            0.0
-        };
-        output.push(sample);
-    }
-
-    output
 }
 
 /// Check streaming partial text for the stop phrase and return
@@ -613,26 +587,5 @@ mod tests {
             "murmur stop dictation",
         );
         assert_eq!(result, Some("hello thanks".to_string()));
-    }
-
-    #[test]
-    fn test_resample_simple_same_rate() {
-        let input = vec![1.0, 2.0, 3.0];
-        let output = resample_simple(&input, 16000, 16000);
-        assert_eq!(output, input);
-    }
-
-    #[test]
-    fn test_resample_simple_downsample() {
-        let input: Vec<f32> = (0..48000).map(|i| (i as f32 / 48000.0).sin()).collect();
-        let output = resample_simple(&input, 48000, 16000);
-        // Should be roughly 1/3 the length
-        assert!((output.len() as f32 - 16000.0).abs() < 2.0);
-    }
-
-    #[test]
-    fn test_resample_simple_empty() {
-        let output = resample_simple(&[], 48000, 16000);
-        assert!(output.is_empty());
     }
 }

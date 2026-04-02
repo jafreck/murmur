@@ -34,7 +34,7 @@ pub fn state_icon_key(state: &TrayState) -> IconKey {
     match state {
         TrayState::Idle => IconKey::Idle,
         TrayState::Recording | TrayState::Error => IconKey::Recording,
-        TrayState::Transcribing | TrayState::Downloading => IconKey::Transcribing,
+        TrayState::Transcribing => IconKey::Transcribing,
         TrayState::Loading => IconKey::Loading,
     }
 }

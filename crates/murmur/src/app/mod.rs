@@ -23,7 +23,7 @@ use crate::input::keycodes;
 use crate::platform::permissions;
 use crate::ui::tray::{TrayAction, TrayController};
 use crate::VERSION;
-use murmur_core::transcription::{AsrEngine, DefaultEngineFactory, EngineFactory};
+use murmur_core::transcription::{AsrEngine, DefaultEngineFactory};
 
 use tray_icon::menu::MenuEvent;
 use tray_icon::TrayIconEvent;
@@ -110,14 +110,14 @@ pub fn run(notes_mode: bool) -> Result<()> {
     let mut config = Config::load();
 
     if notes_mode {
-        config.set_app_mode(AppMode::Notes);
+        config.app_mode = AppMode::Notes;
     }
 
-    info!("Hotkey: {}", config.hotkey());
-    info!("Model: {}", config.model_size());
+    info!("Hotkey: {}", config.hotkey);
+    info!("Model: {}", config.model_size);
 
-    let parsed = keycodes::parse(config.hotkey())
-        .ok_or_else(|| anyhow::anyhow!("Invalid hotkey: {}", config.hotkey()))?;
+    let parsed = keycodes::parse(&config.hotkey)
+        .ok_or_else(|| anyhow::anyhow!("Invalid hotkey: {}", config.hotkey))?;
 
     let _accessible = permissions::check_accessibility();
     permissions::check_microphone();
@@ -182,18 +182,18 @@ pub fn run(notes_mode: bool) -> Result<()> {
 
     // Load the model on a background thread so the tray appears immediately.
     let mut engine: Option<Arc<dyn AsrEngine + Send + Sync>> = None;
-    let engine_factory: Arc<dyn EngineFactory> = Arc::new(DefaultEngineFactory::new());
+    let engine_factory = Arc::new(DefaultEngineFactory::new());
     let mut streaming_worker: Option<murmur_core::transcription::SubprocessTranscriber> = None;
     {
-        let backend = config.asr_backend();
-        let model_size = config.model_size().to_string();
-        let language = config.language().to_string();
-        let quantization = config.asr_quantization();
+        let backend = config.asr_backend;
+        let model_size = config.model_size.clone();
+        let language = config.language.clone();
+        let quantization = config.asr_quantization;
         let tx_load = tx.clone();
         let factory = Arc::clone(&engine_factory);
 
         // Warn about streaming limitations for non-Whisper backends
-        if config.streaming() && !matches!(backend, murmur_core::config::AsrBackend::Whisper) {
+        if config.streaming && !matches!(backend, murmur_core::config::AsrBackend::Whisper) {
             info!(
                 "Streaming with {backend} uses chunk-based fallback \
                  (subprocess streaming is Whisper-only)"
@@ -202,7 +202,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
 
         std::thread::spawn(move || {
             match effects::create_engine_on_thread(
-                &*factory,
+                &factory,
                 backend,
                 &model_size,
                 &language,
@@ -222,7 +222,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
         });
     }
 
-    let mut recorder = AudioRecorder::with_noise_suppression(config.noise_suppression());
+    let mut recorder = AudioRecorder::with_noise_suppression(config.noise_suppression);
     if let Err(e) = recorder.warm() {
         error!("Failed to warm microphone: {e}");
     }
@@ -252,16 +252,16 @@ pub fn run(notes_mode: bool) -> Result<()> {
     let mut wake_word: Option<murmur_core::input::wake_word::WakeWordHandle> = None;
 
     println!("murmur v{VERSION}");
-    println!("Hotkey: {}", config.hotkey());
-    println!("Model: {}", config.model_size());
+    println!("Hotkey: {}", config.hotkey);
+    println!("Model: {}", config.model_size);
     if config.is_notes_mode() {
-        println!("Wake word: \"{}\"", config.wake_word());
+        println!("Wake word: \"{}\"", config.wake_word);
     }
     println!("Loading model in background...");
 
     // Background update check
     {
-        let auto_update = config.auto_update();
+        let auto_update = config.auto_update;
         let tx_update = tx.clone();
         std::thread::spawn(
             move || match murmur_core::update::check_for_update(crate::VERSION) {

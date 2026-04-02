@@ -9,4 +9,4 @@ pub mod transcription;
 pub mod update;
 pub mod util;
 
-pub use error::{AudioError, ConfigError, LlmError, TranscriptionError, UpdateError};
+pub use error::ConfigError;

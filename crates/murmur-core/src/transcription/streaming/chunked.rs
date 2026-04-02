@@ -279,17 +279,6 @@ pub(crate) fn format_partial_event(new_words: &[String]) -> Option<StreamingEven
     })
 }
 
-/// Find the byte length of the common prefix between two strings,
-/// aligned to char boundaries.
-#[allow(dead_code)]
-fn common_prefix_len(a: &str, b: &str) -> usize {
-    a.chars()
-        .zip(b.chars())
-        .take_while(|(ac, bc)| ac == bc)
-        .map(|(c, _)| c.len_utf8())
-        .sum()
-}
-
 // ── Stitching ──────────────────────────────────────────────────────────
 
 /// Given previously committed words and a new chunk's words, determine which
@@ -345,14 +334,6 @@ fn longest_suffix_prefix_match(a: &[String], b: &[String]) -> usize {
     }
 
     best
-}
-
-// ── Utilities ──────────────────────────────────────────────────────────
-
-/// Split text into words, normalising whitespace.
-#[allow(dead_code)]
-fn split_words(text: &str) -> Vec<String> {
-    text.split_whitespace().map(|w| w.to_string()).collect()
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
@@ -440,27 +421,6 @@ mod tests {
     }
 
     #[test]
-    fn test_split_words_basic() {
-        assert_eq!(split_words("hello world"), vec!["hello", "world"]);
-    }
-
-    #[test]
-    fn test_split_words_extra_whitespace() {
-        assert_eq!(split_words("  hello   world  "), vec!["hello", "world"]);
-    }
-
-    #[test]
-    fn test_split_words_empty() {
-        assert!(split_words("").is_empty());
-        assert!(split_words("   ").is_empty());
-    }
-
-    #[test]
-    fn test_split_words_single() {
-        assert_eq!(split_words("hello"), vec!["hello"]);
-    }
-
-    #[test]
     fn test_constants() {
         const { assert!(MIN_NEW_AUDIO_SECS > 0.0) };
         const { assert!(MAX_CHUNK_SECS > 0.0) };
@@ -529,50 +489,6 @@ mod tests {
         assert_eq!(normalize_for_match("hello,"), "hello");
         assert_eq!(normalize_for_match("\"hello\""), "hello");
         assert_eq!(normalize_for_match("..."), "");
-    }
-
-    // ── common_prefix_len tests ──────────────────────────────────────
-
-    #[test]
-    fn test_common_prefix_len_identical() {
-        assert_eq!(common_prefix_len("hello world", "hello world"), 11);
-    }
-
-    #[test]
-    fn test_common_prefix_len_prefix_match() {
-        assert_eq!(common_prefix_len("hello world", "hello world foo"), 11);
-    }
-
-    #[test]
-    fn test_common_prefix_len_diverges() {
-        assert_eq!(common_prefix_len("hello world", "hello earth"), 6);
-    }
-
-    #[test]
-    fn test_common_prefix_len_empty() {
-        assert_eq!(common_prefix_len("", "hello"), 0);
-        assert_eq!(common_prefix_len("hello", ""), 0);
-    }
-
-    #[test]
-    fn test_common_prefix_len_no_common() {
-        assert_eq!(common_prefix_len("abc", "xyz"), 0);
-    }
-
-    #[test]
-    fn test_common_prefix_len_unicode() {
-        // "café " = c(1) + a(1) + f(1) + é(2) + space(1) = 6 bytes
-        assert_eq!(common_prefix_len("café latte", "café mocha"), 6);
-    }
-
-    #[test]
-    fn test_common_prefix_len_revision_scenario() {
-        // Simulates Whisper revising "Frack" to "Freck"
-        let old = "My name is Jacob Frack and I am";
-        let new_text = "My name is Jacob Freck and I am a principal";
-        // "My name is Jacob F" = 18 bytes, then 'r' vs 'r' matches, 'a' vs 'e' diverges
-        // "My name is Jacob Fr" = 19 bytes
-        assert_eq!(common_prefix_len(old, new_text), 19);
     }
 
     // ── has_enough_new_audio tests ───────────────────────────────────

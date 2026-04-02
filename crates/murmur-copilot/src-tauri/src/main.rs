@@ -15,15 +15,15 @@ fn main() {
     info!("starting murmur-copilot");
 
     let config = Config::load();
-    let llm_manager = llm::LlmManager::try_connect(config.ollama_url(), config.llm_model());
-    let session_store = session::SessionStore::new(config.sessions_dir());
+    let llm_manager = llm::LlmManager::try_connect(&config.ollama_url, &config.llm_model);
+    let session_store = session::SessionStore::new(config.sessions_dir.as_deref());
 
     tauri::Builder::default()
         .manage(commands::AppState {
             session: std::sync::Mutex::new(None),
             llm: std::sync::Arc::new(std::sync::Mutex::new(llm_manager)),
             session_store: std::sync::Mutex::new(session_store),
-            auto_summary: config.auto_summary(),
+            auto_summary: config.auto_summary,
         })
         .setup(|app| {
             overlay::configure_overlay(app)?;

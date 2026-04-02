@@ -249,7 +249,7 @@ impl AudioRecorder {
 
     /// Return a copy of samples captured since `start()`, beginning at `offset`.
     /// Samples are 16 kHz mono f32 in the range \[−1, 1\].
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn snapshot(&self, offset: usize) -> Vec<f32> {
         if let Ok(buf) = self.shared.samples.lock() {
             if offset < buf.len() {
@@ -263,7 +263,7 @@ impl AudioRecorder {
     }
 
     /// Number of 16 kHz samples captured since `start()`.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn sample_count(&self) -> usize {
         self.shared.samples.lock().map(|b| b.len()).unwrap_or(0)
     }

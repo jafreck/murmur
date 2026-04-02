@@ -65,8 +65,10 @@ fn set_model_emits_save_and_reload() {
 
 #[test]
 fn set_language_emits_save_and_reload() {
-    let mut config = Config::default();
-    config.set_model_size("base".to_string()); // multilingual model allows language changes
+    let config = Config {
+        model_size: "base".to_string(), // multilingual model allows language changes
+        ..Default::default()
+    };
     let mut h = Harness::with_config(&config);
 
     let fx = h.send(AppMessage::TraySetLanguage("fr".into()));
@@ -150,12 +152,12 @@ fn state_mutations_produce_correct_config_on_disk() {
 
     // Reload and verify
     let loaded = Config::load_from(&path).unwrap();
-    assert_eq!(loaded.model_size(), "medium");
-    assert_eq!(loaded.language(), "ja");
-    assert!(loaded.spoken_punctuation());
-    assert!(loaded.streaming());
-    assert_eq!(*loaded.mode(), InputMode::OpenMic);
-    assert!(loaded.translate_to_english());
+    assert_eq!(loaded.model_size, "medium");
+    assert_eq!(loaded.language, "ja");
+    assert!(loaded.spoken_punctuation);
+    assert!(loaded.streaming);
+    assert_eq!(loaded.mode, InputMode::OpenMic);
+    assert!(loaded.translate_to_english);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -307,8 +309,10 @@ fn stitch_no_overlap() {
 
 #[test]
 fn reload_generation_increments() {
-    let mut config = Config::default();
-    config.set_model_size("base".to_string()); // multilingual model allows language changes
+    let config = Config {
+        model_size: "base".to_string(), // multilingual model allows language changes
+        ..Default::default()
+    };
     let mut h = Harness::with_config(&config);
     let gen0 = h.state.reload_generation();
 
@@ -398,12 +402,12 @@ fn full_config_mutation_pipeline() {
 
     // Reload and verify everything persisted
     let reloaded = Config::load_from(&path).unwrap();
-    assert_eq!(reloaded.model_size(), "large-v3-turbo");
-    assert_eq!(reloaded.language(), "zh");
-    assert!(reloaded.spoken_punctuation());
-    assert!(reloaded.streaming());
-    assert!(reloaded.translate_to_english());
-    assert_eq!(*reloaded.mode(), InputMode::OpenMic);
+    assert_eq!(reloaded.model_size, "large-v3-turbo");
+    assert_eq!(reloaded.language, "zh");
+    assert!(reloaded.spoken_punctuation);
+    assert!(reloaded.streaming);
+    assert!(reloaded.translate_to_english);
+    assert_eq!(reloaded.mode, InputMode::OpenMic);
 
     // Create new state from reloaded config — should match
     let state2 = AppState::new(&reloaded);

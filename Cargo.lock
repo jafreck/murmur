@@ -3658,7 +3658,6 @@ dependencies = [
  "arboard",
  "chrono",
  "clap 4.6.0",
- "cpal",
  "dirs",
  "eframe",
  "egui",
@@ -3673,12 +3672,10 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "png 0.18.1",
  "rdev",
- "regex",
  "serde",
  "serde_json",
  "tempfile",
  "tray-icon",
- "whisper-rs",
 ]
 
 [[package]]

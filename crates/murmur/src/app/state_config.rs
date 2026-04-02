@@ -123,15 +123,15 @@ impl AppState {
 
     pub fn to_config(&self, base: &Config) -> Config {
         let mut cfg = base.clone();
-        cfg.set_model_size(self.model_size.clone());
-        cfg.set_language(self.language.clone());
-        cfg.set_spoken_punctuation(self.spoken_punctuation);
-        cfg.set_filler_word_removal(self.filler_word_removal);
-        cfg.set_mode(self.mode.clone());
-        cfg.set_streaming(self.streaming);
-        cfg.set_translate_to_english(self.translate_to_english);
-        cfg.set_noise_suppression(self.noise_suppression);
-        cfg.set_app_mode(self.app_mode);
+        cfg.model_size = self.model_size.clone();
+        cfg.language = self.language.clone();
+        cfg.spoken_punctuation = self.spoken_punctuation;
+        cfg.filler_word_removal = self.filler_word_removal;
+        cfg.mode = self.mode.clone();
+        cfg.streaming = self.streaming;
+        cfg.translate_to_english = self.translate_to_english;
+        cfg.noise_suppression = self.noise_suppression;
+        cfg.app_mode = self.app_mode;
         cfg
     }
 }

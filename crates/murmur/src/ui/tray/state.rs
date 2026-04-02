@@ -260,19 +260,20 @@ impl TrayController {
     /// Sync all tray UI elements to match the given config.
     /// Used after reloading config from disk.
     pub fn sync_config(&mut self, config: &Config) {
-        self.set_model(&config.model_size);
-        self.set_language(&config.language);
-        self.set_mode(&config.mode);
-        self.set_hotkey(&config.hotkey);
-        update_radio_entries(&self.backend_entries, &config.asr_backend, |b| {
+        self.set_model(config.model_size());
+        self.set_language(config.language());
+        self.set_mode(config.mode());
+        self.set_hotkey(config.hotkey());
+        update_radio_entries(&self.backend_entries, &config.asr_backend(), |b| {
             b.to_string()
         });
         self.spoken_punct_item
-            .set_checked(config.spoken_punctuation);
+            .set_checked(config.spoken_punctuation());
         self.filler_removal_item
-            .set_checked(config.filler_word_removal);
-        self.streaming_item.set_checked(config.streaming);
-        self.translate_item.set_checked(config.translate_to_english);
+            .set_checked(config.filler_word_removal());
+        self.streaming_item.set_checked(config.streaming());
+        self.translate_item
+            .set_checked(config.translate_to_english());
         self.app_mode_item.set_checked(config.is_notes_mode());
     }
 }

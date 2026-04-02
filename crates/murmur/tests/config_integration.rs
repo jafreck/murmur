@@ -21,14 +21,14 @@ fn default_config_round_trip() {
     original.save_to(&path).unwrap();
 
     let loaded = Config::load_from(&path).unwrap();
-    assert_eq!(loaded.hotkey, original.hotkey);
-    assert_eq!(loaded.model_size, original.model_size);
-    assert_eq!(loaded.language, original.language);
-    assert_eq!(loaded.spoken_punctuation, original.spoken_punctuation);
-    assert_eq!(loaded.max_recordings, original.max_recordings);
-    assert_eq!(loaded.mode, original.mode);
-    assert_eq!(loaded.streaming, original.streaming);
-    assert_eq!(loaded.translate_to_english, original.translate_to_english);
+    assert_eq!(loaded.hotkey(), original.hotkey());
+    assert_eq!(loaded.model_size(), original.model_size());
+    assert_eq!(loaded.language(), original.language());
+    assert_eq!(loaded.spoken_punctuation(), original.spoken_punctuation());
+    assert_eq!(loaded.max_recordings(), original.max_recordings());
+    assert_eq!(loaded.mode(), original.mode());
+    assert_eq!(loaded.streaming(), original.streaming());
+    assert_eq!(loaded.translate_to_english(), original.translate_to_english());
 }
 
 #[test]
@@ -36,31 +36,29 @@ fn custom_config_round_trip() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("config.json");
 
-    let config = Config {
-        hotkey: "ctrl+shift+space".to_string(),
-        model_size: "small.en".to_string(),
-        language: "fr".to_string(),
-        spoken_punctuation: true,
-        filler_word_removal: true,
-        max_recordings: 10,
-        mode: InputMode::OpenMic,
-        streaming: true,
-        translate_to_english: true,
-        vocabulary: vec!["test".to_string()],
-        ..Config::default()
-    };
+    let mut config = Config::default();
+    config.set_hotkey("ctrl+shift+space".to_string());
+    config.set_model_size("small.en".to_string());
+    config.set_language("fr".to_string());
+    config.set_spoken_punctuation(true);
+    config.set_filler_word_removal(true);
+    config.set_max_recordings(10);
+    config.set_mode(InputMode::OpenMic);
+    config.set_streaming(true);
+    config.set_translate_to_english(true);
+    config.set_vocabulary(vec!["test".to_string()]);
     config.save_to(&path).unwrap();
 
     let loaded = Config::load_from(&path).unwrap();
-    assert_eq!(loaded.hotkey, "ctrl+shift+space");
-    assert_eq!(loaded.model_size, "small.en");
-    assert_eq!(loaded.language, "fr");
-    assert!(loaded.spoken_punctuation);
-    assert_eq!(loaded.max_recordings, 10);
-    assert_eq!(loaded.mode, InputMode::OpenMic);
-    assert!(loaded.streaming);
-    assert!(loaded.translate_to_english);
-    assert_eq!(loaded.vocabulary, vec!["test"]);
+    assert_eq!(loaded.hotkey(), "ctrl+shift+space");
+    assert_eq!(loaded.model_size(), "small.en");
+    assert_eq!(loaded.language(), "fr");
+    assert!(loaded.spoken_punctuation());
+    assert_eq!(loaded.max_recordings(), 10);
+    assert_eq!(*loaded.mode(), InputMode::OpenMic);
+    assert!(loaded.streaming());
+    assert!(loaded.translate_to_english());
+    assert_eq!(loaded.vocabulary(), vec!["test"]);
 }
 
 #[test]
@@ -72,7 +70,7 @@ fn save_creates_parent_directories() {
     assert!(path.exists());
 
     let loaded = Config::load_from(&path).unwrap();
-    assert_eq!(loaded.hotkey, Config::default().hotkey);
+    assert_eq!(loaded.hotkey(), Config::default().hotkey());
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -144,11 +142,11 @@ fn multiple_save_load_cycles_preserve_data() {
     let mut config = Config::default();
 
     for model in &["tiny.en", "base.en", "small.en", "medium.en"] {
-        config.model_size = model.to_string();
+        config.set_model_size(model.to_string());
         config.save_to(&path).unwrap();
 
         let loaded = Config::load_from(&path).unwrap();
-        assert_eq!(loaded.model_size, *model);
+        assert_eq!(loaded.model_size(), *model);
     }
 }
 
@@ -157,20 +155,16 @@ fn overwrite_preserves_last_written() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("config.json");
 
-    let c1 = Config {
-        hotkey: "f5".to_string(),
-        ..Config::default()
-    };
+    let mut c1 = Config::default();
+    c1.set_hotkey("f5".to_string());
     c1.save_to(&path).unwrap();
 
-    let c2 = Config {
-        hotkey: "f9".to_string(),
-        ..Config::default()
-    };
+    let mut c2 = Config::default();
+    c2.set_hotkey("f9".to_string());
     c2.save_to(&path).unwrap();
 
     let loaded = Config::load_from(&path).unwrap();
-    assert_eq!(loaded.hotkey, "f9");
+    assert_eq!(loaded.hotkey(), "f9");
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -181,31 +175,29 @@ fn overwrite_preserves_last_written() {
 fn config_to_state_and_back() {
     use murmur::app::AppState;
 
-    let original = Config {
-        hotkey: "ctrl+space".to_string(),
-        model_size: "medium.en".to_string(),
-        language: "de".to_string(),
-        spoken_punctuation: true,
-        filler_word_removal: true,
-        max_recordings: 5,
-        mode: InputMode::OpenMic,
-        streaming: true,
-        translate_to_english: true,
-        ..Config::default()
-    };
+    let mut original = Config::default();
+    original.set_hotkey("ctrl+space".to_string());
+    original.set_model_size("medium.en".to_string());
+    original.set_language("de".to_string());
+    original.set_spoken_punctuation(true);
+    original.set_filler_word_removal(true);
+    original.set_max_recordings(5);
+    original.set_mode(InputMode::OpenMic);
+    original.set_streaming(true);
+    original.set_translate_to_english(true);
 
     let state = AppState::new(&original);
     let reconstructed = state.to_config(&original);
 
-    assert_eq!(reconstructed.model_size, "medium.en");
-    assert_eq!(reconstructed.language, "de");
-    assert!(reconstructed.spoken_punctuation);
-    assert_eq!(reconstructed.mode, InputMode::OpenMic);
-    assert!(reconstructed.streaming);
-    assert!(reconstructed.translate_to_english);
+    assert_eq!(reconstructed.model_size(), "medium.en");
+    assert_eq!(reconstructed.language(), "de");
+    assert!(reconstructed.spoken_punctuation());
+    assert_eq!(*reconstructed.mode(), InputMode::OpenMic);
+    assert!(reconstructed.streaming());
+    assert!(reconstructed.translate_to_english());
     // hotkey and max_recordings come from the base config
-    assert_eq!(reconstructed.hotkey, "ctrl+space");
-    assert_eq!(reconstructed.max_recordings, 5);
+    assert_eq!(reconstructed.hotkey(), "ctrl+space");
+    assert_eq!(reconstructed.max_recordings(), 5);
 }
 
 #[test]
@@ -215,27 +207,25 @@ fn config_save_load_then_state_round_trip() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("config.json");
 
-    let original = Config {
-        hotkey: "f9".to_string(),
-        model_size: "small.en".to_string(),
-        language: "ja".to_string(),
-        spoken_punctuation: false,
-        filler_word_removal: true,
-        max_recordings: 3,
-        mode: InputMode::PushToTalk,
-        streaming: false,
-        translate_to_english: false,
-        ..Config::default()
-    };
+    let mut original = Config::default();
+    original.set_hotkey("f9".to_string());
+    original.set_model_size("small.en".to_string());
+    original.set_language("ja".to_string());
+    original.set_spoken_punctuation(false);
+    original.set_filler_word_removal(true);
+    original.set_max_recordings(3);
+    original.set_mode(InputMode::PushToTalk);
+    original.set_streaming(false);
+    original.set_translate_to_english(false);
 
     original.save_to(&path).unwrap();
     let loaded = Config::load_from(&path).unwrap();
     let state = AppState::new(&loaded);
     let final_config = state.to_config(&loaded);
 
-    assert_eq!(final_config.model_size, "small.en");
-    assert_eq!(final_config.language, "ja");
-    assert_eq!(final_config.mode, InputMode::PushToTalk);
+    assert_eq!(final_config.model_size(), "small.en");
+    assert_eq!(final_config.language(), "ja");
+    assert_eq!(*final_config.mode(), InputMode::PushToTalk);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -280,13 +270,11 @@ fn input_mode_serialization_round_trip() {
     let path = tmp.path().join("config.json");
 
     for mode in &[InputMode::PushToTalk, InputMode::OpenMic] {
-        let config = Config {
-            mode: mode.clone(),
-            ..Config::default()
-        };
+        let mut config = Config::default();
+        config.set_mode(mode.clone());
         config.save_to(&path).unwrap();
         let loaded = Config::load_from(&path).unwrap();
-        assert_eq!(loaded.mode, *mode);
+        assert_eq!(*loaded.mode(), *mode);
     }
 }
 
@@ -371,11 +359,9 @@ fn effective_vocabulary_merges_all_sources() {
         },
     );
 
-    let cfg = Config {
-        vocabulary: vec!["global_term".to_string()],
-        app_contexts,
-        ..Config::default()
-    };
+    let mut cfg = Config::default();
+    cfg.set_vocabulary(vec!["global_term".to_string()]);
+    cfg.set_app_contexts(app_contexts);
 
     let vocab = cfg.effective_vocabulary(Some("com.terminal"), Some(tmp.path()));
     assert_eq!(vocab, vec!["global_term", "app_term", "file_term"]);
@@ -395,11 +381,9 @@ fn effective_vocabulary_deduplicates() {
         },
     );
 
-    let cfg = Config {
-        vocabulary: vec!["shared".to_string()],
-        app_contexts,
-        ..Config::default()
-    };
+    let mut cfg = Config::default();
+    cfg.set_vocabulary(vec!["shared".to_string()]);
+    cfg.set_app_contexts(app_contexts);
 
     let vocab = cfg.effective_vocabulary(Some("app"), Some(tmp.path()));
     assert_eq!(vocab, vec!["shared"]);
@@ -407,10 +391,8 @@ fn effective_vocabulary_deduplicates() {
 
 #[test]
 fn app_exclusion_integration() {
-    let cfg = Config {
-        excluded_apps: vec!["com.1password".to_string(), "com.chase.mobile".to_string()],
-        ..Config::default()
-    };
+    let mut cfg = Config::default();
+    cfg.set_excluded_apps(vec!["com.1password".to_string(), "com.chase.mobile".to_string()]);
 
     assert!(cfg.is_app_excluded("com.1password"));
     assert!(cfg.is_app_excluded("com.chase.mobile"));
@@ -435,11 +417,9 @@ fn dictation_mode_app_override_integration() {
         },
     );
 
-    let cfg = Config {
-        dictation_mode: DictationMode::Prose,
-        app_contexts,
-        ..Config::default()
-    };
+    let mut cfg = Config::default();
+    cfg.set_dictation_mode(DictationMode::Prose);
+    cfg.set_app_contexts(app_contexts);
 
     assert_eq!(cfg.effective_dictation_mode(None), DictationMode::Prose);
     assert_eq!(
@@ -470,32 +450,30 @@ fn full_config_with_vocabulary_save_load() {
         },
     );
 
-    let cfg = Config {
-        hotkey: "f10".to_string(),
-        model_size: "small.en".to_string(),
-        language: "en".to_string(),
-        spoken_punctuation: false,
-        max_recordings: 0,
-        mode: InputMode::PushToTalk,
-        streaming: false,
-        translate_to_english: false,
-        vocabulary: vec!["murmur".to_string(), "whisper".to_string()],
-        app_contexts,
-        excluded_apps: vec!["com.1password".to_string()],
-        dictation_mode: DictationMode::Prose,
-        noise_suppression: true,
-        filler_word_removal: true,
-        ..Config::default()
-    };
+    let mut cfg = Config::default();
+    cfg.set_hotkey("f10".to_string());
+    cfg.set_model_size("small.en".to_string());
+    cfg.set_language("en".to_string());
+    cfg.set_spoken_punctuation(false);
+    cfg.set_max_recordings(0);
+    cfg.set_mode(InputMode::PushToTalk);
+    cfg.set_streaming(false);
+    cfg.set_translate_to_english(false);
+    cfg.set_vocabulary(vec!["murmur".to_string(), "whisper".to_string()]);
+    cfg.set_app_contexts(app_contexts);
+    cfg.set_excluded_apps(vec!["com.1password".to_string()]);
+    cfg.set_dictation_mode(DictationMode::Prose);
+    cfg.set_noise_suppression(true);
+    cfg.set_filler_word_removal(true);
     cfg.save_to(&path).unwrap();
 
     let loaded = Config::load_from(&path).unwrap();
-    assert_eq!(loaded.vocabulary, vec!["murmur", "whisper"]);
-    assert_eq!(loaded.excluded_apps, vec!["com.1password"]);
-    assert_eq!(loaded.dictation_mode, DictationMode::Prose);
-    assert!(loaded.filler_word_removal);
+    assert_eq!(loaded.vocabulary(), vec!["murmur", "whisper"]);
+    assert_eq!(loaded.excluded_apps(), vec!["com.1password"]);
+    assert_eq!(loaded.dictation_mode(), DictationMode::Prose);
+    assert!(loaded.filler_word_removal());
 
-    let vscode = loaded.app_contexts.get("com.vscode").unwrap();
+    let vscode = loaded.app_contexts().get("com.vscode").unwrap();
     assert_eq!(vscode.vocabulary, vec!["rustfmt", "clippy"]);
     assert_eq!(vscode.mode, Some(DictationMode::Code));
 
@@ -523,9 +501,9 @@ fn backward_compat_old_config_loads_with_defaults() {
     std::fs::write(&path, old_json).unwrap();
 
     let loaded = Config::load_from(&path).unwrap();
-    assert_eq!(loaded.hotkey, "f5");
-    assert!(loaded.vocabulary.is_empty());
-    assert!(loaded.app_contexts.is_empty());
-    assert!(loaded.excluded_apps.is_empty());
-    assert_eq!(loaded.dictation_mode, DictationMode::Prose);
+    assert_eq!(loaded.hotkey(), "f5");
+    assert!(loaded.vocabulary().is_empty());
+    assert!(loaded.app_contexts().is_empty());
+    assert!(loaded.excluded_apps().is_empty());
+    assert_eq!(loaded.dictation_mode(), DictationMode::Prose);
 }

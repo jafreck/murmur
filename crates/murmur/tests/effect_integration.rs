@@ -60,15 +60,13 @@ fn set_model_emits_save_and_reload() {
         e,
         AppEffect::SetTrayModel(m) if m == "small.en"
     )));
-    assert_eq!(h.state.model_size, "small.en");
+    assert_eq!(h.state.model_size(), "small.en");
 }
 
 #[test]
 fn set_language_emits_save_and_reload() {
-    let config = Config {
-        model_size: "base".to_string(), // multilingual model allows language changes
-        ..Config::default()
-    };
+    let mut config = Config::default();
+    config.set_model_size("base".to_string()); // multilingual model allows language changes
     let mut h = Harness::with_config(&config);
 
     let fx = h.send(AppMessage::TraySetLanguage("fr".into()));
@@ -78,41 +76,41 @@ fn set_language_emits_save_and_reload() {
         e,
         AppEffect::ReloadTranscriber(_)
     )));
-    assert_eq!(h.state.language, "fr");
+    assert_eq!(h.state.language(), "fr");
 }
 
 #[test]
 fn toggle_spoken_punctuation_emits_save() {
     let mut h = Harness::new();
-    assert!(!h.state.spoken_punctuation);
+    assert!(!h.state.spoken_punctuation());
 
     let fx = h.send(AppMessage::TrayToggleSpokenPunctuation);
     assert!(has_effect(&fx, |e| matches!(e, AppEffect::SaveConfig)));
-    assert!(h.state.spoken_punctuation);
+    assert!(h.state.spoken_punctuation());
 
     let fx = h.send(AppMessage::TrayToggleSpokenPunctuation);
     assert!(has_effect(&fx, |e| matches!(e, AppEffect::SaveConfig)));
-    assert!(!h.state.spoken_punctuation);
+    assert!(!h.state.spoken_punctuation());
 }
 
 #[test]
 fn toggle_streaming_emits_save() {
     let mut h = Harness::new();
-    let initial = h.state.streaming;
+    let initial = h.state.streaming();
 
     let fx = h.send(AppMessage::TrayToggleStreaming);
     assert!(has_effect(&fx, |e| matches!(e, AppEffect::SaveConfig)));
-    assert_ne!(h.state.streaming, initial);
+    assert_ne!(h.state.streaming(), initial);
 }
 
 #[test]
 fn toggle_translate_emits_save() {
     let mut h = Harness::new();
-    let initial = h.state.translate_to_english;
+    let initial = h.state.translate_to_english();
 
     let fx = h.send(AppMessage::TrayToggleTranslate);
     assert!(has_effect(&fx, |e| matches!(e, AppEffect::SaveConfig)));
-    assert_ne!(h.state.translate_to_english, initial);
+    assert_ne!(h.state.translate_to_english(), initial);
 }
 
 #[test]
@@ -121,7 +119,7 @@ fn set_mode_emits_save() {
 
     let fx = h.send(AppMessage::TraySetMode(InputMode::OpenMic));
     assert!(has_effect(&fx, |e| matches!(e, AppEffect::SaveConfig)));
-    assert_eq!(h.state.mode, InputMode::OpenMic);
+    assert_eq!(*h.state.mode(), InputMode::OpenMic);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -152,12 +150,12 @@ fn state_mutations_produce_correct_config_on_disk() {
 
     // Reload and verify
     let loaded = Config::load_from(&path).unwrap();
-    assert_eq!(loaded.model_size, "medium");
-    assert_eq!(loaded.language, "ja");
-    assert!(loaded.spoken_punctuation);
-    assert!(loaded.streaming);
-    assert_eq!(loaded.mode, InputMode::OpenMic);
-    assert!(loaded.translate_to_english);
+    assert_eq!(loaded.model_size(), "medium");
+    assert_eq!(loaded.language(), "ja");
+    assert!(loaded.spoken_punctuation());
+    assert!(loaded.streaming());
+    assert_eq!(*loaded.mode(), InputMode::OpenMic);
+    assert!(loaded.translate_to_english());
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -309,19 +307,17 @@ fn stitch_no_overlap() {
 
 #[test]
 fn reload_generation_increments() {
-    let config = Config {
-        model_size: "base".to_string(), // multilingual model allows language changes
-        ..Config::default()
-    };
+    let mut config = Config::default();
+    config.set_model_size("base".to_string()); // multilingual model allows language changes
     let mut h = Harness::with_config(&config);
-    let gen0 = h.state.reload_generation;
+    let gen0 = h.state.reload_generation();
 
     h.send(AppMessage::TraySetModel("small".into()));
-    assert!(h.state.reload_generation > gen0);
+    assert!(h.state.reload_generation() > gen0);
 
-    let gen1 = h.state.reload_generation;
+    let gen1 = h.state.reload_generation();
     h.send(AppMessage::TraySetLanguage("de".into()));
-    assert!(h.state.reload_generation > gen1);
+    assert!(h.state.reload_generation() > gen1);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -333,11 +329,11 @@ fn error_during_recording_preserves_recording_state() {
     let mut h = Harness::new();
 
     h.send(AppMessage::KeyDown);
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     // Stale error from previous cycle
     let fx = h.send(AppMessage::TranscriptionError("stale".into()));
-    assert!(h.state.is_pressed, "recording should continue");
+    assert!(h.state.is_pressed(), "recording should continue");
     assert!(has_effect(&fx, |e| matches!(e, AppEffect::LogError(_))));
 }
 
@@ -346,10 +342,10 @@ fn result_during_recording_inserts_but_preserves_state() {
     let mut h = Harness::new();
 
     h.send(AppMessage::KeyDown);
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     let fx = h.send(AppMessage::TranscriptionDone("late result".into()));
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
     assert!(has_effect(&fx, |e| matches!(
         e,
         AppEffect::InsertText(t) if t == "late result"
@@ -402,19 +398,19 @@ fn full_config_mutation_pipeline() {
 
     // Reload and verify everything persisted
     let reloaded = Config::load_from(&path).unwrap();
-    assert_eq!(reloaded.model_size, "large-v3-turbo");
-    assert_eq!(reloaded.language, "zh");
-    assert!(reloaded.spoken_punctuation);
-    assert!(reloaded.streaming);
-    assert!(reloaded.translate_to_english);
-    assert_eq!(reloaded.mode, InputMode::OpenMic);
+    assert_eq!(reloaded.model_size(), "large-v3-turbo");
+    assert_eq!(reloaded.language(), "zh");
+    assert!(reloaded.spoken_punctuation());
+    assert!(reloaded.streaming());
+    assert!(reloaded.translate_to_english());
+    assert_eq!(*reloaded.mode(), InputMode::OpenMic);
 
     // Create new state from reloaded config — should match
     let state2 = AppState::new(&reloaded);
-    assert_eq!(state2.model_size, "large-v3-turbo");
-    assert_eq!(state2.language, "zh");
-    assert!(state2.spoken_punctuation);
-    assert!(state2.streaming);
-    assert!(state2.translate_to_english);
-    assert_eq!(state2.mode, InputMode::OpenMic);
+    assert_eq!(state2.model_size(), "large-v3-turbo");
+    assert_eq!(state2.language(), "zh");
+    assert!(state2.spoken_punctuation());
+    assert!(state2.streaming());
+    assert!(state2.translate_to_english());
+    assert_eq!(*state2.mode(), InputMode::OpenMic);
 }

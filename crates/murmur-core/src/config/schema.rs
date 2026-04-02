@@ -123,76 +123,252 @@ impl std::fmt::Display for AsrQuantization {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub hotkey: String,
-    pub model_size: String,
+    pub(crate) hotkey: String,
+    pub(crate) model_size: String,
     /// ASR backend engine (default: whisper)
     #[serde(default)]
-    pub asr_backend: AsrBackend,
+    pub(crate) asr_backend: AsrBackend,
     /// ONNX model quantization level (default: int4, only used for ONNX backends)
     #[serde(default)]
-    pub asr_quantization: AsrQuantization,
-    pub language: String,
+    pub(crate) asr_quantization: AsrQuantization,
+    pub(crate) language: String,
     #[serde(default)]
-    pub spoken_punctuation: bool,
+    pub(crate) spoken_punctuation: bool,
     #[serde(default)]
-    pub filler_word_removal: bool,
+    pub(crate) filler_word_removal: bool,
     #[serde(default)]
-    pub max_recordings: u32,
+    pub(crate) max_recordings: u32,
     #[serde(default)]
-    pub mode: InputMode,
+    pub(crate) mode: InputMode,
     #[serde(default)]
-    pub streaming: bool,
+    pub(crate) streaming: bool,
     #[serde(default)]
-    pub translate_to_english: bool,
+    pub(crate) translate_to_english: bool,
     /// Enable noise suppression via nnnoiseless (default: true)
     #[serde(default = "default_true")]
-    pub noise_suppression: bool,
+    pub(crate) noise_suppression: bool,
     /// Global vocabulary terms to bias Whisper toward
     #[serde(default)]
-    pub vocabulary: Vec<String>,
+    pub(crate) vocabulary: Vec<String>,
     /// Per-application context configurations, keyed by bundle ID or process name
     #[serde(default)]
-    pub app_contexts: std::collections::HashMap<String, AppContextConfig>,
+    pub(crate) app_contexts: std::collections::HashMap<String, AppContextConfig>,
     /// App identifiers to exclude from context capture (password managers, banking apps)
     #[serde(default)]
-    pub excluded_apps: Vec<String>,
+    pub(crate) excluded_apps: Vec<String>,
     /// Default dictation mode
     #[serde(default)]
-    pub dictation_mode: DictationMode,
+    pub(crate) dictation_mode: DictationMode,
     /// Application mode: `dictation` (paste at cursor) or `notes` (overlay + wake word)
     #[serde(default)]
-    pub app_mode: AppMode,
+    pub(crate) app_mode: AppMode,
     /// Phrase that triggers dictation when spoken (default: "murmur start dictation")
     #[serde(default = "default_wake_word")]
-    pub wake_word: String,
+    pub(crate) wake_word: String,
     /// Phrase that stops dictation when spoken (default: "murmur stop dictation")
     #[serde(default = "default_stop_phrase")]
-    pub stop_phrase: String,
+    pub(crate) stop_phrase: String,
     /// Directory for saving dictation notes (default: data_dir/murmur/notes)
     #[serde(default)]
-    pub notes_dir: Option<std::path::PathBuf>,
+    pub(crate) notes_dir: Option<std::path::PathBuf>,
     /// Input device name for system audio capture (e.g. "BlackHole 2ch").
     /// When set, meeting sessions capture both mic and system audio.
     #[serde(default)]
-    pub system_audio_device: Option<String>,
+    pub(crate) system_audio_device: Option<String>,
     /// Hide the overlay window from screen capture and screen sharing.
     #[serde(default)]
-    pub stealth_mode: bool,
+    pub(crate) stealth_mode: bool,
     /// LLM model name for Ollama (default: "phi3")
     #[serde(default = "default_llm_model")]
-    pub llm_model: String,
+    pub(crate) llm_model: String,
     /// Ollama API base URL
     #[serde(default = "default_ollama_url")]
-    pub ollama_url: String,
+    pub(crate) ollama_url: String,
     /// Directory for storing meeting sessions
     #[serde(default)]
-    pub sessions_dir: Option<String>,
+    pub(crate) sessions_dir: Option<String>,
     /// Auto-generate summary when meeting ends
     #[serde(default)]
-    pub auto_summary: bool,
+    pub(crate) auto_summary: bool,
     /// Automatically check for and apply updates on startup (default: false)
     #[serde(default)]
-    pub auto_update: bool,
+    pub(crate) auto_update: bool,
+}
+
+// ── Accessor methods ────────────────────────────────────────────────────
+
+impl Config {
+    // Getters
+
+    pub fn hotkey(&self) -> &str {
+        &self.hotkey
+    }
+    pub fn model_size(&self) -> &str {
+        &self.model_size
+    }
+    pub fn asr_backend(&self) -> AsrBackend {
+        self.asr_backend
+    }
+    pub fn asr_quantization(&self) -> AsrQuantization {
+        self.asr_quantization
+    }
+    pub fn language(&self) -> &str {
+        &self.language
+    }
+    pub fn spoken_punctuation(&self) -> bool {
+        self.spoken_punctuation
+    }
+    pub fn filler_word_removal(&self) -> bool {
+        self.filler_word_removal
+    }
+    pub fn max_recordings(&self) -> u32 {
+        self.max_recordings
+    }
+    pub fn mode(&self) -> &InputMode {
+        &self.mode
+    }
+    pub fn streaming(&self) -> bool {
+        self.streaming
+    }
+    pub fn translate_to_english(&self) -> bool {
+        self.translate_to_english
+    }
+    pub fn noise_suppression(&self) -> bool {
+        self.noise_suppression
+    }
+    pub fn vocabulary(&self) -> &[String] {
+        &self.vocabulary
+    }
+
+    pub fn app_contexts(&self) -> &std::collections::HashMap<String, AppContextConfig> {
+        &self.app_contexts
+    }
+
+    pub fn excluded_apps(&self) -> &[String] {
+        &self.excluded_apps
+    }
+    pub fn dictation_mode(&self) -> DictationMode {
+        self.dictation_mode
+    }
+    pub fn app_mode(&self) -> AppMode {
+        self.app_mode
+    }
+    pub fn wake_word(&self) -> &str {
+        &self.wake_word
+    }
+    pub fn stop_phrase(&self) -> &str {
+        &self.stop_phrase
+    }
+    pub fn system_audio_device(&self) -> Option<&str> {
+        self.system_audio_device.as_deref()
+    }
+    pub fn stealth_mode(&self) -> bool {
+        self.stealth_mode
+    }
+    pub fn llm_model(&self) -> &str {
+        &self.llm_model
+    }
+    pub fn ollama_url(&self) -> &str {
+        &self.ollama_url
+    }
+    pub fn sessions_dir(&self) -> Option<&str> {
+        self.sessions_dir.as_deref()
+    }
+    pub fn auto_summary(&self) -> bool {
+        self.auto_summary
+    }
+    pub fn auto_update(&self) -> bool {
+        self.auto_update
+    }
+
+    // Setters
+
+    pub fn set_hotkey(&mut self, val: String) {
+        self.hotkey = val;
+    }
+    pub fn set_model_size(&mut self, val: String) {
+        self.model_size = val;
+    }
+    pub fn set_asr_backend(&mut self, val: AsrBackend) {
+        self.asr_backend = val;
+    }
+    pub fn set_asr_quantization(&mut self, val: AsrQuantization) {
+        self.asr_quantization = val;
+    }
+    pub fn set_language(&mut self, val: String) {
+        self.language = val;
+    }
+    pub fn set_spoken_punctuation(&mut self, val: bool) {
+        self.spoken_punctuation = val;
+    }
+    pub fn set_filler_word_removal(&mut self, val: bool) {
+        self.filler_word_removal = val;
+    }
+    pub fn set_max_recordings(&mut self, val: u32) {
+        self.max_recordings = val;
+    }
+    pub fn set_mode(&mut self, val: InputMode) {
+        self.mode = val;
+    }
+    pub fn set_streaming(&mut self, val: bool) {
+        self.streaming = val;
+    }
+    pub fn set_translate_to_english(&mut self, val: bool) {
+        self.translate_to_english = val;
+    }
+    pub fn set_noise_suppression(&mut self, val: bool) {
+        self.noise_suppression = val;
+    }
+    pub fn set_vocabulary(&mut self, val: Vec<String>) {
+        self.vocabulary = val;
+    }
+
+    pub fn set_app_contexts(&mut self, val: std::collections::HashMap<String, AppContextConfig>) {
+        self.app_contexts = val;
+    }
+
+    pub fn set_excluded_apps(&mut self, val: Vec<String>) {
+        self.excluded_apps = val;
+    }
+    pub fn set_dictation_mode(&mut self, val: DictationMode) {
+        self.dictation_mode = val;
+    }
+    pub fn set_app_mode(&mut self, val: AppMode) {
+        self.app_mode = val;
+    }
+    pub fn set_wake_word(&mut self, val: String) {
+        self.wake_word = val;
+    }
+    pub fn set_stop_phrase(&mut self, val: String) {
+        self.stop_phrase = val;
+    }
+
+    pub fn set_notes_dir(&mut self, val: Option<std::path::PathBuf>) {
+        self.notes_dir = val;
+    }
+
+    pub fn set_system_audio_device(&mut self, val: Option<String>) {
+        self.system_audio_device = val;
+    }
+
+    pub fn set_stealth_mode(&mut self, val: bool) {
+        self.stealth_mode = val;
+    }
+    pub fn set_llm_model(&mut self, val: String) {
+        self.llm_model = val;
+    }
+    pub fn set_ollama_url(&mut self, val: String) {
+        self.ollama_url = val;
+    }
+    pub fn set_sessions_dir(&mut self, val: Option<String>) {
+        self.sessions_dir = val;
+    }
+    pub fn set_auto_summary(&mut self, val: bool) {
+        self.auto_summary = val;
+    }
+    pub fn set_auto_update(&mut self, val: bool) {
+        self.auto_update = val;
+    }
 }
 
 fn default_true() -> bool {

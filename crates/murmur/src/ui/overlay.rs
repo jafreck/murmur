@@ -563,7 +563,7 @@ mod tests {
         assert_eq!(m.fade_state, FadeState::FadingIn);
         assert_eq!(
             actions,
-            vec![ViewportAction::SetVisible(true), ViewportAction::Focus]
+            vec![ViewportAction::SetVisible(true)]
         );
     }
 

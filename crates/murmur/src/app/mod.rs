@@ -1,9 +1,13 @@
 mod effects;
+mod messages;
+mod recording_state;
 mod state;
+mod state_config;
 
 // Re-export the public API
 pub use effects::EffectContext;
-pub use state::{AppEffect, AppMessage, AppState};
+pub use messages::{AppEffect, AppMessage};
+pub use state::AppState;
 
 use anyhow::Result;
 use log::{error, info};

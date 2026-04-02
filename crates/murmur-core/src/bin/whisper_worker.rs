@@ -102,7 +102,7 @@ fn run_inference(
         .map_err(|e| anyhow::anyhow!("Failed to create state: {e}"))?;
 
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_n_threads(murmur_core::transcription::transcriber::inference_thread_count());
+    params.set_n_threads(murmur_core::transcription::model_discovery::inference_thread_count());
     params.set_language(language);
     params.set_translate(translate);
     params.set_print_special(false);

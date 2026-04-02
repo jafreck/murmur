@@ -252,7 +252,7 @@ fn stereo_to_mono_wav_pipeline() {
 
 #[test]
 fn read_wav_samples_from_written_file() {
-    use murmur::transcription::transcriber::read_wav_samples;
+    use murmur::transcription::model_discovery::read_wav_samples;
 
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("readable.wav");
@@ -274,7 +274,7 @@ fn read_wav_samples_from_written_file() {
 
 #[test]
 fn read_wav_samples_nonexistent_file_errors() {
-    use murmur::transcription::transcriber::read_wav_samples;
+    use murmur::transcription::model_discovery::read_wav_samples;
 
     let result = read_wav_samples(std::path::Path::new("/nonexistent/audio.wav"));
     assert!(result.is_err());

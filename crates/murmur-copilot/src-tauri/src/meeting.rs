@@ -64,33 +64,34 @@ impl MeetingSession {
     pub fn new() -> Result<Self> {
         let config = Config::load();
 
-        let model_path =
-            murmur_core::transcription::find_model(&config.model_size).unwrap_or_else(|| {
+        let model_path = murmur_core::transcription::find_model(config.model_size())
+            .unwrap_or_else(|| {
                 info!(
                     "model not found locally — downloading {}",
-                    config.model_size
+                    config.model_size()
                 );
-                murmur_core::transcription::download(&config.model_size, |p| {
+                murmur_core::transcription::download(config.model_size(), |p| {
                     info!("download progress: {:.0}%", p * 100.0);
                 })
                 .expect("failed to download whisper model")
             });
 
         let transcriber: Arc<dyn AsrEngine + Send + Sync> =
-            Arc::new(WhisperEngine::new(&model_path, &config.language)?);
-        let mut recorder = AudioRecorder::with_noise_suppression(config.noise_suppression);
+            Arc::new(WhisperEngine::new(&model_path, config.language())?);
+        let mut recorder = AudioRecorder::with_noise_suppression(config.noise_suppression());
         recorder.warm()?;
 
         // Set up system audio capturer if a device is configured.
-        let system_capturer = config.system_audio_device.as_deref().and_then(|name| {
-            match SystemAudioCapturer::new(name) {
-                Ok(c) => Some(c),
-                Err(e) => {
-                    warn!("could not open system audio device '{name}': {e}");
-                    None
-                }
-            }
-        });
+        let system_capturer =
+            config
+                .system_audio_device()
+                .and_then(|name| match SystemAudioCapturer::new(name) {
+                    Ok(c) => Some(c),
+                    Err(e) => {
+                        warn!("could not open system audio device '{name}': {e}");
+                        None
+                    }
+                });
 
         Ok(Self {
             state: SessionState::Idle,
@@ -98,7 +99,7 @@ impl MeetingSession {
             system_capturer,
             transcriber,
             model_path: model_path.clone(),
-            language: config.language.clone(),
+            language: config.language().to_string(),
             mic_streaming: None,
             sys_streaming: None,
             transcript: Arc::new(Mutex::new(Vec::new())),
@@ -164,8 +165,8 @@ impl MeetingSession {
         let mic_handle = start_streaming(
             mic_samples,
             Arc::clone(&self.transcriber),
-            self.config.translate_to_english,
-            self.config.filler_word_removal,
+            self.config.translate_to_english(),
+            self.config.filler_word_removal(),
             mic_tx,
             Some(mic_worker),
         );
@@ -184,8 +185,8 @@ impl MeetingSession {
                             let sys_handle = start_streaming(
                                 sys_samples,
                                 Arc::clone(&self.transcriber),
-                                self.config.translate_to_english,
-                                self.config.filler_word_removal,
+                                self.config.translate_to_english(),
+                                self.config.filler_word_removal(),
                                 sys_tx,
                                 Some(sys_worker),
                             );

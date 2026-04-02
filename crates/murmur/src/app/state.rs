@@ -9,73 +9,131 @@ use super::messages::{AppEffect, AppMessage};
 
 /// Pure state machine for the app's recording logic.
 pub struct AppState {
-    pub is_pressed: bool,
-    pub mode: InputMode,
-    pub streaming: bool,
-    pub spoken_punctuation: bool,
-    pub filler_word_removal: bool,
-    pub translate_to_english: bool,
-    pub noise_suppression: bool,
-    pub max_recordings: u32,
-    pub last_transcription: Option<String>,
-    pub model_size: String,
-    pub language: String,
+    pub(super) is_pressed: bool,
+    pub(super) mode: InputMode,
+    pub(super) streaming: bool,
+    pub(super) spoken_punctuation: bool,
+    pub(super) filler_word_removal: bool,
+    pub(super) translate_to_english: bool,
+    pub(super) noise_suppression: bool,
+    pub(super) max_recordings: u32,
+    pub(super) last_transcription: Option<String>,
+    pub(super) model_size: String,
+    pub(super) language: String,
     /// True while a streaming session is actively inserting partial text.
-    pub streaming_active: bool,
+    pub(super) streaming_active: bool,
     /// Number of characters currently on screen from streaming emissions.
-    pub streaming_chars_emitted: usize,
+    pub(super) streaming_chars_emitted: usize,
     /// Monotonic counter incremented on each ReloadTranscriber request.
-    pub reload_generation: u64,
+    pub(super) reload_generation: u64,
     /// True while waiting for the user to press a key to set as the new hotkey.
-    pub capturing_hotkey: bool,
+    pub(super) capturing_hotkey: bool,
     /// True when the current dictation session was started by the wake word.
-    pub wake_word_initiated: bool,
+    pub(super) wake_word_initiated: bool,
     /// Application mode: Dictation (paste at cursor) or Notes (overlay + wake word).
-    pub app_mode: AppMode,
+    pub(super) app_mode: AppMode,
     /// Accumulated overlay text for the current session.
-    pub overlay_text: String,
+    pub(super) overlay_text: String,
     /// The configured stop phrase for wake-word-initiated sessions.
-    pub stop_phrase: String,
+    pub(super) stop_phrase: String,
     /// Timestamp of last speech activity (recording start or streaming text).
     /// Used to auto-stop wake-word-initiated sessions after silence.
-    pub last_speech_at: Option<std::time::Instant>,
+    pub(super) last_speech_at: Option<std::time::Instant>,
     /// Set to true when a streaming session completes, so the batch
     /// transcription at the end can be skipped (avoids duplicate output).
-    pub streaming_completed: bool,
+    pub(super) streaming_completed: bool,
     /// Holds a newly loaded engine until the `SwapEngine` effect moves it
     /// into the active engine slot. Populated by the `EngineReady` reducer.
-    pub pending_engine: Option<Arc<dyn AsrEngine + Send + Sync>>,
+    pub(super) pending_engine: Option<Arc<dyn AsrEngine + Send + Sync>>,
 }
 
 impl AppState {
     pub fn new(config: &Config) -> Self {
         // Native-streaming backends (Qwen3-ASR, MLX, Parakeet) default to
         // streaming enabled. The user can still toggle it off via the tray.
-        let streaming = config.streaming || config.asr_backend.supports_native_streaming();
+        let streaming = config.streaming() || config.asr_backend().supports_native_streaming();
         Self {
             is_pressed: false,
-            mode: config.mode.clone(),
+            mode: config.mode().clone(),
             streaming,
-            spoken_punctuation: config.spoken_punctuation,
-            filler_word_removal: config.filler_word_removal,
-            translate_to_english: config.translate_to_english,
-            noise_suppression: config.noise_suppression,
-            max_recordings: Config::effective_max_recordings(config.max_recordings),
+            spoken_punctuation: config.spoken_punctuation(),
+            filler_word_removal: config.filler_word_removal(),
+            translate_to_english: config.translate_to_english(),
+            noise_suppression: config.noise_suppression(),
+            max_recordings: Config::effective_max_recordings(config.max_recordings()),
             last_transcription: None,
-            model_size: config.model_size.clone(),
-            language: config.language.clone(),
+            model_size: config.model_size().to_string(),
+            language: config.language().to_string(),
             streaming_active: false,
             streaming_chars_emitted: 0,
             reload_generation: 0,
             capturing_hotkey: false,
             wake_word_initiated: false,
-            app_mode: config.app_mode,
+            app_mode: config.app_mode(),
             overlay_text: String::new(),
-            stop_phrase: config.stop_phrase.clone(),
+            stop_phrase: config.stop_phrase().to_string(),
             last_speech_at: None,
             streaming_completed: false,
             pending_engine: None,
         }
+    }
+
+    // -- Public getters for read-only access from outside the app module --
+
+    pub fn is_pressed(&self) -> bool {
+        self.is_pressed
+    }
+
+    pub fn mode(&self) -> &InputMode {
+        &self.mode
+    }
+
+    pub fn streaming(&self) -> bool {
+        self.streaming
+    }
+
+    pub fn spoken_punctuation(&self) -> bool {
+        self.spoken_punctuation
+    }
+
+    pub fn filler_word_removal(&self) -> bool {
+        self.filler_word_removal
+    }
+
+    pub fn translate_to_english(&self) -> bool {
+        self.translate_to_english
+    }
+
+    pub fn noise_suppression(&self) -> bool {
+        self.noise_suppression
+    }
+
+    pub fn last_transcription(&self) -> Option<&str> {
+        self.last_transcription.as_deref()
+    }
+
+    pub fn model_size(&self) -> &str {
+        &self.model_size
+    }
+
+    pub fn language(&self) -> &str {
+        &self.language
+    }
+
+    pub fn streaming_active(&self) -> bool {
+        self.streaming_active
+    }
+
+    pub fn reload_generation(&self) -> u64 {
+        self.reload_generation
+    }
+
+    pub fn capturing_hotkey(&self) -> bool {
+        self.capturing_hotkey
+    }
+
+    pub fn app_mode(&self) -> AppMode {
+        self.app_mode
     }
 
     pub fn recording_output_path(&self) -> std::path::PathBuf {
@@ -447,18 +505,16 @@ mod tests {
 
     #[test]
     fn app_state_from_config() {
-        let config = Config {
-            hotkey: "f9".to_string(),
-            model_size: "small.en".to_string(),
-            language: "fr".to_string(),
-            spoken_punctuation: true,
-            filler_word_removal: true,
-            max_recordings: 10,
-            mode: InputMode::OpenMic,
-            streaming: true,
-            translate_to_english: true,
-            ..Config::default()
-        };
+        let mut config = Config::default();
+        config.set_hotkey("f9".to_string());
+        config.set_model_size("small.en".to_string());
+        config.set_language("fr".to_string());
+        config.set_spoken_punctuation(true);
+        config.set_filler_word_removal(true);
+        config.set_max_recordings(10);
+        config.set_mode(InputMode::OpenMic);
+        config.set_streaming(true);
+        config.set_translate_to_english(true);
         let state = AppState::new(&config);
         assert_eq!(state.model_size, "small.en");
         assert_eq!(state.language, "fr");
@@ -482,13 +538,13 @@ mod tests {
         state.streaming = true;
         state.translate_to_english = true;
         let cfg = state.to_config(&base);
-        assert_eq!(cfg.model_size, "large");
-        assert_eq!(cfg.language, "de");
-        assert!(cfg.spoken_punctuation);
-        assert_eq!(cfg.mode, InputMode::OpenMic);
-        assert!(cfg.streaming);
-        assert!(cfg.translate_to_english);
-        assert_eq!(cfg.hotkey, base.hotkey);
+        assert_eq!(cfg.model_size(), "large");
+        assert_eq!(cfg.language(), "de");
+        assert!(cfg.spoken_punctuation());
+        assert_eq!(cfg.mode().clone(), InputMode::OpenMic);
+        assert!(cfg.streaming());
+        assert!(cfg.translate_to_english());
+        assert_eq!(cfg.hotkey(), base.hotkey());
     }
 
     #[test]
@@ -836,15 +892,13 @@ mod tests {
 
     #[test]
     fn to_config_preserves_base_hotkey_and_max_recordings() {
-        let base = Config {
-            hotkey: "ctrl+shift+space".to_string(),
-            max_recordings: 42,
-            ..Config::default()
-        };
+        let mut base = Config::default();
+        base.set_hotkey("ctrl+shift+space".to_string());
+        base.set_max_recordings(42);
         let state = AppState::new(&base);
         let cfg = state.to_config(&base);
-        assert_eq!(cfg.hotkey, "ctrl+shift+space");
-        assert_eq!(cfg.max_recordings, 42);
+        assert_eq!(cfg.hotkey(), "ctrl+shift+space");
+        assert_eq!(cfg.max_recordings(), 42);
     }
 
     // -- EngineReady exhaustiveness --

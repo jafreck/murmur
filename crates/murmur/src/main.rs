@@ -122,7 +122,7 @@ fn cmd_start(notes: bool, backend: Option<String>, model: Option<String>) -> Res
     if backend.is_some() || model.is_some() {
         let mut cfg = config::Config::load();
         if let Some(ref backend_str) = backend {
-            cfg.asr_backend = match backend_str.as_str() {
+            cfg.set_asr_backend(match backend_str.as_str() {
                 "whisper" => AsrBackend::Whisper,
                 "qwen3-asr" | "qwen3_asr" | "qwen" => AsrBackend::Qwen3Asr,
                 "parakeet" => AsrBackend::Parakeet,
@@ -130,15 +130,15 @@ fn cmd_start(notes: bool, backend: Option<String>, model: Option<String>) -> Res
                 _ => anyhow::bail!(
                     "Unknown backend: {backend_str}. Use: whisper, qwen3-asr, parakeet, mlx"
                 ),
-            };
+            });
             // Set default model size for the new backend if current one is invalid
-            let valid_models = config::supported_models(cfg.asr_backend);
-            if !valid_models.contains(&cfg.model_size.as_str()) {
-                cfg.model_size = cfg.default_model_for_backend().to_string();
+            let valid_models = config::supported_models(cfg.asr_backend());
+            if !valid_models.contains(&cfg.model_size()) {
+                cfg.set_model_size(cfg.default_model_for_backend().to_string());
             }
         }
         if let Some(ref model_str) = model {
-            cfg.model_size = model_str.clone();
+            cfg.set_model_size(model_str.clone());
         }
         cfg.save()?;
     }
@@ -151,16 +151,16 @@ fn cmd_set_hotkey(key_string: &str) -> Result<()> {
     })?;
 
     let mut cfg = config::Config::load();
-    cfg.hotkey = parsed.to_config_string();
+    cfg.set_hotkey(parsed.to_config_string());
     cfg.save()?;
 
-    println!("Hotkey set to: {}", cfg.hotkey);
+    println!("Hotkey set to: {}", cfg.hotkey());
     Ok(())
 }
 
 fn cmd_get_hotkey() -> Result<()> {
     let cfg = config::Config::load();
-    println!("Current hotkey: {}", cfg.hotkey);
+    println!("Current hotkey: {}", cfg.hotkey());
     Ok(())
 }
 
@@ -168,7 +168,7 @@ fn cmd_set_model(size: &str) -> Result<()> {
     validate_model(size)?;
 
     let mut cfg = config::Config::load();
-    cfg.model_size = size.to_string();
+    cfg.set_model_size(size.to_string());
     cfg.save()?;
 
     println!("Model set to: {size}");
@@ -180,7 +180,7 @@ fn cmd_set_model(size: &str) -> Result<()> {
 
 pub fn validate_model(size: &str) -> Result<()> {
     let cfg = config::Config::load();
-    validate_model_for_backend(size, cfg.asr_backend)
+    validate_model_for_backend(size, cfg.asr_backend())
 }
 
 fn validate_model_for_backend(size: &str, backend: AsrBackend) -> Result<()> {
@@ -199,7 +199,7 @@ fn cmd_set_language(code: &str) -> Result<()> {
     validate_language(code)?;
 
     let mut cfg = config::Config::load();
-    cfg.language = code.to_string();
+    cfg.set_language(code.to_string());
     cfg.save()?;
 
     let name = config::language_name(code).unwrap_or(code);
@@ -215,9 +215,9 @@ pub fn validate_language(code: &str) -> Result<()> {
 }
 
 pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
-    let lang_name = config::language_name(&cfg.language).unwrap_or(&cfg.language);
-    let mode_str = cfg.mode.to_string();
-    let streaming_str = if cfg.streaming { "on" } else { "off" };
+    let lang_name = config::language_name(cfg.language()).unwrap_or(cfg.language());
+    let mode_str = cfg.mode().to_string();
+    let streaming_str = if cfg.streaming() { "on" } else { "off" };
     let model_ready_str = if model_ready { "yes" } else { "no" };
 
     format!(
@@ -231,10 +231,10 @@ pub fn format_status(cfg: &config::Config, model_ready: bool) -> String {
          Mode:         {mode_str}\n\
          Streaming:    {streaming_str}",
         config::Config::file_path().display(),
-        cfg.hotkey,
-        cfg.asr_backend,
-        cfg.model_size,
-        cfg.language,
+        cfg.hotkey(),
+        cfg.asr_backend(),
+        cfg.model_size(),
+        cfg.language(),
     )
 }
 
@@ -266,7 +266,7 @@ fn cmd_download_model(size: &str, backend_str: &str) -> Result<()> {
             murmur_core::transcription::download_for_backend(
                 backend,
                 size,
-                cfg.asr_quantization,
+                cfg.asr_quantization(),
                 |percent| {
                     let pct = percent as u32;
                     if pct != last_pct.get() {
@@ -309,7 +309,7 @@ fn cmd_update(check_only: bool) -> Result<()> {
 
 fn cmd_status() -> Result<()> {
     let cfg = config::Config::load();
-    let model_ready = model_discovery::model_exists(&cfg.model_size);
+    let model_ready = model_discovery::model_exists(cfg.model_size());
     println!("{}", format_status(&cfg, model_ready));
     Ok(())
 }
@@ -362,18 +362,10 @@ mod tests {
 
     #[test]
     fn test_format_status_hold_mode() {
-        let cfg = config::Config {
-            hotkey: "f9".to_string(),
-            model_size: "base.en".to_string(),
-            language: "en".to_string(),
-            spoken_punctuation: false,
-            filler_word_removal: true,
-            max_recordings: 0,
-            mode: config::InputMode::PushToTalk,
-            streaming: false,
-            translate_to_english: false,
-            ..config::Config::default()
-        };
+        let mut cfg = config::Config::default();
+        cfg.set_hotkey("f9".to_string());
+        cfg.set_model_size("base.en".to_string());
+        cfg.set_language("en".to_string());
         let output = format_status(&cfg, false);
         assert!(output.contains("murmur v"));
         assert!(output.contains("f9"));
@@ -386,18 +378,14 @@ mod tests {
 
     #[test]
     fn test_format_status_toggle_mode() {
-        let cfg = config::Config {
-            hotkey: "ctrl+shift+space".to_string(),
-            model_size: "small.en".to_string(),
-            language: "fr".to_string(),
-            spoken_punctuation: true,
-            filler_word_removal: true,
-            max_recordings: 5,
-            mode: config::InputMode::OpenMic,
-            streaming: true,
-            translate_to_english: false,
-            ..config::Config::default()
-        };
+        let mut cfg = config::Config::default();
+        cfg.set_hotkey("ctrl+shift+space".to_string());
+        cfg.set_model_size("small.en".to_string());
+        cfg.set_language("fr".to_string());
+        cfg.set_spoken_punctuation(true);
+        cfg.set_max_recordings(5);
+        cfg.set_mode(config::InputMode::OpenMic);
+        cfg.set_streaming(true);
         let output = format_status(&cfg, true);
         assert!(output.contains("Mode:         Open Mic"));
         assert!(output.contains("Model ready:  yes"));
@@ -407,18 +395,10 @@ mod tests {
 
     #[test]
     fn test_format_status_unknown_language_fallback() {
-        let cfg = config::Config {
-            hotkey: "f9".to_string(),
-            model_size: "base.en".to_string(),
-            language: "zz".to_string(),
-            spoken_punctuation: false,
-            filler_word_removal: true,
-            max_recordings: 0,
-            mode: config::InputMode::PushToTalk,
-            streaming: false,
-            translate_to_english: false,
-            ..config::Config::default()
-        };
+        let mut cfg = config::Config::default();
+        cfg.set_hotkey("f9".to_string());
+        cfg.set_model_size("base.en".to_string());
+        cfg.set_language("zz".to_string());
         let output = format_status(&cfg, false);
         // Should fall back to code itself
         assert!(output.contains("zz"));
@@ -437,14 +417,14 @@ mod tests {
         // Set a known valid hotkey
         assert!(cmd_set_hotkey("f9").is_ok());
         // Restore original before asserting so config isn't left dirty on failure
-        let restored_hotkey = original.hotkey.clone();
+        let restored_hotkey = original.hotkey().to_string();
         let _ = original.save();
         // Verify the set succeeded by re-reading (not using stale value)
         // Note: we verify cmd_set_hotkey ran without error above.
         // The round-trip is: set f9 → save → restore original. If the
         // restore worked, the file now has the original hotkey back.
         let cfg = config::Config::load();
-        assert_eq!(cfg.hotkey, restored_hotkey);
+        assert_eq!(cfg.hotkey(), restored_hotkey);
     }
 
     #[test]
@@ -457,7 +437,7 @@ mod tests {
         let original = config::Config::load();
         // Ensure Whisper backend so "base.en" is valid
         let mut tmp = original.clone();
-        tmp.asr_backend = AsrBackend::Whisper;
+        tmp.set_asr_backend(AsrBackend::Whisper);
         tmp.save().unwrap();
         let result = cmd_set_model("base.en");
         let _ = original.save();
@@ -468,7 +448,7 @@ mod tests {
     fn test_cmd_set_model_prints_download_hint() {
         let original = config::Config::load();
         let mut tmp = original.clone();
-        tmp.asr_backend = AsrBackend::Whisper;
+        tmp.set_asr_backend(AsrBackend::Whisper);
         tmp.save().unwrap();
         let result = cmd_set_model("tiny");
         let _ = original.save();

@@ -32,8 +32,8 @@ pub(super) fn start(ctx: &mut EffectContext<'_>) {
         ww.stop();
     }
 
-    let wake_phrase = ctx.config.wake_word.clone();
-    let stop_phrase = ctx.config.stop_phrase.clone();
+    let wake_phrase = ctx.config.wake_word().to_string();
+    let stop_phrase = ctx.config.stop_phrase().to_string();
     let tx = ctx.tx.clone();
 
     let (event_tx, event_rx) = mpsc::channel();

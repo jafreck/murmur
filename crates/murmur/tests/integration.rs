@@ -89,19 +89,19 @@ fn push_to_talk_full_cycle() {
     let fx = h.send(AppMessage::KeyDown);
     assert!(has_start_recording(&fx));
     assert!(has_tray_state(&fx, TrayState::Recording));
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     // Release hotkey → stop and transcribe
     let fx = h.send(AppMessage::KeyUp);
     assert!(has_stop_and_transcribe(&fx));
     assert!(has_tray_state(&fx, TrayState::Transcribing));
-    assert!(!h.state.is_pressed);
+    assert!(!h.state.is_pressed());
 
     // Transcription completes → insert text
     let fx = h.send(AppMessage::TranscriptionDone("hello world".into()));
     assert!(has_insert_text(&fx, "hello world"));
     assert!(has_tray_state(&fx, TrayState::Idle));
-    assert_eq!(h.state.last_transcription, Some("hello world".to_string()));
+    assert_eq!(h.state.last_transcription(), Some("hello world"));
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn push_to_talk_empty_transcription_returns_to_idle() {
     let fx = h.send(AppMessage::TranscriptionDone(String::new()));
     assert!(has_no_insert_text(&fx));
     assert!(has_tray_state(&fx, TrayState::Idle));
-    assert!(h.state.last_transcription.is_none());
+    assert!(h.state.last_transcription().is_none());
 }
 
 #[test]
@@ -127,12 +127,12 @@ fn push_to_talk_error_recovers() {
     // Transcription fails (not recording, so error state applies)
     let fx = h.send(AppMessage::TranscriptionError("model failed".into()));
     assert!(has_tray_state(&fx, TrayState::Error));
-    assert!(!h.state.is_pressed);
+    assert!(!h.state.is_pressed());
 
     // Next cycle should work normally
     let fx = h.send(AppMessage::KeyDown);
     assert!(has_start_recording(&fx));
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     let fx = h.send(AppMessage::KeyUp);
     assert!(has_stop_and_transcribe(&fx));
@@ -168,7 +168,7 @@ fn push_to_talk_release_without_press_ignored() {
     // Release without prior press → no-op
     let fx = h.send(AppMessage::KeyUp);
     assert_eq!(fx, vec![AppEffect::None]);
-    assert!(!h.state.is_pressed);
+    assert!(!h.state.is_pressed());
 }
 
 #[test]
@@ -179,23 +179,23 @@ fn push_to_talk_multiple_cycles() {
         let text = format!("cycle {i}");
 
         h.send(AppMessage::KeyDown);
-        assert!(h.state.is_pressed);
+        assert!(h.state.is_pressed());
 
         h.send(AppMessage::KeyUp);
-        assert!(!h.state.is_pressed);
+        assert!(!h.state.is_pressed());
 
         let fx = h.send(AppMessage::TranscriptionDone(text.clone()));
         assert!(has_insert_text(&fx, &text));
         assert!(has_tray_state(&fx, TrayState::Idle));
     }
 
-    assert_eq!(h.state.last_transcription, Some("cycle 2".to_string()));
+    assert_eq!(h.state.last_transcription(), Some("cycle 2"));
 }
 
 #[test]
 fn push_to_talk_with_spoken_punctuation() {
     let mut h = Harness::new();
-    h.state.spoken_punctuation = true;
+    h.send(AppMessage::TrayToggleSpokenPunctuation);
 
     h.send(AppMessage::KeyDown);
     h.send(AppMessage::KeyUp);
@@ -213,24 +213,24 @@ fn push_to_talk_with_spoken_punctuation() {
 #[test]
 fn open_mic_toggle_cycle() {
     let mut h = Harness::new();
-    h.state.mode = InputMode::OpenMic;
+    h.send(AppMessage::TraySetMode(InputMode::OpenMic));
 
     // First press → start recording
     let fx = h.send(AppMessage::KeyDown);
     assert!(has_start_recording(&fx));
     assert!(has_tray_state(&fx, TrayState::Recording));
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     // KeyUp is ignored in open mic
     let fx = h.send(AppMessage::KeyUp);
     assert_eq!(fx, vec![AppEffect::None]);
-    assert!(h.state.is_pressed, "OpenMic should stay pressed on KeyUp");
+    assert!(h.state.is_pressed(), "OpenMic should stay pressed on KeyUp");
 
     // Second press → stop and transcribe
     let fx = h.send(AppMessage::KeyDown);
     assert!(has_stop_and_transcribe(&fx));
     assert!(has_tray_state(&fx, TrayState::Transcribing));
-    assert!(!h.state.is_pressed);
+    assert!(!h.state.is_pressed());
 
     // Transcription completes
     let fx = h.send(AppMessage::TranscriptionDone("open mic test".into()));
@@ -240,7 +240,7 @@ fn open_mic_toggle_cycle() {
 #[test]
 fn open_mic_multiple_toggle_cycles() {
     let mut h = Harness::new();
-    h.state.mode = InputMode::OpenMic;
+    h.send(AppMessage::TraySetMode(InputMode::OpenMic));
 
     for i in 0..3 {
         // Start
@@ -263,7 +263,7 @@ fn open_mic_multiple_toggle_cycles() {
 #[test]
 fn streaming_push_to_talk_starts_and_stops_streaming() {
     let mut h = Harness::new();
-    h.state.streaming = true;
+    // streaming is true by default (Qwen3Asr supports native streaming)
 
     // Press → starts recording AND streaming
     let fx = h.send(AppMessage::KeyDown);
@@ -272,7 +272,7 @@ fn streaming_push_to_talk_starts_and_stops_streaming() {
         fx.iter().any(|e| matches!(e, AppEffect::StartStreaming)),
         "expected StartStreaming"
     );
-    assert!(h.state.streaming_active);
+    assert!(h.state.streaming_active());
 
     // Release → stops streaming AND transcribes
     let fx = h.send(AppMessage::KeyUp);
@@ -286,10 +286,10 @@ fn streaming_push_to_talk_starts_and_stops_streaming() {
 #[test]
 fn streaming_suppresses_final_transcription() {
     let mut h = Harness::new();
-    h.state.streaming = true;
+    // streaming is true by default (Qwen3Asr supports native streaming)
 
     h.send(AppMessage::KeyDown);
-    assert!(h.state.streaming_active);
+    assert!(h.state.streaming_active());
 
     // Partial text during streaming produces a replace effect
     let fx = h.send(AppMessage::StreamingPartialText {
@@ -309,8 +309,8 @@ fn streaming_suppresses_final_transcription() {
         "final transcription should be suppressed when streaming was active"
     );
     // But last_transcription is still saved for copy-last
-    assert_eq!(h.state.last_transcription, Some("hello world".to_string()));
-    assert!(!h.state.streaming_active);
+    assert_eq!(h.state.last_transcription(), Some("hello world"));
+    assert!(!h.state.streaming_active());
 }
 
 #[test]
@@ -333,88 +333,84 @@ fn set_model_triggers_reload() {
     let mut h = Harness::new();
 
     let fx = h.send(AppMessage::TraySetModel("small.en".into()));
-    assert_eq!(h.state.model_size, "small.en");
+    assert_eq!(h.state.model_size(), "small.en");
     assert!(has_save_config(&fx));
     assert!(has_reload_transcriber(&fx));
-    assert_eq!(h.state.reload_generation, 1);
+    assert_eq!(h.state.reload_generation(), 1);
 }
 
 #[test]
 fn set_language_triggers_reload() {
-    let config = Config {
-        model_size: "base".to_string(),
-        ..Config::default()
-    };
+    let mut config = Config::default();
+    config.set_model_size("base".to_string());
     let mut h = Harness::with_config(&config);
 
     let fx = h.send(AppMessage::TraySetLanguage("fr".into()));
-    assert_eq!(h.state.language, "fr");
+    assert_eq!(h.state.language(), "fr");
     assert!(has_save_config(&fx));
     assert!(has_reload_transcriber(&fx));
-    assert_eq!(h.state.reload_generation, 1);
+    assert_eq!(h.state.reload_generation(), 1);
 }
 
 #[test]
 fn reload_generation_increments_monotonically() {
-    let config = Config {
-        model_size: "base".to_string(),
-        ..Config::default()
-    };
+    let mut config = Config::default();
+    config.set_model_size("base".to_string());
     let mut h = Harness::with_config(&config);
 
     h.send(AppMessage::TraySetModel("small".into()));
-    assert_eq!(h.state.reload_generation, 1);
+    assert_eq!(h.state.reload_generation(), 1);
 
     h.send(AppMessage::TraySetLanguage("fr".into()));
-    assert_eq!(h.state.reload_generation, 2);
+    assert_eq!(h.state.reload_generation(), 2);
 
     h.send(AppMessage::TraySetModel("tiny".into()));
-    assert_eq!(h.state.reload_generation, 3);
+    assert_eq!(h.state.reload_generation(), 3);
 }
 
 #[test]
 fn toggle_spoken_punctuation() {
     let mut h = Harness::new();
-    assert!(!h.state.spoken_punctuation);
+    assert!(!h.state.spoken_punctuation());
 
     let fx = h.send(AppMessage::TrayToggleSpokenPunctuation);
-    assert!(h.state.spoken_punctuation);
+    assert!(h.state.spoken_punctuation());
     assert!(has_save_config(&fx));
 
     h.send(AppMessage::TrayToggleSpokenPunctuation);
-    assert!(!h.state.spoken_punctuation);
+    assert!(!h.state.spoken_punctuation());
 }
 
 #[test]
 fn toggle_streaming() {
     let mut h = Harness::new();
     // Default backend (Qwen3Asr) auto-enables streaming.
-    assert!(h.state.streaming);
+    assert!(h.state.streaming());
 
     h.send(AppMessage::TrayToggleStreaming);
-    assert!(!h.state.streaming);
+    assert!(!h.state.streaming());
 
     h.send(AppMessage::TrayToggleStreaming);
-    assert!(h.state.streaming);
+    assert!(h.state.streaming());
 }
 
 #[test]
 fn set_mode_push_to_talk_to_open_mic() {
     let mut h = Harness::new();
-    assert_eq!(h.state.mode, InputMode::PushToTalk);
+    assert_eq!(*h.state.mode(), InputMode::PushToTalk);
 
     let fx = h.send(AppMessage::TraySetMode(InputMode::OpenMic));
-    assert_eq!(h.state.mode, InputMode::OpenMic);
+    assert_eq!(*h.state.mode(), InputMode::OpenMic);
     assert!(has_save_config(&fx));
 }
 
 #[test]
 fn toggle_translate() {
     let mut h = Harness::new();
-    assert!(!h.state.translate_to_english);
+    assert!(!h.state.translate_to_english());
 
     h.send(AppMessage::TrayToggleTranslate);
-    assert!(h.state.translate_to_english);
+    assert!(h.state.translate_to_english());
 }
 
 #[test]
@@ -477,12 +473,12 @@ fn error_during_recording_does_not_reset_pressed() {
     let mut h = Harness::new();
 
     h.send(AppMessage::KeyDown);
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     // Error from a concurrent transcription should not interfere with active recording
     let fx = h.send(AppMessage::TranscriptionError("mic failed".into()));
     assert!(
-        h.state.is_pressed,
+        h.state.is_pressed(),
         "error during active recording should not reset is_pressed"
     );
     // Error tray state is suppressed while recording
@@ -528,13 +524,13 @@ fn to_config_round_trips_state() {
     h.send(AppMessage::TrayToggleTranslate);
 
     let cfg = h.state.to_config(&base);
-    assert_eq!(cfg.model_size, "large");
-    assert_eq!(cfg.language, "de");
-    assert!(cfg.spoken_punctuation);
-    assert_eq!(cfg.mode, InputMode::OpenMic);
-    assert!(cfg.streaming);
-    assert!(cfg.translate_to_english);
-    assert_eq!(cfg.hotkey, base.hotkey, "hotkey should come from base");
+    assert_eq!(cfg.model_size(), "large");
+    assert_eq!(cfg.language(), "de");
+    assert!(cfg.spoken_punctuation());
+    assert_eq!(*cfg.mode(), InputMode::OpenMic);
+    assert!(cfg.streaming());
+    assert!(cfg.translate_to_english());
+    assert_eq!(cfg.hotkey(), base.hotkey(), "hotkey should come from base");
 }
 
 #[test]
@@ -598,7 +594,7 @@ fn regression_modifier_key_repeat_does_not_stop_recording() {
     // Start recording
     let fx = h.send(AppMessage::KeyDown);
     assert!(has_start_recording(&fx));
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     // Simulate 10 key repeats (common with modifier keys)
     for _ in 0..10 {
@@ -609,7 +605,7 @@ fn regression_modifier_key_repeat_does_not_stop_recording() {
             "key repeat must not produce effects"
         );
         assert!(
-            h.state.is_pressed,
+            h.state.is_pressed(),
             "is_pressed must stay true during key repeat"
         );
     }
@@ -624,22 +620,22 @@ fn regression_modifier_key_repeat_does_not_stop_recording() {
 #[test]
 fn regression_streaming_flag_cleared_after_transcription() {
     let mut h = Harness::new();
-    h.state.streaming = true;
+    // streaming is true by default (Qwen3Asr supports native streaming)
 
     // Streaming recording
     h.send(AppMessage::KeyDown);
-    assert!(h.state.streaming_active);
+    assert!(h.state.streaming_active());
     h.send(AppMessage::KeyUp);
     h.send(AppMessage::TranscriptionDone("streamed".into()));
-    assert!(!h.state.streaming_active, "should be cleared");
+    assert!(!h.state.streaming_active(), "should be cleared");
 
     // Disable streaming
     h.send(AppMessage::TrayToggleStreaming);
-    assert!(!h.state.streaming);
+    assert!(!h.state.streaming());
 
     // Next recording should insert text (not suppressed)
     h.send(AppMessage::KeyDown);
-    assert!(!h.state.streaming_active);
+    assert!(!h.state.streaming_active());
     h.send(AppMessage::KeyUp);
     let fx = h.send(AppMessage::TranscriptionDone("not streamed".into()));
     assert!(
@@ -657,12 +653,12 @@ fn regression_error_recovery_full_cycle() {
     h.send(AppMessage::KeyDown);
     h.send(AppMessage::KeyUp);
     h.send(AppMessage::TranscriptionError("mic busy".into()));
-    assert!(!h.state.is_pressed);
+    assert!(!h.state.is_pressed());
 
     // Second attempt: succeeds
     let fx = h.send(AppMessage::KeyDown);
     assert!(has_start_recording(&fx));
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     let fx = h.send(AppMessage::KeyUp);
     assert!(has_stop_and_transcribe(&fx));
@@ -684,12 +680,12 @@ fn regression_stale_transcription_result_during_recording() {
 
     // Recording 2: start immediately
     h.send(AppMessage::KeyDown);
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     // Stale TranscriptionDone from recording 1 arrives during recording 2
     let fx = h.send(AppMessage::TranscriptionDone("recording one".into()));
     assert!(
-        h.state.is_pressed,
+        h.state.is_pressed(),
         "stale TranscriptionDone must not reset is_pressed"
     );
     assert!(
@@ -720,12 +716,12 @@ fn regression_stale_error_during_recording() {
 
     // Recording 2: start
     h.send(AppMessage::KeyDown);
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     // Stale error from recording 1
     h.send(AppMessage::TranscriptionError("thread panic".into()));
     assert!(
-        h.state.is_pressed,
+        h.state.is_pressed(),
         "stale error must not reset is_pressed during active recording"
     );
 
@@ -763,10 +759,8 @@ fn regression_spoken_punctuation_processes_all_types() {
 /// increasing generation counters.
 #[test]
 fn regression_rapid_model_changes_generation_counter() {
-    let config = Config {
-        model_size: "base".to_string(),
-        ..Config::default()
-    };
+    let mut config = Config::default();
+    config.set_model_size("base".to_string());
     let mut h = Harness::with_config(&config);
 
     let changes = [
@@ -781,10 +775,10 @@ fn regression_rapid_model_changes_generation_counter() {
     for msg in changes {
         h.send(msg);
         assert!(
-            h.state.reload_generation > last_gen,
+            h.state.reload_generation() > last_gen,
             "generation must increase monotonically"
         );
-        last_gen = h.state.reload_generation;
+        last_gen = h.state.reload_generation();
     }
     assert_eq!(last_gen, 5);
 }
@@ -799,7 +793,7 @@ fn hotkey_capture_full_cycle() {
 
     // Enter capture mode
     let fx = h.send(AppMessage::TraySetHotkey);
-    assert!(h.state.capturing_hotkey);
+    assert!(h.state.capturing_hotkey());
     assert!(fx
         .iter()
         .any(|e| matches!(e, AppEffect::EnterHotkeyCaptureMode)));
@@ -810,7 +804,7 @@ fn hotkey_capture_full_cycle() {
 
     // Capture a key
     let fx = h.send(AppMessage::HotkeyCapture(rdev::Key::F5));
-    assert!(!h.state.capturing_hotkey);
+    assert!(!h.state.capturing_hotkey());
     assert!(fx
         .iter()
         .any(|e| matches!(e, AppEffect::SetHotkey(k) if k == "f5")));
@@ -831,7 +825,7 @@ fn error_during_recording_does_not_reset_tray() {
 
     // Start recording
     h.send(AppMessage::KeyDown);
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     // Error arrives from a previous transcription cycle
     let fx = h.send(AppMessage::TranscriptionError("stale error".into()));
@@ -840,7 +834,7 @@ fn error_during_recording_does_not_reset_tray() {
     // But error should still be logged
     assert!(fx.iter().any(|e| matches!(e, AppEffect::LogError(_))));
     // Recording state should be preserved
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 }
 
 #[test]
@@ -849,7 +843,7 @@ fn transcription_result_during_recording_does_not_reset_tray() {
 
     // Start recording
     h.send(AppMessage::KeyDown);
-    assert!(h.state.is_pressed);
+    assert!(h.state.is_pressed());
 
     // Result from a previous cycle arrives
     let fx = h.send(AppMessage::TranscriptionDone("stale result".into()));
@@ -857,7 +851,7 @@ fn transcription_result_during_recording_does_not_reset_tray() {
     assert!(!has_tray_state(&fx, TrayState::Idle));
     // But result should still be inserted and saved
     assert!(has_insert_text(&fx, "stale result"));
-    assert_eq!(h.state.last_transcription, Some("stale result".to_string()));
+    assert_eq!(h.state.last_transcription(), Some("stale result"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -866,10 +860,8 @@ fn transcription_result_during_recording_does_not_reset_tray() {
 
 #[test]
 fn to_config_reflects_tray_mutations() {
-    let base = Config {
-        model_size: "base".to_string(),
-        ..Config::default()
-    };
+    let mut base = Config::default();
+    base.set_model_size("base".to_string());
     let mut h = Harness::with_config(&base);
 
     // Mutate state through messages
@@ -884,15 +876,15 @@ fn to_config_reflects_tray_mutations() {
 
     // Build config from state
     let cfg = h.state.to_config(&base);
-    assert_eq!(cfg.model_size, "small");
-    assert_eq!(cfg.language, "de");
-    assert!(cfg.spoken_punctuation);
-    assert_eq!(cfg.mode, InputMode::OpenMic);
-    assert!(cfg.streaming);
-    assert!(cfg.translate_to_english);
+    assert_eq!(cfg.model_size(), "small");
+    assert_eq!(cfg.language(), "de");
+    assert!(cfg.spoken_punctuation());
+    assert_eq!(*cfg.mode(), InputMode::OpenMic);
+    assert!(cfg.streaming());
+    assert!(cfg.translate_to_english());
     // Hotkey and max_recordings come from base, not state
-    assert_eq!(cfg.hotkey, base.hotkey);
-    assert_eq!(cfg.max_recordings, base.max_recordings);
+    assert_eq!(cfg.hotkey(), base.hotkey());
+    assert_eq!(cfg.max_recordings(), base.max_recordings());
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -901,17 +893,15 @@ fn to_config_reflects_tray_mutations() {
 
 #[test]
 fn streaming_push_to_talk_full_cycle() {
-    let config = Config {
-        streaming: true,
-        ..Config::default()
-    };
+    let mut config = Config::default();
+    config.set_streaming(true);
     let mut h = Harness::with_config(&config);
 
     // Press: start recording + streaming
     let fx = h.send(AppMessage::KeyDown);
     assert!(has_start_recording(&fx));
     assert!(fx.iter().any(|e| matches!(e, AppEffect::StartStreaming)));
-    assert!(h.state.streaming_active);
+    assert!(h.state.streaming_active());
 
     // Partial text arrives
     let fx = h.send(AppMessage::StreamingPartialText {
@@ -941,7 +931,7 @@ fn streaming_push_to_talk_full_cycle() {
     // Final transcription — should NOT re-insert since streaming was active
     let fx = h.send(AppMessage::TranscriptionDone("hello world".into()));
     assert!(has_no_insert_text(&fx));
-    assert_eq!(h.state.last_transcription, Some("hello world".to_string()));
+    assert_eq!(h.state.last_transcription(), Some("hello world"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -963,7 +953,7 @@ fn multiple_push_to_talk_cycles() {
         let fx = h.send(AppMessage::TranscriptionDone(text.clone()));
         assert!(has_insert_text(&fx, &text));
         assert!(has_tray_state(&fx, TrayState::Idle));
-        assert_eq!(h.state.last_transcription, Some(text));
+        assert_eq!(h.state.last_transcription(), Some(text.as_str()));
     }
 }
 

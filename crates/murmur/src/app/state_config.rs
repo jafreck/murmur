@@ -122,34 +122,16 @@ impl AppState {
     }
 
     pub fn to_config(&self, base: &Config) -> Config {
-        Config {
-            hotkey: base.hotkey.clone(),
-            model_size: self.model_size.clone(),
-            asr_backend: base.asr_backend,
-            asr_quantization: base.asr_quantization,
-            language: self.language.clone(),
-            spoken_punctuation: self.spoken_punctuation,
-            filler_word_removal: self.filler_word_removal,
-            max_recordings: base.max_recordings,
-            mode: self.mode.clone(),
-            streaming: self.streaming,
-            translate_to_english: self.translate_to_english,
-            noise_suppression: self.noise_suppression,
-            vocabulary: base.vocabulary.clone(),
-            app_contexts: base.app_contexts.clone(),
-            excluded_apps: base.excluded_apps.clone(),
-            dictation_mode: base.dictation_mode,
-            app_mode: self.app_mode,
-            wake_word: base.wake_word.clone(),
-            stop_phrase: base.stop_phrase.clone(),
-            notes_dir: base.notes_dir.clone(),
-            system_audio_device: base.system_audio_device.clone(),
-            stealth_mode: base.stealth_mode,
-            llm_model: base.llm_model.clone(),
-            ollama_url: base.ollama_url.clone(),
-            sessions_dir: base.sessions_dir.clone(),
-            auto_summary: base.auto_summary,
-            auto_update: base.auto_update,
-        }
+        let mut cfg = base.clone();
+        cfg.set_model_size(self.model_size.clone());
+        cfg.set_language(self.language.clone());
+        cfg.set_spoken_punctuation(self.spoken_punctuation);
+        cfg.set_filler_word_removal(self.filler_word_removal);
+        cfg.set_mode(self.mode.clone());
+        cfg.set_streaming(self.streaming);
+        cfg.set_translate_to_english(self.translate_to_english);
+        cfg.set_noise_suppression(self.noise_suppression);
+        cfg.set_app_mode(self.app_mode);
+        cfg
     }
 }

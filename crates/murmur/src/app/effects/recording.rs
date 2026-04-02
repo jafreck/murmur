@@ -123,7 +123,7 @@ pub(super) fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
     if ctx.streaming_worker.is_none()
         && ctx.engine.is_some()
         && matches!(
-            ctx.config.asr_backend,
+            ctx.config.asr_backend(),
             murmur_core::config::AsrBackend::Whisper
         )
     {
@@ -140,7 +140,7 @@ pub(super) fn stop_and_transcribe(ctx: &mut EffectContext<'_>) {
 
     let has_engine = ctx.engine.is_some();
     let max_recordings = ctx.state.max_recordings;
-    let native_streaming = ctx.config.asr_backend.supports_native_streaming();
+    let native_streaming = ctx.config.asr_backend().supports_native_streaming();
 
     // No-engine path: clean up both recorder modes and bail early.
     if matches!(
@@ -280,7 +280,7 @@ pub(super) fn start_streaming(ctx: &mut EffectContext<'_>) {
     let tx_app = ctx.tx.clone();
     let translate = ctx.state.translate_to_english;
     let is_whisper = matches!(
-        ctx.config.asr_backend,
+        ctx.config.asr_backend(),
         murmur_core::config::AsrBackend::Whisper
     );
 

@@ -13,8 +13,8 @@ use crate::app::AppMessage;
 pub(super) fn reload_transcriber(ctx: &mut EffectContext<'_>, generation: u64) {
     let model_size = ctx.state.model_size.clone();
     let language = ctx.state.language.clone();
-    let backend = ctx.config.asr_backend;
-    let quantization = ctx.config.asr_quantization;
+    let backend = ctx.config.asr_backend();
+    let quantization = ctx.config.asr_quantization();
     let tx = ctx.tx.clone();
     let factory = Arc::clone(ctx.engine_factory);
     info!("Loading {backend} model '{model_size}'...");

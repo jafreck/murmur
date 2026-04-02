@@ -135,7 +135,7 @@ pub struct TrayController {
 impl TrayController {
     pub fn new(config: &Config) -> Result<Self> {
         let status_item = MenuItem::new("murmur: Idle", false, None);
-        let hotkey_item = MenuItem::new(format!("Hotkey: {}", config.hotkey), false, None);
+        let hotkey_item = MenuItem::new(format!("Hotkey: {}", config.hotkey()), false, None);
 
         let backend_submenu = Submenu::new("Backend", true);
         let backend_choices: Vec<(&str, config::AsrBackend)> = vec![
@@ -145,7 +145,7 @@ impl TrayController {
         ];
         let (backend_entries, backend_ids) =
             build_radio_submenu(&backend_submenu, &backend_choices, |b| {
-                *b == config.asr_backend
+                *b == config.asr_backend()
             })?;
 
         let set_hotkey = MenuItem::new("Set Hotkey…", true, None);
@@ -155,12 +155,13 @@ impl TrayController {
         let copy_last_id = copy_last.id().clone();
 
         let model_submenu = Submenu::new("Model", true);
-        let model_items: Vec<(&str, String)> = crate::config::supported_models(config.asr_backend)
-            .iter()
-            .map(|&s| (s, s.to_string()))
-            .collect();
+        let model_items: Vec<(&str, String)> =
+            crate::config::supported_models(config.asr_backend())
+                .iter()
+                .map(|&s| (s, s.to_string()))
+                .collect();
         let (model_entries, model_ids) =
-            build_radio_submenu(&model_submenu, &model_items, |s| s == &config.model_size)?;
+            build_radio_submenu(&model_submenu, &model_items, |s| s == config.model_size())?;
 
         let lang_submenu = Submenu::new("Language", true);
         let lang_items: Vec<(&str, String)> = TOP_LANGUAGES
@@ -171,16 +172,20 @@ impl TrayController {
             })
             .collect();
         let (language_entries, language_ids) =
-            build_radio_submenu(&lang_submenu, &lang_items, |c| c == &config.language)?;
+            build_radio_submenu(&lang_submenu, &lang_items, |c| c == config.language())?;
 
-        let spoken_punct_item =
-            CheckMenuItem::new("Spoken Punctuation", true, config.spoken_punctuation, None);
+        let spoken_punct_item = CheckMenuItem::new(
+            "Spoken Punctuation",
+            true,
+            config.spoken_punctuation(),
+            None,
+        );
         let spoken_punct_id = spoken_punct_item.id().clone();
 
         let filler_removal_item = CheckMenuItem::new(
             "Filler Word Removal",
             true,
-            config.filler_word_removal,
+            config.filler_word_removal(),
             None,
         );
         let filler_removal_id = filler_removal_item.id().clone();
@@ -191,22 +196,22 @@ impl TrayController {
             ("Open Mic", InputMode::OpenMic),
         ];
         let (mode_entries, mode_ids) =
-            build_radio_submenu(&mode_submenu, &mode_items, |m| *m == config.mode)?;
+            build_radio_submenu(&mode_submenu, &mode_items, |m| m == config.mode())?;
 
         let streaming_item =
-            CheckMenuItem::new("Live Streaming (Preview)", true, config.streaming, None);
+            CheckMenuItem::new("Live Streaming (Preview)", true, config.streaming(), None);
         let streaming_id = streaming_item.id().clone();
 
         let translate_item = CheckMenuItem::new(
             "Translate to English",
             true,
-            config.translate_to_english,
+            config.translate_to_english(),
             None,
         );
         let translate_id = translate_item.id().clone();
 
         let noise_suppression_item =
-            CheckMenuItem::new("Noise Suppression", true, config.noise_suppression, None);
+            CheckMenuItem::new("Noise Suppression", true, config.noise_suppression(), None);
         let noise_suppression_id = noise_suppression_item.id().clone();
 
         let app_mode_item = CheckMenuItem::new("Notes Mode", true, config.is_notes_mode(), None);
@@ -363,7 +368,7 @@ impl TrayController {
             deferred_state: None,
         };
 
-        if config::is_english_only_model(&config.model_size) {
+        if config::is_english_only_model(config.model_size()) {
             controller.set_language_menu_enabled(false);
         }
 

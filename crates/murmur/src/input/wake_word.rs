@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use crate::audio::capture::TARGET_RATE;
+use crate::audio::TARGET_RATE;
 use crate::transcription::transcriber::Transcriber;
 use crate::transcription::vad;
 

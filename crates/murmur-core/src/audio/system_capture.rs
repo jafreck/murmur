@@ -4,7 +4,7 @@ use log::{info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::capture::{mix_to_mono, resample};
+use super::resample::{mix_to_mono, resample};
 use super::TARGET_RATE;
 
 /// Metadata for an available audio input device.

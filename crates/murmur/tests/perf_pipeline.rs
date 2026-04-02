@@ -10,7 +10,7 @@ mod helpers;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use murmur::audio::capture::{mix_to_mono, TARGET_RATE};
+use murmur::audio::{mix_to_mono, TARGET_RATE};
 use murmur::transcription::vad;
 
 // ═══════════════════════════════════════════════════════════════════════

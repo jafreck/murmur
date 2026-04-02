@@ -20,7 +20,7 @@ fn default_config_round_trip() {
     let original = Config::default();
     original.save_to(&path).unwrap();
 
-    let loaded = Config::load_from(&path);
+    let loaded = Config::load_from(&path).unwrap();
     assert_eq!(loaded.hotkey, original.hotkey);
     assert_eq!(loaded.model_size, original.model_size);
     assert_eq!(loaded.language, original.language);
@@ -51,7 +51,7 @@ fn custom_config_round_trip() {
     };
     config.save_to(&path).unwrap();
 
-    let loaded = Config::load_from(&path);
+    let loaded = Config::load_from(&path).unwrap();
     assert_eq!(loaded.hotkey, "ctrl+shift+space");
     assert_eq!(loaded.model_size, "small.en");
     assert_eq!(loaded.language, "fr");
@@ -71,7 +71,7 @@ fn save_creates_parent_directories() {
     Config::default().save_to(&path).unwrap();
     assert!(path.exists());
 
-    let loaded = Config::load_from(&path);
+    let loaded = Config::load_from(&path).unwrap();
     assert_eq!(loaded.hotkey, Config::default().hotkey);
 }
 
@@ -80,60 +80,56 @@ fn save_creates_parent_directories() {
 // ═══════════════════════════════════════════════════════════════════════
 
 #[test]
-fn corrupt_json_falls_back_to_default() {
+fn corrupt_json_returns_parse_error() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("config.json");
 
     std::fs::write(&path, "this is not json {{{").unwrap();
-    let loaded = Config::load_from(&path);
-
-    // Should fall back to defaults
-    assert_eq!(loaded.hotkey, Config::default().hotkey);
-    assert_eq!(loaded.model_size, Config::default().model_size);
+    let result = Config::load_from(&path);
+    assert!(result.is_err());
 }
 
 #[test]
-fn empty_file_falls_back_to_default() {
+fn empty_file_returns_parse_error() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("config.json");
 
     std::fs::write(&path, "").unwrap();
-    let loaded = Config::load_from(&path);
-    assert_eq!(loaded.hotkey, Config::default().hotkey);
+    let result = Config::load_from(&path);
+    assert!(result.is_err());
 }
 
 #[test]
-fn partial_json_falls_back_to_default() {
+fn partial_json_returns_parse_error() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("config.json");
 
     // Valid JSON but missing required fields
     std::fs::write(&path, r#"{"hotkey": "f5"}"#).unwrap();
-    let loaded = Config::load_from(&path);
+    let result = Config::load_from(&path);
 
-    // serde will either fill defaults or fall back entirely depending on implementation
-    // Either way, it shouldn't panic
-    assert!(!loaded.hotkey.is_empty());
+    // Missing required fields is a parse error
+    assert!(result.is_err());
 }
 
 #[test]
-fn nonexistent_file_creates_default() {
+fn nonexistent_file_returns_error() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("does_not_exist.json");
 
     assert!(!path.exists());
-    let loaded = Config::load_from(&path);
-    assert_eq!(loaded.hotkey, Config::default().hotkey);
+    let result = Config::load_from(&path);
+    assert!(result.is_err());
 }
 
 #[test]
-fn html_error_page_falls_back_to_default() {
+fn html_error_page_returns_parse_error() {
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("config.json");
 
     std::fs::write(&path, "<!DOCTYPE html><html>Error 500</html>").unwrap();
-    let loaded = Config::load_from(&path);
-    assert_eq!(loaded.model_size, Config::default().model_size);
+    let result = Config::load_from(&path);
+    assert!(result.is_err());
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -151,7 +147,7 @@ fn multiple_save_load_cycles_preserve_data() {
         config.model_size = model.to_string();
         config.save_to(&path).unwrap();
 
-        let loaded = Config::load_from(&path);
+        let loaded = Config::load_from(&path).unwrap();
         assert_eq!(loaded.model_size, *model);
     }
 }
@@ -173,7 +169,7 @@ fn overwrite_preserves_last_written() {
     };
     c2.save_to(&path).unwrap();
 
-    let loaded = Config::load_from(&path);
+    let loaded = Config::load_from(&path).unwrap();
     assert_eq!(loaded.hotkey, "f9");
 }
 
@@ -233,7 +229,7 @@ fn config_save_load_then_state_round_trip() {
     };
 
     original.save_to(&path).unwrap();
-    let loaded = Config::load_from(&path);
+    let loaded = Config::load_from(&path).unwrap();
     let state = AppState::new(&loaded);
     let final_config = state.to_config(&loaded);
 
@@ -289,7 +285,7 @@ fn input_mode_serialization_round_trip() {
             ..Config::default()
         };
         config.save_to(&path).unwrap();
-        let loaded = Config::load_from(&path);
+        let loaded = Config::load_from(&path).unwrap();
         assert_eq!(loaded.mode, *mode);
     }
 }
@@ -493,7 +489,7 @@ fn full_config_with_vocabulary_save_load() {
     };
     cfg.save_to(&path).unwrap();
 
-    let loaded = Config::load_from(&path);
+    let loaded = Config::load_from(&path).unwrap();
     assert_eq!(loaded.vocabulary, vec!["murmur", "whisper"]);
     assert_eq!(loaded.excluded_apps, vec!["com.1password"]);
     assert_eq!(loaded.dictation_mode, DictationMode::Prose);
@@ -526,7 +522,7 @@ fn backward_compat_old_config_loads_with_defaults() {
     }"#;
     std::fs::write(&path, old_json).unwrap();
 
-    let loaded = Config::load_from(&path);
+    let loaded = Config::load_from(&path).unwrap();
     assert_eq!(loaded.hotkey, "f5");
     assert!(loaded.vocabulary.is_empty());
     assert!(loaded.app_contexts.is_empty());

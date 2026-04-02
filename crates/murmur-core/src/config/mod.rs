@@ -117,7 +117,7 @@ mod tests {
         };
         cfg.save_to(&path).unwrap();
 
-        let loaded = Config::load_from(&path);
+        let loaded = Config::load_from(&path).unwrap();
         assert_eq!(loaded.hotkey, "ctrl+shift+a");
         assert_eq!(loaded.model_size, "medium.en");
         assert_eq!(loaded.language, "de");
@@ -132,13 +132,11 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_nonexistent_creates_default() {
+    fn test_load_from_nonexistent_returns_error() {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().join("nonexistent.json");
-        let loaded = Config::load_from(&path);
-        assert_eq!(loaded.model_size, "0.6b");
-        // Should have created the default config file
-        assert!(path.exists());
+        let result = Config::load_from(&path);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -504,7 +502,7 @@ mod tests {
         };
         cfg.save_to(&path).unwrap();
 
-        let loaded = Config::load_from(&path);
+        let loaded = Config::load_from(&path).unwrap();
         assert_eq!(loaded.vocabulary, vec!["murmur"]);
         assert_eq!(loaded.excluded_apps, vec!["com.1password"]);
         assert_eq!(loaded.dictation_mode, DictationMode::Prose);

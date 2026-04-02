@@ -70,7 +70,17 @@ fn start_wake_word_detector(app: tauri::AppHandle) -> anyhow::Result<()> {
 
     let (tx, rx) = std::sync::mpsc::channel();
 
-    let _handle = start_detector(wake_phrase, stop_phrase, tx)?;
+    let _handle = start_detector(wake_phrase, stop_phrase, tx, || {
+        let model_size = "tiny.en";
+        if !murmur_core::transcription::model_exists(model_size) {
+            log::info!("Downloading {model_size} model for wake word detection...");
+            murmur_core::transcription::download(model_size, |_| {})?;
+        }
+        let model_path = murmur_core::transcription::find_model(model_size)
+            .ok_or_else(|| anyhow::anyhow!("Wake word model '{model_size}' not found"))?;
+        let engine = murmur_core::transcription::WhisperEngine::new(&model_path, "en")?;
+        Ok(std::sync::Arc::new(engine))
+    })?;
     info!("wake word detector started");
 
     // Forward events to the Tauri frontend — this loop keeps _handle alive

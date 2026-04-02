@@ -33,7 +33,7 @@ impl Harness {
     }
 
     fn send(&mut self, msg: AppMessage) -> Vec<AppEffect> {
-        self.state.handle_message(&msg)
+        self.state.handle_message(msg)
     }
 }
 
@@ -151,7 +151,7 @@ fn state_mutations_produce_correct_config_on_disk() {
     new_config.save_to(&path).unwrap();
 
     // Reload and verify
-    let loaded = Config::load_from(&path);
+    let loaded = Config::load_from(&path).unwrap();
     assert_eq!(loaded.model_size, "medium");
     assert_eq!(loaded.language, "ja");
     assert!(loaded.spoken_punctuation);
@@ -401,7 +401,7 @@ fn full_config_mutation_pipeline() {
     final_config.save_to(&path).unwrap();
 
     // Reload and verify everything persisted
-    let reloaded = Config::load_from(&path);
+    let reloaded = Config::load_from(&path).unwrap();
     assert_eq!(reloaded.model_size, "large-v3-turbo");
     assert_eq!(reloaded.language, "zh");
     assert!(reloaded.spoken_punctuation);

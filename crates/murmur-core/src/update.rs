@@ -149,7 +149,7 @@ pub fn apply_update(info: &UpdateInfo, progress: impl Fn(&str)) -> Result<()> {
     let archive_path = tmp_dir.join(&archive_name);
 
     progress("Downloading update...");
-    download_file(&info.download_url, &archive_path)?;
+    crate::util::download_to_file(&info.download_url, &archive_path, None)?;
 
     // Extract
     progress("Extracting...");
@@ -195,25 +195,6 @@ fn tempdir() -> Result<PathBuf> {
     let dir = std::env::temp_dir().join(format!("murmur-update-{}", std::process::id()));
     fs::create_dir_all(&dir)?;
     Ok(dir)
-}
-
-fn download_file(url: &str, dest: &Path) -> Result<()> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("murmur-updater")
-        .build()?;
-
-    let resp = client
-        .get(url)
-        .send()
-        .context("Failed to download update")?;
-
-    if !resp.status().is_success() {
-        bail!("Download failed with HTTP {}", resp.status());
-    }
-
-    let bytes = resp.bytes()?;
-    fs::write(dest, &bytes).context("Failed to write archive")?;
-    Ok(())
 }
 
 fn extract_archive(archive: &Path, dest: &Path) -> Result<()> {

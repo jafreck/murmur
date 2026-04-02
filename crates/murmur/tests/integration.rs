@@ -31,7 +31,7 @@ impl Harness {
 
     /// Send a message and return the effects produced.
     fn send(&mut self, msg: AppMessage) -> Vec<AppEffect> {
-        self.state.handle_message(&msg)
+        self.state.handle_message(msg)
     }
 }
 

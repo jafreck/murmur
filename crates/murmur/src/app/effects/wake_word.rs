@@ -1,12 +1,30 @@
 use log::{error, info};
 use std::sync::mpsc;
+use std::sync::Arc;
 
 use super::EffectContext;
 use crate::app::AppMessage;
+use murmur_core::transcription::AsrEngine;
 
 // ---------------------------------------------------------------------------
 // Effect handlers
 // ---------------------------------------------------------------------------
+
+/// Create the ASR engine used for wake word detection (Whisper tiny).
+///
+/// Downloads the model if it is not already present on disk.
+pub(in crate::app) fn create_wake_word_engine() -> anyhow::Result<Arc<dyn AsrEngine + Send + Sync>>
+{
+    let model_size = "tiny.en";
+    if !murmur_core::transcription::model_exists(model_size) {
+        log::info!("Downloading {model_size} model for wake word detection...");
+        murmur_core::transcription::download(model_size, |_| {})?;
+    }
+    let model_path = murmur_core::transcription::find_model(model_size)
+        .ok_or_else(|| anyhow::anyhow!("Wake word model '{model_size}' not found"))?;
+    let engine = murmur_core::transcription::WhisperEngine::new(&model_path, "en")?;
+    Ok(Arc::new(engine))
+}
 
 pub(super) fn start(ctx: &mut EffectContext<'_>) {
     // Stop existing detector if running
@@ -34,7 +52,12 @@ pub(super) fn start(ctx: &mut EffectContext<'_>) {
         }
     });
 
-    match murmur_core::input::wake_word::start_detector(wake_phrase, stop_phrase, event_tx) {
+    match murmur_core::input::wake_word::start_detector(
+        wake_phrase,
+        stop_phrase,
+        event_tx,
+        create_wake_word_engine,
+    ) {
         Ok(handle) => {
             info!("Wake word detector started");
             *ctx.wake_word = Some(handle);

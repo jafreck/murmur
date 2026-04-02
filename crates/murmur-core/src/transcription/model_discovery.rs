@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::config::Config;
+// Re-export model discovery functions from the canonical `models` module.
+pub use crate::models::{find_model, model_exists};
 
 /// Compute thread count: use 75% of available cores, clamped to [4, 8].
 /// This balances throughput against CPU pressure (avoids pegging all cores).
@@ -10,47 +11,6 @@ pub fn inference_thread_count() -> i32 {
         .map(|n| n.get() as i32)
         .unwrap_or(4);
     (n * 3 / 4).clamp(4, 8)
-}
-
-/// Check if a model file exists in any known location.
-pub fn model_exists(model_size: &str) -> bool {
-    find_model(model_size).is_some()
-}
-
-/// Find a model file in known locations.
-pub fn find_model(model_size: &str) -> Option<PathBuf> {
-    let model_filename = format!("ggml-{model_size}.bin");
-
-    let candidates = vec![
-        // App config directory
-        Config::dir().join("models").join(&model_filename),
-        // Common locations
-        dirs::data_dir()
-            .unwrap_or_default()
-            .join("whisper-cpp")
-            .join("models")
-            .join(&model_filename),
-        dirs::home_dir()
-            .unwrap_or_default()
-            .join(".cache")
-            .join("whisper")
-            .join(&model_filename),
-    ];
-
-    // macOS-specific Homebrew paths
-    #[cfg(target_os = "macos")]
-    let candidates = {
-        let mut c = candidates;
-        c.push(PathBuf::from(format!(
-            "/opt/homebrew/share/whisper-cpp/models/{model_filename}"
-        )));
-        c.push(PathBuf::from(format!(
-            "/usr/local/share/whisper-cpp/models/{model_filename}"
-        )));
-        c
-    };
-
-    candidates.into_iter().find(|p| p.exists())
 }
 
 /// Read a WAV file and return f32 samples normalized to [-1.0, 1.0].
@@ -81,6 +41,7 @@ pub fn read_wav_samples(audio_path: &Path) -> Result<Vec<f32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
 
     #[test]
     fn test_model_exists_nonexistent() {

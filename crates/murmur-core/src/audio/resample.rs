@@ -31,34 +31,12 @@ pub fn f32_to_i16(sample: f32) -> i16 {
 /// Simple linear interpolation resampler.
 /// Good enough for speech; use `rubato` crate for higher quality if needed.
 pub(crate) fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
-    if from_rate == to_rate {
-        return input.to_vec();
-    }
-
-    let ratio = from_rate as f64 / to_rate as f64;
-    let output_len = (input.len() as f64 / ratio) as usize;
-    let mut output = Vec::with_capacity(output_len);
-
-    for i in 0..output_len {
-        let src_idx = i as f64 * ratio;
-        let idx = src_idx as usize;
-        let frac = src_idx - idx as f64;
-
-        let sample = if idx + 1 < input.len() {
-            input[idx] as f64 * (1.0 - frac) + input[idx + 1] as f64 * frac
-        } else if idx < input.len() {
-            input[idx] as f64
-        } else {
-            0.0
-        };
-
-        output.push(sample as f32);
-    }
-
+    let mut output = Vec::new();
+    resample_into(input, from_rate, to_rate, &mut output);
     output
 }
 
-/// Allocation-free variant of [`resample`] that writes into a caller-supplied buffer.
+/// Variant of [`resample`] that writes into a caller-supplied buffer, avoiding allocation.
 pub(super) fn resample_into(input: &[f32], from_rate: u32, to_rate: u32, output: &mut Vec<f32>) {
     output.clear();
     if from_rate == to_rate {
@@ -68,6 +46,7 @@ pub(super) fn resample_into(input: &[f32], from_rate: u32, to_rate: u32, output:
 
     let ratio = from_rate as f64 / to_rate as f64;
     let output_len = (input.len() as f64 / ratio) as usize;
+    output.reserve(output_len);
 
     for i in 0..output_len {
         let src_idx = i as f64 * ratio;

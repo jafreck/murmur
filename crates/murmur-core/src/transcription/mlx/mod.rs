@@ -220,8 +220,10 @@ impl StreamingState for MlxStreamingState {
     }
 }
 
-// Safety: `Array` is `Send` (verified in mlx-rs 0.25.3). We guard all model
-// access behind a `Mutex`, so concurrent `&self` calls are safe.
+// SAFETY: `Array` is `Send` (verified in mlx-rs 0.25.3).  All model state
+// is behind `Mutex<Qwen3AsrModel>`, so concurrent `&MlxEngine` access is
+// serialised.  The remaining fields (`tokenizer`, `model_name`) are
+// inherently `Sync` (immutable after construction).
 unsafe impl Sync for MlxEngine {}
 
 impl MlxEngine {

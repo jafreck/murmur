@@ -129,104 +129,20 @@ impl ContextProvider for AppDetector {
 /// Read the focused window's title via the Accessibility API.
 #[cfg(target_os = "macos")]
 fn get_window_title_ax(pid: i32) -> Option<String> {
-    use std::ffi::c_void;
-    use std::ptr;
+    use crate::platform::ax;
 
-    type CFTypeRef = *const c_void;
-    type CFStringRef = *const c_void;
-    type CFIndex = isize;
-    type AXUIElementRef = CFTypeRef;
-    type AXError = i32;
-
-    const K_AX_ERROR_SUCCESS: AXError = 0;
-    const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
-
-    #[link(name = "ApplicationServices", kind = "framework")]
-    extern "C" {
-        fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
-        fn AXUIElementCopyAttributeValue(
-            element: AXUIElementRef,
-            attribute: CFStringRef,
-            value: *mut CFTypeRef,
-        ) -> AXError;
+    let app_element = ax::ax_application(pid);
+    if app_element.is_null() {
+        return None;
     }
 
-    #[link(name = "CoreFoundation", kind = "framework")]
-    extern "C" {
-        fn CFRelease(cf: CFTypeRef);
-        fn CFStringGetLength(s: CFStringRef) -> CFIndex;
-        fn CFStringGetCString(s: CFStringRef, buf: *mut u8, size: CFIndex, enc: u32) -> bool;
-        fn CFStringCreateWithCString(alloc: CFTypeRef, s: *const u8, enc: u32) -> CFStringRef;
-    }
+    let attr_focused_window = ax::cfstring_create(b"AXFocusedWindow\0");
+    let window = ax::ax_copy_attr(app_element.0, attr_focused_window.0)?;
 
-    unsafe {
-        // Create an AXUIElement for the app
-        let app_element = AXUIElementCreateApplication(pid);
-        if app_element.is_null() {
-            return None;
-        }
+    let attr_title = ax::cfstring_create(b"AXTitle\0");
+    let title_ref = ax::ax_copy_attr(window.0, attr_title.0)?;
 
-        // Get AXFocusedWindow
-        let attr_focused_window = CFStringCreateWithCString(
-            ptr::null(),
-            c"AXFocusedWindow".as_ptr().cast(),
-            K_CF_STRING_ENCODING_UTF8,
-        );
-        if attr_focused_window.is_null() {
-            CFRelease(app_element);
-            return None;
-        }
-
-        let mut window: CFTypeRef = ptr::null();
-        let err = AXUIElementCopyAttributeValue(app_element, attr_focused_window, &mut window);
-        CFRelease(attr_focused_window);
-
-        if err != K_AX_ERROR_SUCCESS || window.is_null() {
-            CFRelease(app_element);
-            return None;
-        }
-
-        // Get AXTitle from the window
-        let attr_title = CFStringCreateWithCString(
-            ptr::null(),
-            c"AXTitle".as_ptr().cast(),
-            K_CF_STRING_ENCODING_UTF8,
-        );
-        if attr_title.is_null() {
-            CFRelease(window);
-            CFRelease(app_element);
-            return None;
-        }
-
-        let mut title_ref: CFTypeRef = ptr::null();
-        let err = AXUIElementCopyAttributeValue(window, attr_title, &mut title_ref);
-        CFRelease(attr_title);
-        CFRelease(window);
-        CFRelease(app_element);
-
-        if err != K_AX_ERROR_SUCCESS || title_ref.is_null() {
-            return None;
-        }
-
-        // Convert CFString to Rust String
-        let len = CFStringGetLength(title_ref);
-        let max_size = len * 4 + 1;
-        let mut buffer = vec![0u8; max_size as usize];
-        let result = if CFStringGetCString(
-            title_ref,
-            buffer.as_mut_ptr(),
-            max_size,
-            K_CF_STRING_ENCODING_UTF8,
-        ) {
-            let nul_pos = buffer.iter().position(|&b| b == 0).unwrap_or(buffer.len());
-            Some(String::from_utf8_lossy(&buffer[..nul_pos]).into_owned())
-        } else {
-            None
-        };
-
-        CFRelease(title_ref);
-        result
-    }
+    ax::cfstring_to_string(title_ref.0)
 }
 
 // ── Linux ──────────────────────────────────────────────────────────────
@@ -336,6 +252,9 @@ mod windows {
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
     pub(super) fn detect() -> (Option<String>, Option<String>) {
+        // SAFETY: GetForegroundWindow has no preconditions and returns
+        // null if no window is in the foreground.  The returned HWND is
+        // valid for the duration of these calls (same message-loop tick).
         unsafe {
             let hwnd = GetForegroundWindow();
             if hwnd.is_null() {
@@ -347,6 +266,7 @@ mod windows {
         }
     }
 
+    /// SAFETY: `hwnd` must be a valid window handle from `GetForegroundWindow`.
     unsafe fn get_window_title(hwnd: *mut std::ffi::c_void) -> Option<String> {
         let mut buf = [0u16; 512];
         let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
@@ -363,6 +283,8 @@ mod windows {
         }
     }
 
+    /// SAFETY: `hwnd` must be a valid window handle.  Opens a limited-
+    /// information process handle which is closed before returning.
     unsafe fn get_process_name(hwnd: *mut std::ffi::c_void) -> Option<String> {
         let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, &mut pid);

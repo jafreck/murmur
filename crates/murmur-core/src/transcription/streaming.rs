@@ -10,7 +10,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use super::engine::AsrEngine;
-use crate::audio::capture::TARGET_RATE;
+use crate::audio::TARGET_RATE;
 
 // ── Configuration ──────────────────────────────────────────────────────
 

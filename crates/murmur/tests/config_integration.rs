@@ -28,7 +28,10 @@ fn default_config_round_trip() {
     assert_eq!(loaded.max_recordings(), original.max_recordings());
     assert_eq!(loaded.mode(), original.mode());
     assert_eq!(loaded.streaming(), original.streaming());
-    assert_eq!(loaded.translate_to_english(), original.translate_to_english());
+    assert_eq!(
+        loaded.translate_to_english(),
+        original.translate_to_english()
+    );
 }
 
 #[test]
@@ -392,7 +395,10 @@ fn effective_vocabulary_deduplicates() {
 #[test]
 fn app_exclusion_integration() {
     let mut cfg = Config::default();
-    cfg.set_excluded_apps(vec!["com.1password".to_string(), "com.chase.mobile".to_string()]);
+    cfg.set_excluded_apps(vec![
+        "com.1password".to_string(),
+        "com.chase.mobile".to_string(),
+    ]);
 
     assert!(cfg.is_app_excluded("com.1password"));
     assert!(cfg.is_app_excluded("com.chase.mobile"));

@@ -22,7 +22,7 @@ jobs:
       # Pin to 1.91 until winit 0.30 is compatible with Rust 1.92+
       # (https://github.com/rust-windowing/winit/issues/4486)
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.91.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: clippy, rustfmt
 

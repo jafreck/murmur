@@ -289,7 +289,7 @@ pub fn onnx_model_exists(
             qwen3_asr_files(quantization),
         ),
         AsrBackend::Parakeet => (parakeet_model_dir(model_size), parakeet_files(quantization)),
-        AsrBackend::Whisper => return super::transcriber::model_exists(model_size),
+        AsrBackend::Whisper => return super::model_discovery::model_exists(model_size),
         AsrBackend::Mlx => return false,
     };
 
@@ -323,7 +323,7 @@ pub fn model_exists_for_backend(
     quantization: AsrQuantization,
 ) -> bool {
     match backend {
-        AsrBackend::Whisper => super::transcriber::model_exists(model_size),
+        AsrBackend::Whisper => super::model_discovery::model_exists(model_size),
         AsrBackend::Qwen3Asr | AsrBackend::Parakeet => {
             onnx_model_exists(backend, model_size, quantization)
         }

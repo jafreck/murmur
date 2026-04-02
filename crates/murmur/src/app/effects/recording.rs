@@ -287,6 +287,10 @@ pub(super) fn start_streaming(ctx: &mut EffectContext<'_>) {
     let (streaming_tx, streaming_rx) = mpsc::channel::<streaming::StreamingEvent>();
 
     // Forward streaming events to app messages, coalescing stale events.
+    //
+    // Native streaming always emits full-replacement events (the complete
+    // transcription so far + how many chars to delete).  When multiple
+    // events queue up, only the latest matters — it supersedes all prior.
     std::thread::spawn(move || {
         while let Ok(event) = streaming_rx.recv() {
             match event {
@@ -295,29 +299,36 @@ pub(super) fn start_streaming(ctx: &mut EffectContext<'_>) {
                 }
                 streaming::StreamingEvent::PartialText {
                     mut text,
-                    replace_chars,
+                    mut replace_chars,
                 } => {
-                    let mut final_replace = replace_chars;
+                    // Drain any newer events; keep only the latest text.
+                    // Each replacement supersedes the previous one, so we
+                    // must accumulate: later events' replace_chars count
+                    // chars that were never actually inserted (because we
+                    // skipped intermediate events).  The correct total is
+                    // the first event's replace_chars (what the UI shows)
+                    // since no intermediates were rendered.
+                    let ui_replace = replace_chars;
                     while let Ok(newer) = streaming_rx.try_recv() {
                         match newer {
                             streaming::StreamingEvent::PartialText {
                                 text: t,
-                                replace_chars: r,
+                                replace_chars: _,
                             } => {
                                 text = t;
-                                // For native streaming, each event replaces
-                                // all previous text, so use the latest replace_chars.
-                                final_replace = r;
                             }
                             streaming::StreamingEvent::SpeechDetected => {
                                 let _ = tx_app.send(AppMessage::SpeechActivity);
                             }
                         }
                     }
+                    // Use the first event's replace_chars — that's
+                    // relative to what the UI actually displays.
+                    replace_chars = ui_replace;
 
                     let _ = tx_app.send(AppMessage::StreamingPartialText {
                         text,
-                        replace_chars: final_replace,
+                        replace_chars,
                     });
                 }
             }

@@ -123,21 +123,17 @@ fn native_streaming_loop(
                 };
 
                 if !text.is_empty() && text != prev_text {
-                    if text.starts_with(&prev_text) {
-                        let new_suffix = &text[prev_text.len()..];
-                        if !new_suffix.is_empty() {
-                            let _ = tx.send(StreamingEvent::PartialText {
-                                text: new_suffix.to_string(),
-                                replace_chars: 0,
-                            });
-                        }
-                    } else {
-                        let replace_chars = prev_text.chars().count();
-                        let _ = tx.send(StreamingEvent::PartialText {
-                            text: text.clone(),
-                            replace_chars,
-                        });
-                    }
+                    // Always emit a full replacement.  The append
+                    // optimisation (only sending the new suffix with
+                    // replace_chars=0) is unsafe when the event
+                    // coalescer in the app crate drops intermediate
+                    // events — the UI ends up with a stale prefix
+                    // followed by a suffix, producing duplicated text.
+                    let replace_chars = prev_text.chars().count();
+                    let _ = tx.send(StreamingEvent::PartialText {
+                        text: text.clone(),
+                        replace_chars,
+                    });
                     prev_text = text;
                 }
             }

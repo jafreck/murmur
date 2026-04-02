@@ -366,7 +366,7 @@ pub fn download_onnx_model(
         }
         AsrBackend::Mlx => {
             anyhow::bail!(
-                "MLX model download not yet implemented — stub engine does not need weights"
+                "Use download_for_backend() for MLX models"
             );
         }
     };
@@ -436,8 +436,16 @@ pub fn download_for_backend(
             download_onnx_model(backend, model_size, quantization, on_progress)
         }
         AsrBackend::Mlx => {
+            let dir = mlx_model_dir(model_size);
+            if dir.join("model.safetensors").exists() && dir.join("config.json").exists() {
+                return Ok(dir);
+            }
             anyhow::bail!(
-                "MLX model download not yet implemented — stub engine does not need weights"
+                "MLX model not found at {}. Download it manually with:\n  \
+                 huggingface-cli download moona3k/mlx-qwen3-asr-{} --local-dir {}",
+                dir.display(),
+                model_size,
+                dir.display()
             );
         }
     }
@@ -454,7 +462,10 @@ pub fn model_exists_for_backend(
         AsrBackend::Qwen3Asr | AsrBackend::Parakeet => {
             onnx_model_exists(backend, model_size, quantization)
         }
-        AsrBackend::Mlx => false,
+        AsrBackend::Mlx => {
+            let dir = mlx_model_dir(model_size);
+            dir.join("model.safetensors").exists() && dir.join("config.json").exists()
+        }
     }
 }
 

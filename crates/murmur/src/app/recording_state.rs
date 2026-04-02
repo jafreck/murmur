@@ -23,8 +23,6 @@ impl AppState {
         if self.is_notes_mode() {
             self.overlay_text.clear();
             effects.push(AppEffect::ShowOverlay);
-        }
-        if self.is_notes_mode() {
             effects.push(AppEffect::PauseWakeWord);
         }
         effects
@@ -78,13 +76,10 @@ impl AppState {
         if *replace_chars > 0 || !text.is_empty() {
             self.streaming_chars_emitted = text.chars().count();
             let mut effects = vec![];
-            // In Dictation mode, type text at cursor; in Notes mode, only update overlay
-            if !self.is_notes_mode() {
-                effects.push(AppEffect::StreamingReplace {
-                    text: text.to_string(),
-                    replace_chars: *replace_chars,
-                });
-            }
+            // In Notes mode, show streaming text in overlay.
+            // In Dictation mode, do nothing mid-stream — the final
+            // transcription is inserted via a single clipboard paste
+            // when recording stops.
             if self.is_notes_mode() {
                 self.overlay_text = text.to_string();
                 effects.push(AppEffect::UpdateOverlayText(text.to_string()));
@@ -174,30 +169,22 @@ impl AppState {
 
         let mut effects = vec![];
         if !text.is_empty() {
-            // In Dictation mode, paste/type text at cursor
+            // In Dictation mode, insert final text via clipboard paste
             if !self.is_notes_mode() {
-                if was_streaming && streamed_chars > 0 {
-                    effects.push(AppEffect::StreamingReplace {
-                        text: text.to_string(),
-                        replace_chars: streamed_chars,
-                    });
-                } else {
-                    // Either streaming wasn't active, or it was but produced
-                    // no output yet (e.g. short audio, VAD filtered). Insert
-                    // the batch transcription directly.
-                    effects.push(AppEffect::InsertText(text.to_string()));
-                }
+                effects.push(AppEffect::InsertText(text.to_string()));
             }
             self.last_transcription = Some(text.to_string());
 
-            // Update overlay with final text and save note
+            // Update overlay with final text and save note in Notes mode
             if self.is_notes_mode() {
                 self.overlay_text = text.to_string();
                 effects.push(AppEffect::UpdateOverlayText(text.to_string()));
                 effects.push(AppEffect::SaveNote(text.to_string()));
-                effects.push(AppEffect::HideOverlay);
             }
-        } else if self.is_notes_mode() {
+        }
+
+        // Hide the overlay (notes mode only)
+        if self.is_notes_mode() {
             effects.push(AppEffect::HideOverlay);
         }
 

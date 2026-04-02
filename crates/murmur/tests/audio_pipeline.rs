@@ -4,7 +4,7 @@
 mod helpers;
 
 use hound::{SampleFormat, WavReader};
-use murmur::audio::capture::{f32_to_i16, mix_to_mono, TARGET_RATE, WHISPER_WAV_SPEC};
+use murmur::audio::{f32_to_i16, mix_to_mono, TARGET_RATE, WHISPER_WAV_SPEC};
 
 // ═══════════════════════════════════════════════════════════════════════
 //  WHISPER_WAV_SPEC correctness

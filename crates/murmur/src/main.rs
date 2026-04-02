@@ -1,7 +1,7 @@
 use murmur::app;
 use murmur::config;
 use murmur::input::keycodes;
-use murmur::transcription::{model, model_discovery};
+use murmur_core::transcription::{model, model_discovery};
 use murmur::VERSION;
 use murmur_core::config::AsrBackend;
 

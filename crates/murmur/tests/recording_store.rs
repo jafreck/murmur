@@ -1,7 +1,7 @@
 //! Integration tests for RecordingStore: file creation, listing, pruning,
 //! and path management with real temporary directories.
 
-use murmur::audio::recordings::RecordingStore;
+use murmur_core::audio::recordings::RecordingStore;
 use std::fs;
 
 // ═══════════════════════════════════════════════════════════════════════

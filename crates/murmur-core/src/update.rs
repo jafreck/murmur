@@ -175,7 +175,9 @@ pub fn apply_update(info: &UpdateInfo, progress: impl Fn(&str)) -> Result<()> {
     }
 
     // Clean up
-    let _ = fs::remove_dir_all(&tmp_dir);
+    if let Err(e) = fs::remove_dir_all(&tmp_dir) {
+        log::warn!("Failed to clean up temp directory {}: {e}", tmp_dir.display());
+    }
 
     info!(
         "Updated murmur from v{} to v{}",
@@ -244,9 +246,12 @@ fn replace_binary(new_binary: &Path, target: &Path) -> Result<()> {
     // Remove macOS quarantine attribute
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("xattr")
+        if let Err(e) = std::process::Command::new("xattr")
             .args(["-d", "com.apple.quarantine", &new_binary.to_string_lossy()])
-            .status();
+            .status()
+        {
+            log::debug!("Could not remove quarantine attribute: {e}");
+        }
     }
 
     // Try atomic rename first (works if same filesystem)
@@ -270,9 +275,12 @@ fn replace_binary(new_binary: &Path, target: &Path) -> Result<()> {
 /// Ad-hoc codesign the binary so macOS TCC recognises it.
 #[cfg(target_os = "macos")]
 fn codesign(binary: &Path) {
-    let _ = std::process::Command::new("codesign")
+    if let Err(e) = std::process::Command::new("codesign")
         .args(["-s", "-", "-f", &binary.to_string_lossy()])
-        .status();
+        .status()
+    {
+        log::warn!("Ad-hoc codesign failed: {e}");
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

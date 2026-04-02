@@ -20,7 +20,7 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: murmur-whisper-worker <model_path> <language>");
+        log::error!("usage: murmur-whisper-worker <model_path> <language>");
         std::process::exit(1);
     }
     let model_path = &args[1];

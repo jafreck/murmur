@@ -438,6 +438,7 @@ impl OverlayHandle {
 
     /// Gracefully shut down the overlay.
     pub fn quit(&mut self) {
+        // Best-effort shutdown: overlay process may have already exited
         let _ = self.send(&OverlayCommand::Quit);
         let _ = self.child.wait();
     }

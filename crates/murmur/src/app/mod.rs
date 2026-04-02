@@ -127,11 +127,11 @@ pub fn run(notes_mode: bool) -> Result<()> {
     #[cfg(target_os = "macos")]
     if !_accessible {
         permissions::open_accessibility_settings();
-        eprintln!("⚠ Accessibility permission required for hotkey detection.");
-        eprintln!("  Grant access in the System Settings window that just opened,");
-        eprintln!("  then murmur will restart automatically.");
+        log::warn!("Accessibility permission required for hotkey detection.");
+        log::warn!("Grant access in the System Settings window that just opened,");
+        log::warn!("then murmur will restart automatically.");
         permissions::wait_for_accessibility();
-        eprintln!("✓ Permission granted — restarting...");
+        log::info!("Permission granted — restarting...");
         permissions::re_exec();
     }
 

@@ -33,7 +33,9 @@ pub fn download_to_file(
             Ok(())
         }
         Err(e) => {
-            let _ = fs::remove_file(&tmp_path);
+            if let Err(e) = fs::remove_file(&tmp_path) {
+                log::warn!("Failed to clean up temp file {}: {e}", tmp_path.display());
+            }
             Err(e)
         }
     }

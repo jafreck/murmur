@@ -77,7 +77,10 @@ pub fn contains_speech(samples: &[f32]) -> bool {
 /// Run Silero VAD inference over the audio.
 fn detect_speech(samples: &[f32]) -> Result<bool, voice_activity_detector::Error> {
     let vad_mutex = get_vad()?;
-    let mut vad = vad_mutex.lock().unwrap_or_else(|e| e.into_inner());
+    let mut vad = vad_mutex.lock().unwrap_or_else(|e| {
+        log::warn!("VAD mutex poisoned");
+        e.into_inner()
+    });
     vad.reset();
 
     let total_chunks = samples.len().div_ceil(CHUNK_SIZE);

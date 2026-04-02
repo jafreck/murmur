@@ -135,7 +135,9 @@ pub fn apply_effect(
         }
         AppEffect::CopyToClipboard(text) => {
             if let Ok(mut cb) = arboard::Clipboard::new() {
-                let _ = cb.set_text(text);
+                if let Err(e) = cb.set_text(text) {
+                    log::warn!("Failed to copy to clipboard: {e}");
+                }
                 info!("Copied last dictation to clipboard");
             }
         }

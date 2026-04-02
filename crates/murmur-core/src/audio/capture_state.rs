@@ -65,6 +65,7 @@ impl SharedCaptureState {
             if let Ok(mut guard) = self.writer.try_lock() {
                 if let Some(ref mut w) = *guard {
                     for &sample in samples {
+                        // Hot audio path: logging per-sample errors would be too noisy
                         let _ = w.write_sample(f32_to_i16(sample));
                     }
                 }

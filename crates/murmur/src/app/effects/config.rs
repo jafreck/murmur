@@ -55,20 +55,28 @@ pub(super) fn open_config_file() {
     info!("Opening config: {}", config_path.display());
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open").arg(&config_path).spawn();
+        if let Err(e) = std::process::Command::new("open").arg(&config_path).spawn() {
+            log::warn!("Failed to open config file: {e}");
+        }
     }
     #[cfg(target_os = "linux")]
     {
-        let _ = std::process::Command::new("xdg-open")
+        if let Err(e) = std::process::Command::new("xdg-open")
             .arg(&config_path)
-            .spawn();
+            .spawn()
+        {
+            log::warn!("Failed to open config file: {e}");
+        }
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("cmd")
+        if let Err(e) = std::process::Command::new("cmd")
             .args(["/C", "start", ""])
             .arg(&config_path)
-            .spawn();
+            .spawn()
+        {
+            log::warn!("Failed to open config file: {e}");
+        }
     }
 }
 

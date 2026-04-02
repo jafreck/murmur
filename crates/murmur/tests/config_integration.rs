@@ -3,7 +3,7 @@
 
 mod helpers;
 
-use murmur::config::{
+use murmur_core::config::{
     is_valid_language, language_name, AppContextConfig, Config, DictationMode, InputMode,
     SUPPORTED_LANGUAGES, SUPPORTED_MODELS,
 };

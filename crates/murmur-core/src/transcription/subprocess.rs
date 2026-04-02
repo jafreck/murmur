@@ -87,6 +87,7 @@ impl SubprocessTranscriber {
     /// Send shutdown signal to the worker.
     pub fn shutdown(&mut self) {
         if let Some(ref mut stdin) = self.child.stdin {
+            // Best-effort shutdown: ignore write errors since the child may have exited
             let _ = stdin.write_all(&0u32.to_le_bytes());
             let _ = stdin.flush();
         }

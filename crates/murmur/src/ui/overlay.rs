@@ -272,7 +272,7 @@ impl eframe::App for OverlayApp {
         [0.0, 0.0, 0.0, 0.0]
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_commands(ctx);
 
         if self.model.should_quit {
@@ -292,7 +292,9 @@ impl eframe::App for OverlayApp {
 
         // Request periodic repaints to check for new commands
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
+    }
 
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if !self.model.visible && self.model.fade_state == FadeState::Hidden {
             return;
         }
@@ -312,7 +314,7 @@ impl eframe::App for OverlayApp {
 
         egui::CentralPanel::default()
             .frame(panel_frame)
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 ui.visuals_mut().override_text_color = Some(egui::Color32::from_rgba_unmultiplied(
                     255,
                     255,

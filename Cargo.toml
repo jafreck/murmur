@@ -11,3 +11,4 @@ repository = "https://github.com/jacobfreck/murmur"
 opt-level = 3
 lto = true
 strip = true
+

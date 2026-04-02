@@ -124,11 +124,12 @@ pub fn apply_effect(
             text,
             replace_chars,
         } => {
-            if replace_chars > 0 {
-                log::debug!("Streaming: replacing {replace_chars} chars with '{text}'");
-            } else {
-                log::debug!("Streaming: appending '{text}'");
-            }
+            info!(
+                "StreamingReplace: delete {} chars, type {} chars: {:?}",
+                replace_chars,
+                text.chars().count(),
+                if text.len() > 60 { &text[..60] } else { &text }
+            );
             if let Err(e) = TextInserter::replace(replace_chars, &text) {
                 error!("Streaming replace failed: {e}");
             }

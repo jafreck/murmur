@@ -291,22 +291,24 @@ fn streaming_suppresses_final_transcription() {
     h.send(AppMessage::KeyDown);
     assert!(h.state.streaming_active());
 
-    // Partial text during streaming produces a replace effect
+    // Partial text during streaming — dictation mode accumulates, no insertion effects
     let fx = h.send(AppMessage::StreamingPartialText {
         text: "hello ".to_string(),
         replace_chars: 0,
     });
-    assert!(fx.iter().any(|e| matches!(
-        e, AppEffect::StreamingReplace { text, .. } if text == "hello "
-    )));
+    assert!(
+        !fx.iter()
+            .any(|e| matches!(e, AppEffect::StreamingReplace { .. })),
+        "dictation mode should not produce StreamingReplace"
+    );
 
     h.send(AppMessage::KeyUp);
 
-    // Final transcription is suppressed (streaming already inserted text)
+    // Final transcription always uses InsertText in dictation mode
     let fx = h.send(AppMessage::TranscriptionDone("hello world".into()));
     assert!(
-        has_no_insert_text(&fx),
-        "final transcription should be suppressed when streaming was active"
+        has_insert_text(&fx, "hello world"),
+        "dictation mode should insert final text"
     );
     // But last_transcription is still saved for copy-last
     assert_eq!(h.state.last_transcription(), Some("hello world"));
@@ -903,34 +905,32 @@ fn streaming_push_to_talk_full_cycle() {
     assert!(fx.iter().any(|e| matches!(e, AppEffect::StartStreaming)));
     assert!(h.state.streaming_active());
 
-    // Partial text arrives
+    // Partial text arrives — dictation mode: no insertion effects
     let fx = h.send(AppMessage::StreamingPartialText {
         text: "hel".into(),
         replace_chars: 0,
     });
-    assert!(fx.iter().any(|e| matches!(
-        e, AppEffect::StreamingReplace { text, replace_chars }
-        if text == "hel" && *replace_chars == 0
-    )));
+    assert!(!fx
+        .iter()
+        .any(|e| matches!(e, AppEffect::StreamingReplace { .. })));
 
-    // Revised partial text
+    // Revised partial text — still no insertion effects
     let fx = h.send(AppMessage::StreamingPartialText {
         text: "hello".into(),
         replace_chars: 3,
     });
-    assert!(fx.iter().any(|e| matches!(
-        e, AppEffect::StreamingReplace { text, replace_chars }
-        if text == "hello" && *replace_chars == 3
-    )));
+    assert!(!fx
+        .iter()
+        .any(|e| matches!(e, AppEffect::StreamingReplace { .. })));
 
     // Release: stop recording + streaming
     let fx = h.send(AppMessage::KeyUp);
     assert!(has_stop_and_transcribe(&fx));
     assert!(fx.iter().any(|e| matches!(e, AppEffect::StopStreaming)));
 
-    // Final transcription — should NOT re-insert since streaming was active
+    // Final transcription — dictation mode always uses InsertText
     let fx = h.send(AppMessage::TranscriptionDone("hello world".into()));
-    assert!(has_no_insert_text(&fx));
+    assert!(has_insert_text(&fx, "hello world"));
     assert_eq!(h.state.last_transcription(), Some("hello world"));
 }
 

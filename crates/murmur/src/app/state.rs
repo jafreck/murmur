@@ -586,10 +586,10 @@ mod tests {
             text: "hello".to_string(),
             replace_chars: 0,
         });
-        assert!(effects.iter().any(|e| matches!(
-            e, AppEffect::StreamingReplace { text, replace_chars }
-            if text == "hello" && *replace_chars == 0
-        )));
+        // Dictation mode: streaming partials produce no text insertion effects
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::StreamingReplace { .. })));
     }
 
     #[test]
@@ -609,15 +609,13 @@ mod tests {
         state.streaming_chars_emitted = 9; // "hello wor" was on screen
         let effects =
             state.handle_message(AppMessage::TranscriptionDone("hello world".to_string()));
-        // Should replace the streaming text with the final transcription
-        assert!(effects.iter().any(|e| matches!(
-            e, AppEffect::StreamingReplace { text, replace_chars }
-            if text == "hello world" && *replace_chars == 9
-        )));
-        // Should NOT contain InsertText (replaced via StreamingReplace)
+        // Dictation mode always uses InsertText, never StreamingReplace
+        assert!(effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello world")));
         assert!(!effects
             .iter()
-            .any(|e| matches!(e, AppEffect::InsertText(_))));
+            .any(|e| matches!(e, AppEffect::StreamingReplace { .. })));
         // Should still save last_transcription for copy-last
         assert_eq!(state.last_transcription, Some("hello world".to_string()));
         assert!(!state.streaming_active);
@@ -796,10 +794,10 @@ mod tests {
             text: "world".to_string(),
             replace_chars: 5,
         });
-        assert!(effects.iter().any(|e| matches!(
-            e, AppEffect::StreamingReplace { text, replace_chars }
-            if text == "world" && *replace_chars == 5
-        )));
+        // Dictation mode: streaming partials produce no text insertion effects
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::StreamingReplace { .. })));
     }
 
     #[test]
@@ -809,10 +807,15 @@ mod tests {
             text: String::new(),
             replace_chars: 3,
         });
-        // replace_chars > 0, so should produce StreamingReplace even with empty text
-        assert!(effects.iter().any(|e| matches!(
-            e, AppEffect::StreamingReplace { replace_chars, .. } if *replace_chars == 3
-        )));
+        // Dictation mode: streaming partials produce no text insertion effects,
+        // but replace_chars > 0 means the handler entered the active branch (not noop)
+        assert!(!effects
+            .iter()
+            .any(|e| matches!(e, AppEffect::StreamingReplace { .. })));
+        assert!(
+            effects.is_empty(),
+            "dictation mode emits no effects for streaming partials"
+        );
     }
 
     // -- Transcription results during recording --

@@ -97,7 +97,9 @@ impl OverlayModel {
                 self.visible = true;
                 self.fade_state = FadeState::FadingIn;
                 self.fade_elapsed = 0.0;
-                vec![ViewportAction::SetVisible(true), ViewportAction::Focus]
+                // Do NOT focus — stealing focus from the active app pulls
+                // the user out of fullscreen spaces on macOS.
+                vec![ViewportAction::SetVisible(true)]
             }
             OverlayCommand::Hide => {
                 self.visible = false;
@@ -174,7 +176,8 @@ pub fn run_overlay() -> Result<()> {
             .with_always_on_top()
             .with_decorations(false)
             .with_inner_size([500.0, 200.0])
-            .with_min_inner_size([200.0, 80.0]),
+            .with_min_inner_size([200.0, 80.0])
+            .with_active(false),
         ..Default::default()
     };
 
@@ -360,13 +363,19 @@ fn set_macos_overlay_window_level() {
         let title = window.title();
         if title.to_string().contains("murmur overlay") {
             window.setLevel(SCREEN_SAVER_WINDOW_LEVEL);
-            // NSWindowCollectionBehaviorCanJoinAllSpaces (1 << 0)
-            // | NSWindowCollectionBehaviorFullScreenAuxiliary (1 << 8)
+            // CanJoinAllSpaces: visible on all Spaces/desktops
+            // FullScreenAuxiliary: can appear alongside fullscreen apps
+            // Transient: lightweight panel-like behavior
+            // IgnoresCycle: skip during Cmd+` window cycling
             window.setCollectionBehavior(
                 objc2_app_kit::NSWindowCollectionBehavior::CanJoinAllSpaces
-                    | objc2_app_kit::NSWindowCollectionBehavior::FullScreenAuxiliary,
+                    | objc2_app_kit::NSWindowCollectionBehavior::FullScreenAuxiliary
+                    | objc2_app_kit::NSWindowCollectionBehavior::Transient
+                    | objc2_app_kit::NSWindowCollectionBehavior::IgnoresCycle,
             );
-            log::debug!("Overlay: macOS window level set to screen-saver level");
+            // Pass through mouse events so the overlay never intercepts clicks
+            window.setIgnoresMouseEvents(true);
+            log::debug!("Overlay: macOS window configured for non-activating fullscreen overlay");
             break;
         }
     }
@@ -552,10 +561,7 @@ mod tests {
         let actions = m.apply_command(OverlayCommand::Show);
         assert!(m.visible);
         assert_eq!(m.fade_state, FadeState::FadingIn);
-        assert_eq!(
-            actions,
-            vec![ViewportAction::SetVisible(true), ViewportAction::Focus]
-        );
+        assert_eq!(actions, vec![ViewportAction::SetVisible(true)]);
     }
 
     #[test]

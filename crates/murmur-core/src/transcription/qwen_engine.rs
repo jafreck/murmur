@@ -5,6 +5,7 @@
 //! supported by accumulating audio across chunks and re-decoding.
 
 use super::engine::{AsrEngine, StreamingState, TranscriptionResult};
+use super::postprocess::strip_asr_prefix;
 use anyhow::{Context, Result};
 use ort::session::Session;
 use std::path::Path;
@@ -16,12 +17,6 @@ use std::sync::{Arc, Mutex};
 /// Dimensions and token IDs parsed from `config.json`.
 struct QwenModelConfig {
     hidden_size: usize,
-    #[allow(dead_code)]
-    num_hidden_layers: usize,
-    #[allow(dead_code)]
-    num_key_value_heads: usize,
-    #[allow(dead_code)]
-    head_dim: usize,
     vocab_size: usize,
     eos_token_ids: Vec<u32>,
 }
@@ -94,9 +89,6 @@ impl QwenEngine {
         let cj: serde_json::Value = serde_json::from_str(&config_str)?;
 
         let hidden_size = cj["hidden_size"].as_u64().unwrap_or(1024) as usize;
-        let num_hidden_layers = cj["num_hidden_layers"].as_u64().unwrap_or(28) as usize;
-        let num_key_value_heads = cj["num_key_value_heads"].as_u64().unwrap_or(8) as usize;
-        let head_dim = cj["head_dim"].as_u64().unwrap_or(128) as usize;
         let vocab_size = cj["vocab_size"].as_u64().unwrap_or(151936) as usize;
 
         // eos_token_id may be a scalar or an array in config.json.
@@ -118,9 +110,6 @@ impl QwenEngine {
 
         let config = QwenModelConfig {
             hidden_size,
-            num_hidden_layers,
-            num_key_value_heads,
-            head_dim,
             vocab_size,
             eos_token_ids: eos_set,
         };
@@ -161,8 +150,7 @@ impl QwenEngine {
             .to_string();
 
         log::info!(
-            "QwenEngine loaded: hidden={hidden_size} layers={num_hidden_layers} \
-             kv_heads={num_key_value_heads} head_dim={head_dim} eos={:?} \
+            "QwenEngine loaded: hidden={hidden_size} vocab={vocab_size} eos={:?} \
              audio_offset={}",
             config.eos_token_ids,
             prefix_tokens.len(),
@@ -428,22 +416,6 @@ fn lookup_embedding(embed_tokens: &[f32], token_id: u32, hidden_size: usize) -> 
     } else {
         vec![0.0; hidden_size]
     }
-}
-
-/// Strip the `language ...<asr_text>` prefix that Qwen3-ASR emits.
-///
-/// The model's output typically starts with: `language English<asr_text>actual text here`
-/// We want just the actual transcription text.
-fn strip_asr_prefix(text: &str) -> String {
-    // Look for <asr_text> marker and take everything after it
-    if let Some(pos) = text.find("<asr_text>") {
-        return text[pos + "<asr_text>".len()..].to_string();
-    }
-    // Also handle the token form without angle brackets
-    if let Some(pos) = text.find("asr_text>") {
-        return text[pos + "asr_text>".len()..].to_string();
-    }
-    text.to_string()
 }
 
 /// Build the prompt prefix (before `<|audio_pad|>`), suffix (after), and

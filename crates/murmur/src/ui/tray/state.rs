@@ -25,7 +25,6 @@ pub fn state_display(state: &TrayState) -> (&'static str, &'static str) {
         TrayState::Idle => ("murmur — Idle", "murmur: Idle"),
         TrayState::Recording => ("murmur — Recording...", "murmur: Recording..."),
         TrayState::Transcribing => ("murmur — Transcribing...", "murmur: Transcribing..."),
-        TrayState::Downloading => ("murmur — Downloading model...", "murmur: Downloading..."),
         TrayState::Error => ("murmur — Error", "murmur: Error"),
     }
 }
@@ -83,7 +82,7 @@ impl TrayController {
                 let icon = match &state {
                     TrayState::Idle => &self.idle_icon,
                     TrayState::Recording | TrayState::Error => &self.recording_icon,
-                    TrayState::Transcribing | TrayState::Downloading => &self.transcribing_icon,
+                    TrayState::Transcribing => &self.transcribing_icon,
                     TrayState::Loading => &self.loading_icon,
                 };
                 let _ = self.tray.set_icon(Some(icon.clone()));
@@ -266,20 +265,19 @@ impl TrayController {
     /// Sync all tray UI elements to match the given config.
     /// Used after reloading config from disk.
     pub fn sync_config(&mut self, config: &Config) {
-        self.set_model(config.model_size());
-        self.set_language(config.language());
-        self.set_mode(config.mode());
-        self.set_hotkey(config.hotkey());
-        update_radio_entries(&self.backend_entries, &config.asr_backend(), |b| {
+        self.set_model(&config.model_size);
+        self.set_language(&config.language);
+        self.set_mode(&config.mode);
+        self.set_hotkey(&config.hotkey);
+        update_radio_entries(&self.backend_entries, &config.asr_backend, |b| {
             b.to_string()
         });
         self.spoken_punct_item
-            .set_checked(config.spoken_punctuation());
+            .set_checked(config.spoken_punctuation);
         self.filler_removal_item
-            .set_checked(config.filler_word_removal());
-        self.streaming_item.set_checked(config.streaming());
-        self.translate_item
-            .set_checked(config.translate_to_english());
+            .set_checked(config.filler_word_removal);
+        self.streaming_item.set_checked(config.streaming);
+        self.translate_item.set_checked(config.translate_to_english);
         self.app_mode_item.set_checked(config.is_notes_mode());
     }
 }
@@ -296,7 +294,6 @@ mod tests {
             TrayState::Idle,
             TrayState::Recording,
             TrayState::Transcribing,
-            TrayState::Downloading,
             TrayState::Error,
         ] {
             let (tooltip, label) = state_display(&state);

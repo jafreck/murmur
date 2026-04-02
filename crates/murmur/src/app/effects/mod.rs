@@ -18,7 +18,7 @@ use crate::transcription::streaming;
 use crate::ui::overlay::OverlayHandle;
 use crate::ui::tray::{TrayController, TrayState};
 use murmur_core::input::wake_word::WakeWordHandle;
-use murmur_core::transcription::{AsrEngine, EngineFactory};
+use murmur_core::transcription::{AsrEngine, DefaultEngineFactory};
 
 use super::{AppEffect, AppMessage, AppState};
 
@@ -77,7 +77,7 @@ pub(crate) fn check_streaming_readiness(
 pub struct EffectContext<'a> {
     pub recorder: &'a mut AudioRecorder,
     pub engine: &'a mut Option<Arc<dyn AsrEngine + Send + Sync>>,
-    pub engine_factory: &'a Arc<dyn EngineFactory>,
+    pub engine_factory: &'a Arc<DefaultEngineFactory>,
     pub tray: &'a mut TrayController,
     pub config: &'a mut Config,
     pub state: &'a mut AppState,
@@ -175,9 +175,9 @@ pub fn apply_effect(
             info!("Mode changed to: {mode}");
         }
         AppEffect::SetBackend(backend) => {
-            ctx.config.set_asr_backend(backend);
+            ctx.config.asr_backend = backend;
             let default_model = ctx.config.default_model_for_backend().to_string();
-            ctx.config.set_model_size(default_model.clone());
+            ctx.config.model_size = default_model.clone();
             ctx.state.model_size = default_model.clone();
             ctx.tray.set_model(&default_model);
             ctx.tray.sync_config(ctx.config);
@@ -199,15 +199,15 @@ pub fn apply_effect(
         }
         AppEffect::SpawnStreamingWorker => {
             if matches!(
-                ctx.config.asr_backend(),
+                ctx.config.asr_backend,
                 murmur_core::config::AsrBackend::Whisper
             ) {
                 if let Some(model_path) =
-                    murmur_core::transcription::find_model(ctx.config.model_size())
+                    murmur_core::transcription::find_model(&ctx.config.model_size)
                 {
                     match murmur_core::transcription::SubprocessTranscriber::new(
                         &model_path,
-                        ctx.config.language(),
+                        &ctx.config.language,
                     ) {
                         Ok(w) => {
                             *ctx.streaming_worker = Some(w);
@@ -257,7 +257,7 @@ pub fn apply_effect(
                 if let Ok(mut hk) = ctx.hotkey_config.lock() {
                     *hk = (parsed.key, parsed.modifiers.into_iter().collect());
                 }
-                ctx.config.set_hotkey(key_name.clone());
+                ctx.config.hotkey = key_name.clone();
                 ctx.tray.set_hotkey(&key_name);
                 info!("Hotkey set to: {key_name}");
             } else {
@@ -340,9 +340,9 @@ mod tests {
     fn config_diff_no_changes() {
         let config = Config::default();
         let diff = compute_config_diff(
-            config.model_size(),
-            config.language(),
-            config.hotkey(),
+            &config.model_size,
+            &config.language,
+            &config.hotkey,
             &config,
         );
         assert!(!diff.model_or_language_changed);
@@ -354,8 +354,8 @@ mod tests {
 
     #[test]
     fn config_diff_model_changed() {
-        let new_config = config_with(|c| c.set_model_size("large".to_string()));
-        let diff = compute_config_diff("base", "en", new_config.hotkey(), &new_config);
+        let new_config = config_with(|c| c.model_size = "large".to_string());
+        let diff = compute_config_diff("base", "en", &new_config.hotkey, &new_config);
         assert!(diff.model_or_language_changed);
         assert!(!diff.hotkey_changed);
     }
@@ -363,12 +363,12 @@ mod tests {
     #[test]
     fn config_diff_language_changed() {
         // Use a non-english-only model so language isn't forced
-        let old = config_with(|c| c.set_model_size("base".to_string()));
+        let old = config_with(|c| c.model_size = "base".to_string());
         let new_config = config_with(|c| {
-            c.set_model_size("base".to_string());
-            c.set_language("fr".to_string());
+            c.model_size = "base".to_string();
+            c.language = "fr".to_string();
         });
-        let diff = compute_config_diff(old.model_size(), old.language(), old.hotkey(), &new_config);
+        let diff = compute_config_diff(&old.model_size, &old.language, &old.hotkey, &new_config);
         assert!(diff.model_or_language_changed);
         assert_eq!(diff.effective_language, "fr");
     }
@@ -376,8 +376,8 @@ mod tests {
     #[test]
     fn config_diff_hotkey_changed() {
         let old = Config::default();
-        let new_config = config_with(|c| c.set_hotkey("F12".to_string()));
-        let diff = compute_config_diff(old.model_size(), old.language(), old.hotkey(), &new_config);
+        let new_config = config_with(|c| c.hotkey = "F12".to_string());
+        let diff = compute_config_diff(&old.model_size, &old.language, &old.hotkey, &new_config);
         assert!(diff.hotkey_changed);
         assert!(!diff.model_or_language_changed);
     }
@@ -385,10 +385,10 @@ mod tests {
     #[test]
     fn config_diff_english_only_model_forces_language() {
         let new_config = config_with(|c| {
-            c.set_model_size("base.en".to_string());
-            c.set_language("fr".to_string());
+            c.model_size = "base.en".to_string();
+            c.language = "fr".to_string();
         });
-        let diff = compute_config_diff("base", "en", new_config.hotkey(), &new_config);
+        let diff = compute_config_diff("base", "en", &new_config.hotkey, &new_config);
         assert_eq!(diff.effective_language, "en");
         assert!(!diff.language_menu_enabled);
         // Model changed from "base" to "base.en"
@@ -398,10 +398,10 @@ mod tests {
     #[test]
     fn config_diff_english_only_model_already_english() {
         let new_config = config_with(|c| {
-            c.set_model_size("base.en".to_string());
-            c.set_language("en".to_string());
+            c.model_size = "base.en".to_string();
+            c.language = "en".to_string();
         });
-        let diff = compute_config_diff("base.en", "en", new_config.hotkey(), &new_config);
+        let diff = compute_config_diff("base.en", "en", &new_config.hotkey, &new_config);
         assert_eq!(diff.effective_language, "en");
         assert!(!diff.language_menu_enabled);
         assert!(!diff.model_or_language_changed);
@@ -410,10 +410,10 @@ mod tests {
     #[test]
     fn config_diff_distil_model_forces_english() {
         let new_config = config_with(|c| {
-            c.set_model_size("distil-large".to_string());
-            c.set_language("de".to_string());
+            c.model_size = "distil-large".to_string();
+            c.language = "de".to_string();
         });
-        let diff = compute_config_diff("base", "de", new_config.hotkey(), &new_config);
+        let diff = compute_config_diff("base", "de", &new_config.hotkey, &new_config);
         assert_eq!(diff.effective_language, "en");
         assert!(!diff.language_menu_enabled);
         // Model changed AND effective language changed (de → en)
@@ -423,9 +423,9 @@ mod tests {
     #[test]
     fn config_diff_multiple_changes() {
         let new_config = config_with(|c| {
-            c.set_model_size("large".to_string());
-            c.set_language("fr".to_string());
-            c.set_hotkey("F12".to_string());
+            c.model_size = "large".to_string();
+            c.language = "fr".to_string();
+            c.hotkey = "F12".to_string();
         });
         let diff = compute_config_diff("base", "en", "F10", &new_config);
         assert!(diff.model_or_language_changed);
@@ -437,10 +437,10 @@ mod tests {
     #[test]
     fn config_diff_non_english_only_preserves_language() {
         let new_config = config_with(|c| {
-            c.set_model_size("large".to_string());
-            c.set_language("ja".to_string());
+            c.model_size = "large".to_string();
+            c.language = "ja".to_string();
         });
-        let diff = compute_config_diff("large", "ja", new_config.hotkey(), &new_config);
+        let diff = compute_config_diff("large", "ja", &new_config.hotkey, &new_config);
         assert_eq!(diff.effective_language, "ja");
         assert!(diff.language_menu_enabled);
         assert!(!diff.model_or_language_changed);
@@ -451,10 +451,10 @@ mod tests {
         // Config says "fr" but model is english-only → effective is "en".
         // Old language was "en" so no change detected.
         let new_config = config_with(|c| {
-            c.set_model_size("tiny.en".to_string());
-            c.set_language("fr".to_string());
+            c.model_size = "tiny.en".to_string();
+            c.language = "fr".to_string();
         });
-        let diff = compute_config_diff("tiny.en", "en", new_config.hotkey(), &new_config);
+        let diff = compute_config_diff("tiny.en", "en", &new_config.hotkey, &new_config);
         assert_eq!(diff.effective_language, "en");
         assert!(!diff.model_or_language_changed);
     }

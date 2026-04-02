@@ -13,6 +13,7 @@ mod model;
 use model::Qwen3AsrModel;
 
 use super::engine::{AsrEngine, StreamingState, TranscriptionResult};
+use super::postprocess::strip_asr_prefix;
 use anyhow::{Context, Result};
 use mlx_rs::module::Param;
 use mlx_rs::nn::{Conv2d, Embedding, LayerNorm, Linear, RmsNorm};
@@ -189,17 +190,6 @@ fn narrow_last_dim(arr: &Array, start: i32, len: i32) -> Result<Array> {
     let indices: Vec<i32> = (start..start + len).collect();
     let idx = Array::from_slice(&indices, &[len]);
     arr.take_axis(&idx, ndim - 1).map_err(Into::into)
-}
-
-/// Strip the `language ...<asr_text>` prefix that Qwen3-ASR emits.
-fn strip_asr_prefix(text: &str) -> String {
-    if let Some(pos) = text.find("<asr_text>") {
-        return text[pos + "<asr_text>".len()..].to_string();
-    }
-    if let Some(pos) = text.find("asr_text>") {
-        return text[pos + "asr_text>".len()..].to_string();
-    }
-    text.to_string()
 }
 
 // ─── MlxEngine (public API) ────────────────────────────────────────

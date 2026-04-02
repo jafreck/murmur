@@ -51,27 +51,27 @@ impl AppState {
     pub fn new(config: &Config) -> Self {
         // Native-streaming backends (Qwen3-ASR, MLX, Parakeet) default to
         // streaming enabled. The user can still toggle it off via the tray.
-        let streaming = config.streaming() || config.asr_backend().supports_native_streaming();
+        let streaming = config.streaming || config.asr_backend.supports_native_streaming();
         Self {
             is_pressed: false,
-            mode: config.mode().clone(),
+            mode: config.mode.clone(),
             streaming,
-            spoken_punctuation: config.spoken_punctuation(),
-            filler_word_removal: config.filler_word_removal(),
-            translate_to_english: config.translate_to_english(),
-            noise_suppression: config.noise_suppression(),
-            max_recordings: Config::effective_max_recordings(config.max_recordings()),
+            spoken_punctuation: config.spoken_punctuation,
+            filler_word_removal: config.filler_word_removal,
+            translate_to_english: config.translate_to_english,
+            noise_suppression: config.noise_suppression,
+            max_recordings: Config::effective_max_recordings(config.max_recordings),
             last_transcription: None,
-            model_size: config.model_size().to_string(),
-            language: config.language().to_string(),
+            model_size: config.model_size.clone(),
+            language: config.language.clone(),
             streaming_active: false,
             streaming_chars_emitted: 0,
             reload_generation: 0,
             capturing_hotkey: false,
             wake_word_initiated: false,
-            app_mode: config.app_mode(),
+            app_mode: config.app_mode,
             overlay_text: String::new(),
-            stop_phrase: config.stop_phrase().to_string(),
+            stop_phrase: config.stop_phrase.clone(),
             last_speech_at: None,
             streaming_completed: false,
             pending_engine: None,
@@ -505,16 +505,18 @@ mod tests {
 
     #[test]
     fn app_state_from_config() {
-        let mut config = Config::default();
-        config.set_hotkey("f9".to_string());
-        config.set_model_size("small.en".to_string());
-        config.set_language("fr".to_string());
-        config.set_spoken_punctuation(true);
-        config.set_filler_word_removal(true);
-        config.set_max_recordings(10);
-        config.set_mode(InputMode::OpenMic);
-        config.set_streaming(true);
-        config.set_translate_to_english(true);
+        let config = Config {
+            hotkey: "f9".to_string(),
+            model_size: "small.en".to_string(),
+            language: "fr".to_string(),
+            spoken_punctuation: true,
+            filler_word_removal: true,
+            max_recordings: 10,
+            mode: InputMode::OpenMic,
+            streaming: true,
+            translate_to_english: true,
+            ..Default::default()
+        };
         let state = AppState::new(&config);
         assert_eq!(state.model_size, "small.en");
         assert_eq!(state.language, "fr");
@@ -538,13 +540,13 @@ mod tests {
         state.streaming = true;
         state.translate_to_english = true;
         let cfg = state.to_config(&base);
-        assert_eq!(cfg.model_size(), "large");
-        assert_eq!(cfg.language(), "de");
-        assert!(cfg.spoken_punctuation());
-        assert_eq!(cfg.mode().clone(), InputMode::OpenMic);
-        assert!(cfg.streaming());
-        assert!(cfg.translate_to_english());
-        assert_eq!(cfg.hotkey(), base.hotkey());
+        assert_eq!(cfg.model_size, "large");
+        assert_eq!(cfg.language, "de");
+        assert!(cfg.spoken_punctuation);
+        assert_eq!(cfg.mode.clone(), InputMode::OpenMic);
+        assert!(cfg.streaming);
+        assert!(cfg.translate_to_english);
+        assert_eq!(cfg.hotkey, base.hotkey);
     }
 
     #[test]
@@ -895,13 +897,15 @@ mod tests {
 
     #[test]
     fn to_config_preserves_base_hotkey_and_max_recordings() {
-        let mut base = Config::default();
-        base.set_hotkey("ctrl+shift+space".to_string());
-        base.set_max_recordings(42);
+        let base = Config {
+            hotkey: "ctrl+shift+space".to_string(),
+            max_recordings: 42,
+            ..Default::default()
+        };
         let state = AppState::new(&base);
         let cfg = state.to_config(&base);
-        assert_eq!(cfg.hotkey(), "ctrl+shift+space");
-        assert_eq!(cfg.max_recordings(), 42);
+        assert_eq!(cfg.hotkey, "ctrl+shift+space");
+        assert_eq!(cfg.max_recordings, 42);
     }
 
     // -- EngineReady exhaustiveness --

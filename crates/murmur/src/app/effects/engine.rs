@@ -1,7 +1,7 @@
 use log::{error, info};
 use std::sync::Arc;
 
-use murmur_core::transcription::{AsrEngine, EngineFactory};
+use murmur_core::transcription::{AsrEngine, DefaultEngineFactory};
 
 use super::EffectContext;
 use crate::app::AppMessage;
@@ -13,14 +13,14 @@ use crate::app::AppMessage;
 pub(super) fn reload_transcriber(ctx: &mut EffectContext<'_>, generation: u64) {
     let model_size = ctx.state.model_size.clone();
     let language = ctx.state.language.clone();
-    let backend = ctx.config.asr_backend();
-    let quantization = ctx.config.asr_quantization();
+    let backend = ctx.config.asr_backend;
+    let quantization = ctx.config.asr_quantization;
     let tx = ctx.tx.clone();
     let factory = Arc::clone(ctx.engine_factory);
     info!("Loading {backend} model '{model_size}'...");
 
     std::thread::spawn(move || {
-        match create_engine_on_thread(&*factory, backend, &model_size, &language, quantization) {
+        match create_engine_on_thread(&factory, backend, &model_size, &language, quantization) {
             Ok(engine) => {
                 info!("{backend} model '{model_size}' loaded successfully");
                 let _ = tx.send(AppMessage::EngineReady(Arc::from(engine), generation));
@@ -37,7 +37,7 @@ pub(super) fn reload_transcriber(ctx: &mut EffectContext<'_>, generation: u64) {
 
 /// Download (if needed) and instantiate an ASR engine via the factory.
 pub(in crate::app) fn create_engine_on_thread(
-    factory: &dyn EngineFactory,
+    factory: &DefaultEngineFactory,
     backend: murmur_core::config::AsrBackend,
     model_size: &str,
     language: &str,

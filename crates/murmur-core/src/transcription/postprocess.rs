@@ -2,6 +2,25 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
+// ── ASR prefix stripping ───────────────────────────────────────────────
+
+/// Strip the `language ...<asr_text>` prefix that Qwen3-ASR emits.
+///
+/// The model's output typically starts with: `language English<asr_text>actual text here`
+/// We want just the actual transcription text.
+#[cfg_attr(not(any(feature = "onnx", feature = "mlx")), allow(dead_code))]
+pub(crate) fn strip_asr_prefix(text: &str) -> String {
+    // Look for <asr_text> marker and take everything after it
+    if let Some(pos) = text.find("<asr_text>") {
+        return text[pos + "<asr_text>".len()..].to_string();
+    }
+    // Also handle the token form without angle brackets
+    if let Some(pos) = text.find("asr_text>") {
+        return text[pos + "asr_text>".len()..].to_string();
+    }
+    text.to_string()
+}
+
 // ── Filler word removal ────────────────────────────────────────────────
 
 /// Pure verbal tics with no semantic meaning.

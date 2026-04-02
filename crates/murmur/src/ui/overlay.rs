@@ -561,10 +561,7 @@ mod tests {
         let actions = m.apply_command(OverlayCommand::Show);
         assert!(m.visible);
         assert_eq!(m.fade_state, FadeState::FadingIn);
-        assert_eq!(
-            actions,
-            vec![ViewportAction::SetVisible(true)]
-        );
+        assert_eq!(actions, vec![ViewportAction::SetVisible(true)]);
     }
 
     #[test]

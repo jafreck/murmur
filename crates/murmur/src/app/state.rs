@@ -812,7 +812,10 @@ mod tests {
         assert!(!effects
             .iter()
             .any(|e| matches!(e, AppEffect::StreamingReplace { .. })));
-        assert!(effects.is_empty(), "dictation mode emits no effects for streaming partials");
+        assert!(
+            effects.is_empty(),
+            "dictation mode emits no effects for streaming partials"
+        );
     }
 
     // -- Transcription results during recording --

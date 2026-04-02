@@ -54,6 +54,10 @@ fn pump_event_loop() {
     let app = NSApplication::sharedApplication(mtm);
 
     loop {
+        // SAFETY: `app` is a valid NSApplication obtained from the main
+        // thread marker above.  `nextEventMatchingMask_untilDate_inMode_dequeue`
+        // is an Objective-C message send that is safe to call on the main
+        // thread with a past-date timeout (non-blocking poll).
         let event = unsafe {
             app.nextEventMatchingMask_untilDate_inMode_dequeue(
                 NSEventMask::Any,

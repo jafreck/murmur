@@ -1,5 +1,8 @@
 pub mod permissions;
 
+#[cfg(target_os = "macos")]
+pub(crate) mod ax;
+
 pub use permissions::{check_accessibility, check_microphone};
 
 #[cfg(target_os = "macos")]

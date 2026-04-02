@@ -153,149 +153,58 @@ impl TextInserter {
 
 #[cfg(target_os = "macos")]
 fn ax_replace(delete_chars: usize, new_text: &str) -> Result<()> {
-    use std::ffi::c_void;
-    use std::ptr;
+    use crate::platform::ax;
 
-    type CFTypeRef = *const c_void;
-    type CFStringRef = *const c_void;
-    type CFIndex = isize;
-    type AXUIElementRef = CFTypeRef;
-    type AXValueRef = CFTypeRef;
-    type AXError = i32;
-
-    const K_AX_ERROR_SUCCESS: AXError = 0;
-    const K_AX_VALUE_TYPE_CF_RANGE: u32 = 4;
-    const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
-
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    struct CFRange {
-        location: CFIndex,
-        length: CFIndex,
+    // Get focused UI element
+    let system = ax::ax_system_wide();
+    if system.is_null() {
+        anyhow::bail!("Failed to create system-wide AX element");
     }
 
-    #[link(name = "ApplicationServices", kind = "framework")]
-    extern "C" {
-        fn AXUIElementCreateSystemWide() -> AXUIElementRef;
-        fn AXUIElementCopyAttributeValue(
-            element: AXUIElementRef,
-            attribute: CFStringRef,
-            value: *mut CFTypeRef,
-        ) -> AXError;
-        fn AXUIElementSetAttributeValue(
-            element: AXUIElementRef,
-            attribute: CFStringRef,
-            value: CFTypeRef,
-        ) -> AXError;
-        fn AXValueCreate(value_type: u32, value_ptr: *const c_void) -> AXValueRef;
-        fn AXValueGetValue(value: AXValueRef, value_type: u32, value_ptr: *mut c_void) -> bool;
+    let focused_attr = ax::cfstring_create(b"AXFocusedUIElement\0");
+    let focused = ax::ax_copy_attr(system.0, focused_attr.0)
+        .ok_or_else(|| anyhow::anyhow!("No focused element"))?;
+
+    // Get current selected text range to find cursor position
+    let sel_range_attr = ax::cfstring_create(b"AXSelectedTextRange\0");
+    let range_val = ax::ax_copy_attr(focused.0, sel_range_attr.0)
+        .ok_or_else(|| anyhow::anyhow!("No selected text range"))?;
+
+    let cur_range = ax::ax_value_to_range(range_val.0)
+        .ok_or_else(|| anyhow::anyhow!("Failed to read cursor range"))?;
+
+    // Build a new range: select `delete_chars` characters before cursor
+    let new_range = ax::CFRange {
+        location: (cur_range.location + cur_range.length)
+            .saturating_sub(delete_chars as ax::CFIndex),
+        length: delete_chars as ax::CFIndex,
+    };
+
+    // Set the selection to cover the text we want to replace
+    let new_range_val = ax::ax_value_create_range(&new_range);
+    if new_range_val.is_null() {
+        anyhow::bail!("Failed to create AXValue for range");
     }
 
-    #[link(name = "CoreFoundation", kind = "framework")]
-    extern "C" {
-        fn CFRelease(cf: CFTypeRef);
-        fn CFStringCreateWithCString(
-            alloc: CFTypeRef,
-            c_str: *const u8,
-            encoding: u32,
-        ) -> CFStringRef;
+    let err = ax::ax_set_attr(focused.0, sel_range_attr.0, new_range_val.0);
+    if err != ax::K_AX_ERROR_SUCCESS {
+        anyhow::bail!("Failed to set selected text range (AX error {err})");
     }
 
-    struct CfGuard(CFTypeRef);
-    impl Drop for CfGuard {
-        fn drop(&mut self) {
-            if !self.0.is_null() {
-                unsafe { CFRelease(self.0) };
-            }
-        }
+    // Replace selected text with new text
+    let sel_text_attr = ax::cfstring_create(b"AXSelectedText\0");
+    let replacement = {
+        let mut bytes = new_text.as_bytes().to_vec();
+        bytes.push(0); // NUL-terminate
+        ax::cfstring_create(&bytes)
+    };
+
+    let err = ax::ax_set_attr(focused.0, sel_text_attr.0, replacement.0);
+    if err != ax::K_AX_ERROR_SUCCESS {
+        anyhow::bail!("Failed to set selected text (AX error {err})");
     }
 
-    unsafe fn cfstr(s: &[u8]) -> CFStringRef {
-        CFStringCreateWithCString(ptr::null(), s.as_ptr(), K_CF_STRING_ENCODING_UTF8)
-    }
-
-    unsafe fn ax_copy(element: AXUIElementRef, attr: CFStringRef) -> Option<CFTypeRef> {
-        let mut value: CFTypeRef = ptr::null();
-        let err = AXUIElementCopyAttributeValue(element, attr, &mut value);
-        if err == K_AX_ERROR_SUCCESS && !value.is_null() {
-            Some(value)
-        } else {
-            None
-        }
-    }
-
-    unsafe {
-        // Get focused UI element
-        let system = AXUIElementCreateSystemWide();
-        let _sys_guard = CfGuard(system);
-
-        let focused_attr = cfstr(b"AXFocusedUIElement\0");
-        let _fa_guard = CfGuard(focused_attr);
-
-        let focused =
-            ax_copy(system, focused_attr).ok_or_else(|| anyhow::anyhow!("No focused element"))?;
-        let _focused_guard = CfGuard(focused);
-
-        // Get current selected text range to find cursor position
-        let sel_range_attr = cfstr(b"AXSelectedTextRange\0");
-        let _sra_guard = CfGuard(sel_range_attr);
-
-        let range_val = ax_copy(focused, sel_range_attr)
-            .ok_or_else(|| anyhow::anyhow!("No selected text range"))?;
-        let _rv_guard = CfGuard(range_val);
-
-        let mut cur_range = CFRange {
-            location: 0,
-            length: 0,
-        };
-        if !AXValueGetValue(
-            range_val,
-            K_AX_VALUE_TYPE_CF_RANGE,
-            &mut cur_range as *mut CFRange as *mut c_void,
-        ) {
-            anyhow::bail!("Failed to read cursor range");
-        }
-
-        // Build a new range: select `delete_chars` characters before cursor
-        let new_range = CFRange {
-            location: (cur_range.location + cur_range.length)
-                .saturating_sub(delete_chars as CFIndex),
-            length: delete_chars as CFIndex,
-        };
-
-        // Set the selection to cover the text we want to replace
-        let new_range_val = AXValueCreate(
-            K_AX_VALUE_TYPE_CF_RANGE,
-            &new_range as *const CFRange as *const c_void,
-        );
-        if new_range_val.is_null() {
-            anyhow::bail!("Failed to create AXValue for range");
-        }
-        let _nrv_guard = CfGuard(new_range_val);
-
-        let err = AXUIElementSetAttributeValue(focused, sel_range_attr, new_range_val);
-        if err != K_AX_ERROR_SUCCESS {
-            anyhow::bail!("Failed to set selected text range (AX error {err})");
-        }
-
-        // Replace selected text with new text
-        let sel_text_attr = cfstr(b"AXSelectedText\0");
-        let _sta_guard = CfGuard(sel_text_attr);
-
-        let replacement = {
-            let mut bytes = new_text.as_bytes().to_vec();
-            bytes.push(0); // NUL-terminate
-            cfstr(&bytes)
-        };
-        let _rep_guard = CfGuard(replacement);
-
-        let err = AXUIElementSetAttributeValue(focused, sel_text_attr, replacement);
-        if err != K_AX_ERROR_SUCCESS {
-            anyhow::bail!("Failed to set selected text (AX error {err})");
-        }
-
-        Ok(())
-    }
+    Ok(())
 }
 
 #[cfg(test)]

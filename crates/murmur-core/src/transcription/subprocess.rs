@@ -57,9 +57,10 @@ impl SubprocessTranscriber {
         let count = (samples.len() as u32).to_le_bytes();
         stdin.write_all(&count)?;
 
-        let sample_bytes: &[u8] =
-            unsafe { std::slice::from_raw_parts(samples.as_ptr() as *const u8, samples.len() * 4) };
-        stdin.write_all(sample_bytes)?;
+        // Write f32 samples as raw bytes (native byte order — both sides
+        // are in the same process family on the same machine).
+        let sample_bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_ne_bytes()).collect();
+        stdin.write_all(&sample_bytes)?;
 
         let flag = [if translate { 1u8 } else { 0u8 }];
         stdin.write_all(&flag)?;

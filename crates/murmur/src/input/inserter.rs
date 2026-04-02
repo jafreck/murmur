@@ -232,8 +232,8 @@ fn ax_replace(delete_chars: usize, new_text: &str) -> Result<()> {
         let focused_attr = cfstr(b"AXFocusedUIElement\0");
         let _fa_guard = CfGuard(focused_attr);
 
-        let focused = ax_copy(system, focused_attr)
-            .ok_or_else(|| anyhow::anyhow!("No focused element"))?;
+        let focused =
+            ax_copy(system, focused_attr).ok_or_else(|| anyhow::anyhow!("No focused element"))?;
         let _focused_guard = CfGuard(focused);
 
         // Get current selected text range to find cursor position
@@ -264,8 +264,10 @@ fn ax_replace(delete_chars: usize, new_text: &str) -> Result<()> {
         };
 
         // Set the selection to cover the text we want to replace
-        let new_range_val =
-            AXValueCreate(K_AX_VALUE_TYPE_CF_RANGE, &new_range as *const CFRange as *const c_void);
+        let new_range_val = AXValueCreate(
+            K_AX_VALUE_TYPE_CF_RANGE,
+            &new_range as *const CFRange as *const c_void,
+        );
         if new_range_val.is_null() {
             anyhow::bail!("Failed to create AXValue for range");
         }

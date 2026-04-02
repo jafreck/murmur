@@ -159,8 +159,8 @@ impl AppState {
     }
 
     pub(super) fn on_transcription_done(&mut self, text: &str) -> Vec<AppEffect> {
-        let was_streaming = self.streaming_active;
-        let streamed_chars = self.streaming_chars_emitted;
+        let _was_streaming = self.streaming_active;
+        let _streamed_chars = self.streaming_chars_emitted;
         // Only clear streaming state if not currently recording
         if !self.is_pressed {
             self.streaming_active = false;

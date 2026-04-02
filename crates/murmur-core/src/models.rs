@@ -365,9 +365,7 @@ pub fn download_onnx_model(
             anyhow::bail!("Use download() for Whisper models");
         }
         AsrBackend::Mlx => {
-            anyhow::bail!(
-                "Use download_for_backend() for MLX models"
-            );
+            anyhow::bail!("Use download_for_backend() for MLX models");
         }
     };
 

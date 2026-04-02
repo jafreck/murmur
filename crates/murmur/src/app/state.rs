@@ -1,5 +1,9 @@
+use std::sync::Arc;
+
 use crate::audio::recordings::RecordingStore;
 use crate::config::{AppMode, Config, InputMode};
+use crate::ui::tray::TrayState;
+use murmur_core::transcription::AsrEngine;
 
 use super::messages::{AppEffect, AppMessage};
 
@@ -38,6 +42,9 @@ pub struct AppState {
     /// Set to true when a streaming session completes, so the batch
     /// transcription at the end can be skipped (avoids duplicate output).
     pub streaming_completed: bool,
+    /// Holds a newly loaded engine until the `SwapEngine` effect moves it
+    /// into the active engine slot. Populated by the `EngineReady` reducer.
+    pub pending_engine: Option<Arc<dyn AsrEngine + Send + Sync>>,
 }
 
 impl AppState {
@@ -67,6 +74,7 @@ impl AppState {
             stop_phrase: config.stop_phrase.clone(),
             last_speech_at: None,
             streaming_completed: false,
+            pending_engine: None,
         }
     }
 
@@ -82,22 +90,22 @@ impl AppState {
         self.app_mode == AppMode::Notes
     }
 
-    pub fn handle_message(&mut self, msg: &AppMessage) -> Vec<AppEffect> {
+    pub fn handle_message(&mut self, msg: AppMessage) -> Vec<AppEffect> {
         match msg {
             AppMessage::KeyDown if self.capturing_hotkey => vec![AppEffect::None],
             AppMessage::KeyUp if self.capturing_hotkey => vec![AppEffect::None],
             AppMessage::KeyDown => self.on_key_down(),
             AppMessage::KeyUp => self.on_key_up(),
-            AppMessage::TranscriptionDone(text) => self.on_transcription_done(text),
-            AppMessage::TranscriptionError(e) => self.on_transcription_error(e),
+            AppMessage::TranscriptionDone(ref text) => self.on_transcription_done(text),
+            AppMessage::TranscriptionError(ref e) => self.on_transcription_error(e),
             AppMessage::TrayCopyLast => self.on_copy_last(),
             AppMessage::TrayQuit => vec![AppEffect::Quit],
-            AppMessage::TraySetModel(size) => self.on_set_model(size),
-            AppMessage::TraySetLanguage(code) => self.on_set_language(code),
-            AppMessage::TraySetBackend(backend) => self.on_set_backend(*backend),
+            AppMessage::TraySetModel(ref size) => self.on_set_model(size),
+            AppMessage::TraySetLanguage(ref code) => self.on_set_language(code),
+            AppMessage::TraySetBackend(backend) => self.on_set_backend(backend),
             AppMessage::TrayToggleSpokenPunctuation => self.on_toggle_spoken_punctuation(),
             AppMessage::TrayToggleFillerWordRemoval => self.on_toggle_filler_word_removal(),
-            AppMessage::TraySetMode(mode) => self.on_set_mode(mode),
+            AppMessage::TraySetMode(ref mode) => self.on_set_mode(mode),
             AppMessage::TrayToggleStreaming => self.on_toggle_streaming(),
             AppMessage::TrayToggleTranslate => self.on_toggle_translate(),
             AppMessage::TrayToggleNoiseSuppression => self.on_toggle_noise_suppression(),
@@ -105,10 +113,8 @@ impl AppState {
             AppMessage::TrayReloadConfig => vec![AppEffect::ReloadConfig],
             AppMessage::TraySetHotkey => self.on_tray_set_hotkey(),
             AppMessage::TrayToggleAppMode => self.on_toggle_app_mode(),
-            AppMessage::HotkeyCapture(key) => self.on_hotkey_capture(key),
-            // EngineReady is handled directly in the run() loop before
-            // reaching handle_message, but we need an arm for exhaustiveness.
-            AppMessage::EngineReady(_, _) => vec![AppEffect::None],
+            AppMessage::HotkeyCapture(ref key) => self.on_hotkey_capture(key),
+            AppMessage::EngineReady(engine, generation) => self.on_engine_ready(engine, generation),
             AppMessage::WakeWordDetected => self.on_wake_word_detected(),
             AppMessage::StopPhraseDetected => self.on_stop_phrase_detected(),
             AppMessage::SpeechActivity => {
@@ -116,15 +122,57 @@ impl AppState {
                 vec![AppEffect::None]
             }
             AppMessage::StreamingPartialText {
-                text,
-                replace_chars,
+                ref text,
+                ref replace_chars,
             } => self.on_streaming_partial(text, replace_chars),
-            // Update messages are handled in the effects layer; pass through.
-            AppMessage::TrayCheckForUpdates
-            | AppMessage::UpdateAvailable(_)
-            | AppMessage::UpdateApplied(_)
-            | AppMessage::UpdateError(_) => vec![AppEffect::None],
+            AppMessage::TrayCheckForUpdates => vec![AppEffect::CheckForUpdates],
+            AppMessage::UpdateAvailable(info) => self.on_update_available(info),
+            AppMessage::UpdateApplied(version) => self.on_update_applied(&version),
+            AppMessage::UpdateError(e) => vec![AppEffect::LogError(e)],
         }
+    }
+
+    fn on_engine_ready(
+        &mut self,
+        engine: Arc<dyn AsrEngine + Send + Sync>,
+        generation: u64,
+    ) -> Vec<AppEffect> {
+        if generation != self.reload_generation {
+            log::info!(
+                "Discarding stale engine reload (gen {generation}, current {})",
+                self.reload_generation
+            );
+            return vec![AppEffect::None];
+        }
+        self.pending_engine = Some(engine);
+        let mut effects = vec![
+            AppEffect::SpawnStreamingWorker,
+            AppEffect::SwapEngine,
+            AppEffect::SetTrayState(TrayState::Idle),
+        ];
+        if generation == 0 {
+            effects.push(AppEffect::PrintReady);
+            if self.is_notes_mode() {
+                effects.push(AppEffect::StartWakeWord);
+            }
+        }
+        effects
+    }
+
+    fn on_update_available(&self, info: murmur_core::update::UpdateInfo) -> Vec<AppEffect> {
+        log::info!(
+            "Update available: v{} → v{}",
+            info.current_version,
+            info.latest_version
+        );
+        vec![AppEffect::SetTrayUpdateAvailable(info.latest_version)]
+    }
+
+    fn on_update_applied(&self, version: &str) -> Vec<AppEffect> {
+        log::info!("Update applied: v{version}. Restart to use new version.");
+        vec![AppEffect::SetTrayStatus(format!(
+            "Updated to v{version} — restart to apply"
+        ))]
     }
 }
 
@@ -158,6 +206,7 @@ mod tests {
             stop_phrase: "murmur stop".to_string(),
             last_speech_at: None,
             streaming_completed: false,
+            pending_engine: None,
         }
     }
 
@@ -166,7 +215,7 @@ mod tests {
     #[test]
     fn hold_mode_key_down_starts_recording() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::KeyDown);
+        let effects = state.handle_message(AppMessage::KeyDown);
         assert!(state.is_pressed);
         assert!(effects
             .iter()
@@ -180,7 +229,7 @@ mod tests {
     fn hold_mode_key_down_while_pressed_noop() {
         let mut state = default_state();
         state.is_pressed = true;
-        let effects = state.handle_message(&AppMessage::KeyDown);
+        let effects = state.handle_message(AppMessage::KeyDown);
         assert_eq!(effects, vec![AppEffect::None]);
     }
 
@@ -188,7 +237,7 @@ mod tests {
     fn hold_mode_key_up_starts_transcribing() {
         let mut state = default_state();
         state.is_pressed = true;
-        let effects = state.handle_message(&AppMessage::KeyUp);
+        let effects = state.handle_message(AppMessage::KeyUp);
         assert!(!state.is_pressed);
         assert!(effects
             .iter()
@@ -201,7 +250,7 @@ mod tests {
     #[test]
     fn hold_mode_key_up_not_pressed_noop() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::KeyUp);
+        let effects = state.handle_message(AppMessage::KeyUp);
         assert_eq!(effects, vec![AppEffect::None]);
     }
 
@@ -211,7 +260,7 @@ mod tests {
     fn toggle_mode_first_key_down_starts_recording() {
         let mut state = default_state();
         state.mode = InputMode::OpenMic;
-        let effects = state.handle_message(&AppMessage::KeyDown);
+        let effects = state.handle_message(AppMessage::KeyDown);
         assert!(state.is_pressed);
         assert!(effects
             .iter()
@@ -226,7 +275,7 @@ mod tests {
         let mut state = default_state();
         state.mode = InputMode::OpenMic;
         state.is_pressed = true;
-        let effects = state.handle_message(&AppMessage::KeyDown);
+        let effects = state.handle_message(AppMessage::KeyDown);
         assert!(!state.is_pressed);
         assert!(effects
             .iter()
@@ -241,7 +290,7 @@ mod tests {
         let mut state = default_state();
         state.mode = InputMode::OpenMic;
         state.is_pressed = true;
-        let effects = state.handle_message(&AppMessage::KeyUp);
+        let effects = state.handle_message(AppMessage::KeyUp);
         assert_eq!(effects, vec![AppEffect::None]);
     }
 
@@ -251,7 +300,7 @@ mod tests {
     fn transcription_done_inserts_text() {
         let mut state = default_state();
         let effects =
-            state.handle_message(&AppMessage::TranscriptionDone("hello world".to_string()));
+            state.handle_message(AppMessage::TranscriptionDone("hello world".to_string()));
         assert!(effects
             .iter()
             .any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello world")));
@@ -264,7 +313,7 @@ mod tests {
     #[test]
     fn transcription_done_empty_no_insert() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::TranscriptionDone("".to_string()));
+        let effects = state.handle_message(AppMessage::TranscriptionDone("".to_string()));
         assert!(!effects
             .iter()
             .any(|e| matches!(e, AppEffect::InsertText(_))));
@@ -280,7 +329,7 @@ mod tests {
         // background thread, so AppState must NOT re-process it.
         let mut state = default_state();
         state.spoken_punctuation = true;
-        let effects = state.handle_message(&AppMessage::TranscriptionDone("hello.".to_string()));
+        let effects = state.handle_message(AppMessage::TranscriptionDone("hello.".to_string()));
         assert!(effects
             .iter()
             .any(|e| matches!(e, AppEffect::InsertText(t) if t == "hello.")));
@@ -289,7 +338,7 @@ mod tests {
     #[test]
     fn transcription_error_sets_error_state() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::TranscriptionError("fail".to_string()));
+        let effects = state.handle_message(AppMessage::TranscriptionError("fail".to_string()));
         assert!(effects
             .iter()
             .any(|e| matches!(e, AppEffect::LogError(t) if t == "fail")));
@@ -304,7 +353,7 @@ mod tests {
     fn copy_last_with_transcription() {
         let mut state = default_state();
         state.last_transcription = Some("copied text".to_string());
-        let effects = state.handle_message(&AppMessage::TrayCopyLast);
+        let effects = state.handle_message(AppMessage::TrayCopyLast);
         assert!(effects
             .iter()
             .any(|e| matches!(e, AppEffect::CopyToClipboard(t) if t == "copied text")));
@@ -313,7 +362,7 @@ mod tests {
     #[test]
     fn copy_last_without_transcription() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::TrayCopyLast);
+        let effects = state.handle_message(AppMessage::TrayCopyLast);
         assert_eq!(effects, vec![AppEffect::None]);
     }
 
@@ -322,14 +371,14 @@ mod tests {
     #[test]
     fn quit_returns_quit_effect() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::TrayQuit);
+        let effects = state.handle_message(AppMessage::TrayQuit);
         assert_eq!(effects, vec![AppEffect::Quit]);
     }
 
     #[test]
     fn set_model_updates_state_and_saves() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::TraySetModel("small.en".to_string()));
+        let effects = state.handle_message(AppMessage::TraySetModel("small.en".to_string()));
         assert_eq!(state.model_size, "small.en");
         assert!(effects.contains(&AppEffect::SaveConfig));
         assert!(effects.contains(&AppEffect::SetTrayModel("small.en".to_string())));
@@ -342,7 +391,7 @@ mod tests {
         let mut state = default_state();
         // Use a multilingual model so language changes are allowed
         state.model_size = "base".to_string();
-        let effects = state.handle_message(&AppMessage::TraySetLanguage("fr".to_string()));
+        let effects = state.handle_message(AppMessage::TraySetLanguage("fr".to_string()));
         assert_eq!(state.language, "fr");
         assert!(effects.contains(&AppEffect::SaveConfig));
         assert!(effects.contains(&AppEffect::SetTrayLanguage("fr".to_string())));
@@ -355,11 +404,11 @@ mod tests {
         let mut state = default_state();
         // Use a multilingual model so language changes also trigger reloads
         state.model_size = "base".to_string();
-        state.handle_message(&AppMessage::TraySetModel("small".to_string()));
+        state.handle_message(AppMessage::TraySetModel("small".to_string()));
         assert_eq!(state.reload_generation, 1);
-        state.handle_message(&AppMessage::TraySetLanguage("fr".to_string()));
+        state.handle_message(AppMessage::TraySetLanguage("fr".to_string()));
         assert_eq!(state.reload_generation, 2);
-        state.handle_message(&AppMessage::TraySetModel("tiny".to_string()));
+        state.handle_message(AppMessage::TraySetModel("tiny".to_string()));
         assert_eq!(state.reload_generation, 3);
     }
 
@@ -367,10 +416,10 @@ mod tests {
     fn toggle_spoken_punctuation() {
         let mut state = default_state();
         assert!(!state.spoken_punctuation);
-        let effects = state.handle_message(&AppMessage::TrayToggleSpokenPunctuation);
+        let effects = state.handle_message(AppMessage::TrayToggleSpokenPunctuation);
         assert!(state.spoken_punctuation);
         assert!(effects.contains(&AppEffect::SaveConfig));
-        let effects = state.handle_message(&AppMessage::TrayToggleSpokenPunctuation);
+        let effects = state.handle_message(AppMessage::TrayToggleSpokenPunctuation);
         assert!(!state.spoken_punctuation);
         assert!(effects.contains(&AppEffect::SaveConfig));
     }
@@ -379,7 +428,7 @@ mod tests {
     fn toggle_toggle_mode() {
         let mut state = default_state();
         assert_eq!(state.mode, InputMode::PushToTalk);
-        let effects = state.handle_message(&AppMessage::TraySetMode(InputMode::OpenMic));
+        let effects = state.handle_message(AppMessage::TraySetMode(InputMode::OpenMic));
         assert_eq!(state.mode, InputMode::OpenMic);
         assert!(effects.contains(&AppEffect::SaveConfig));
         assert!(effects.contains(&AppEffect::SetTrayMode(InputMode::OpenMic)));
@@ -389,7 +438,7 @@ mod tests {
     fn toggle_translate() {
         let mut state = default_state();
         assert!(!state.translate_to_english);
-        let effects = state.handle_message(&AppMessage::TrayToggleTranslate);
+        let effects = state.handle_message(AppMessage::TrayToggleTranslate);
         assert!(state.translate_to_english);
         assert!(effects.contains(&AppEffect::SaveConfig));
     }
@@ -463,21 +512,21 @@ mod tests {
     #[test]
     fn open_config_returns_effect() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::TrayOpenConfig);
+        let effects = state.handle_message(AppMessage::TrayOpenConfig);
         assert_eq!(effects, vec![AppEffect::OpenConfig]);
     }
 
     #[test]
     fn reload_config_returns_effect() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::TrayReloadConfig);
+        let effects = state.handle_message(AppMessage::TrayReloadConfig);
         assert_eq!(effects, vec![AppEffect::ReloadConfig]);
     }
 
     #[test]
     fn streaming_partial_text_produces_replace() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::StreamingPartialText {
+        let effects = state.handle_message(AppMessage::StreamingPartialText {
             text: "hello".to_string(),
             replace_chars: 0,
         });
@@ -490,7 +539,7 @@ mod tests {
     #[test]
     fn streaming_partial_text_empty_noop() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::StreamingPartialText {
+        let effects = state.handle_message(AppMessage::StreamingPartialText {
             text: String::new(),
             replace_chars: 0,
         });
@@ -503,7 +552,7 @@ mod tests {
         state.streaming_active = true;
         state.streaming_chars_emitted = 9; // "hello wor" was on screen
         let effects =
-            state.handle_message(&AppMessage::TranscriptionDone("hello world".to_string()));
+            state.handle_message(AppMessage::TranscriptionDone("hello world".to_string()));
         // Should replace the streaming text with the final transcription
         assert!(effects.iter().any(|e| matches!(
             e, AppEffect::StreamingReplace { text, replace_chars }
@@ -523,7 +572,7 @@ mod tests {
     fn transcription_done_inserts_when_not_streaming() {
         let mut state = default_state();
         state.streaming_active = false;
-        let effects = state.handle_message(&AppMessage::TranscriptionDone("hello".to_string()));
+        let effects = state.handle_message(AppMessage::TranscriptionDone("hello".to_string()));
         assert!(effects
             .iter()
             .any(|e| matches!(e, AppEffect::InsertText(_))));
@@ -624,7 +673,7 @@ mod tests {
     #[test]
     fn tray_set_hotkey_enters_capture_mode() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::TraySetHotkey);
+        let effects = state.handle_message(AppMessage::TraySetHotkey);
         assert!(state.capturing_hotkey);
         assert!(effects
             .iter()
@@ -635,7 +684,7 @@ mod tests {
     fn hotkey_capture_sets_hotkey() {
         let mut state = default_state();
         state.capturing_hotkey = true;
-        let effects = state.handle_message(&AppMessage::HotkeyCapture(rdev::Key::F5));
+        let effects = state.handle_message(AppMessage::HotkeyCapture(rdev::Key::F5));
         assert!(!state.capturing_hotkey);
         assert!(effects
             .iter()
@@ -647,7 +696,7 @@ mod tests {
     fn key_down_ignored_during_capture() {
         let mut state = default_state();
         state.capturing_hotkey = true;
-        let effects = state.handle_message(&AppMessage::KeyDown);
+        let effects = state.handle_message(AppMessage::KeyDown);
         assert_eq!(effects, vec![AppEffect::None]);
     }
 
@@ -655,7 +704,7 @@ mod tests {
     fn key_up_ignored_during_capture() {
         let mut state = default_state();
         state.capturing_hotkey = true;
-        let effects = state.handle_message(&AppMessage::KeyUp);
+        let effects = state.handle_message(AppMessage::KeyUp);
         assert_eq!(effects, vec![AppEffect::None]);
     }
 
@@ -665,7 +714,7 @@ mod tests {
     fn streaming_key_down_includes_start_streaming() {
         let mut state = default_state();
         state.streaming = true;
-        let effects = state.handle_message(&AppMessage::KeyDown);
+        let effects = state.handle_message(AppMessage::KeyDown);
         assert!(effects
             .iter()
             .any(|e| matches!(e, AppEffect::StartStreaming)));
@@ -678,7 +727,7 @@ mod tests {
         state.streaming = true;
         state.is_pressed = true;
         state.streaming_active = true;
-        let effects = state.handle_message(&AppMessage::KeyUp);
+        let effects = state.handle_message(AppMessage::KeyUp);
         assert!(effects
             .iter()
             .any(|e| matches!(e, AppEffect::StopStreaming)));
@@ -687,7 +736,7 @@ mod tests {
     #[test]
     fn streaming_partial_text_with_replace_chars() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::StreamingPartialText {
+        let effects = state.handle_message(AppMessage::StreamingPartialText {
             text: "world".to_string(),
             replace_chars: 5,
         });
@@ -700,7 +749,7 @@ mod tests {
     #[test]
     fn streaming_partial_text_empty_text_with_replace_is_not_noop() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::StreamingPartialText {
+        let effects = state.handle_message(AppMessage::StreamingPartialText {
             text: String::new(),
             replace_chars: 3,
         });
@@ -715,14 +764,14 @@ mod tests {
     #[test]
     fn streaming_partial_text_tracks_emitted_chars() {
         let mut state = default_state();
-        state.handle_message(&AppMessage::StreamingPartialText {
+        state.handle_message(AppMessage::StreamingPartialText {
             text: "hello".to_string(),
             replace_chars: 0,
         });
         assert_eq!(state.streaming_chars_emitted, 5);
 
         // Second partial replaces with longer text
-        state.handle_message(&AppMessage::StreamingPartialText {
+        state.handle_message(AppMessage::StreamingPartialText {
             text: "hello world".to_string(),
             replace_chars: 5,
         });
@@ -733,9 +782,8 @@ mod tests {
     fn transcription_done_during_recording_does_not_reset_tray() {
         let mut state = default_state();
         state.is_pressed = true;
-        let effects = state.handle_message(&AppMessage::TranscriptionDone(
-            "from prev cycle".to_string(),
-        ));
+        let effects =
+            state.handle_message(AppMessage::TranscriptionDone("from prev cycle".to_string()));
         // Should NOT set tray to Idle since we're currently recording
         assert!(!effects
             .iter()
@@ -751,7 +799,7 @@ mod tests {
     fn transcription_error_during_recording_does_not_reset_tray() {
         let mut state = default_state();
         state.is_pressed = true;
-        let effects = state.handle_message(&AppMessage::TranscriptionError("timeout".to_string()));
+        let effects = state.handle_message(AppMessage::TranscriptionError("timeout".to_string()));
         // Should NOT set tray to Error since we're currently recording
         assert!(!effects
             .iter()
@@ -765,7 +813,7 @@ mod tests {
         let mut state = default_state();
         state.is_pressed = true;
         state.streaming_active = true;
-        state.handle_message(&AppMessage::TranscriptionDone("text".to_string()));
+        state.handle_message(AppMessage::TranscriptionDone("text".to_string()));
         // streaming_active should NOT be cleared since we're still recording
         assert!(state.streaming_active);
     }
@@ -776,10 +824,10 @@ mod tests {
     fn toggle_streaming() {
         let mut state = default_state();
         assert!(!state.streaming);
-        let effects = state.handle_message(&AppMessage::TrayToggleStreaming);
+        let effects = state.handle_message(AppMessage::TrayToggleStreaming);
         assert!(state.streaming);
         assert!(effects.contains(&AppEffect::SaveConfig));
-        let effects = state.handle_message(&AppMessage::TrayToggleStreaming);
+        let effects = state.handle_message(AppMessage::TrayToggleStreaming);
         assert!(!state.streaming);
         assert!(effects.contains(&AppEffect::SaveConfig));
     }
@@ -812,14 +860,14 @@ mod tests {
         state.streaming = true;
 
         // First press: start recording + streaming
-        let effects = state.handle_message(&AppMessage::KeyDown);
+        let effects = state.handle_message(AppMessage::KeyDown);
         assert!(effects
             .iter()
             .any(|e| matches!(e, AppEffect::StartStreaming)));
         assert!(state.streaming_active);
 
         // Second press: stop recording + streaming
-        let effects = state.handle_message(&AppMessage::KeyDown);
+        let effects = state.handle_message(AppMessage::KeyDown);
         assert!(effects
             .iter()
             .any(|e| matches!(e, AppEffect::StopStreaming)));
@@ -830,9 +878,9 @@ mod tests {
     #[test]
     fn last_transcription_updated_on_each_result() {
         let mut state = default_state();
-        state.handle_message(&AppMessage::TranscriptionDone("first".to_string()));
+        state.handle_message(AppMessage::TranscriptionDone("first".to_string()));
         assert_eq!(state.last_transcription, Some("first".to_string()));
-        state.handle_message(&AppMessage::TranscriptionDone("second".to_string()));
+        state.handle_message(AppMessage::TranscriptionDone("second".to_string()));
         assert_eq!(state.last_transcription, Some("second".to_string()));
     }
 
@@ -843,8 +891,7 @@ mod tests {
         let mut state = default_state();
         state.model_size = "base".to_string();
         state.language = "fr".to_string();
-        let effects =
-            state.handle_message(&AppMessage::TraySetModel("distil-large-v3".to_string()));
+        let effects = state.handle_message(AppMessage::TraySetModel("distil-large-v3".to_string()));
         assert_eq!(state.language, "en");
         assert!(effects.contains(&AppEffect::SetTrayLanguage("en".to_string())));
         assert!(effects.contains(&AppEffect::SetLanguageMenuEnabled(false)));
@@ -854,14 +901,14 @@ mod tests {
     fn set_en_model_disables_language_menu() {
         let mut state = default_state();
         state.model_size = "base".to_string();
-        let effects = state.handle_message(&AppMessage::TraySetModel("small.en".to_string()));
+        let effects = state.handle_message(AppMessage::TraySetModel("small.en".to_string()));
         assert!(effects.contains(&AppEffect::SetLanguageMenuEnabled(false)));
     }
 
     #[test]
     fn set_multilingual_model_enables_language_menu() {
         let mut state = default_state();
-        let effects = state.handle_message(&AppMessage::TraySetModel("large".to_string()));
+        let effects = state.handle_message(AppMessage::TraySetModel("large".to_string()));
         assert!(effects.contains(&AppEffect::SetLanguageMenuEnabled(true)));
     }
 
@@ -870,7 +917,7 @@ mod tests {
         let mut state = default_state();
         state.model_size = "distil-large-v3".to_string();
         state.language = "en".to_string();
-        let effects = state.handle_message(&AppMessage::TraySetLanguage("fr".to_string()));
+        let effects = state.handle_message(AppMessage::TraySetLanguage("fr".to_string()));
         assert_eq!(state.language, "en");
         assert!(!effects.contains(&AppEffect::SaveConfig));
         assert!(effects.contains(&AppEffect::SetTrayLanguage("en".to_string())));
@@ -880,7 +927,7 @@ mod tests {
     fn language_change_allowed_for_multilingual_model() {
         let mut state = default_state();
         state.model_size = "large".to_string();
-        let effects = state.handle_message(&AppMessage::TraySetLanguage("fr".to_string()));
+        let effects = state.handle_message(AppMessage::TraySetLanguage("fr".to_string()));
         assert_eq!(state.language, "fr");
         assert!(effects.contains(&AppEffect::SaveConfig));
     }

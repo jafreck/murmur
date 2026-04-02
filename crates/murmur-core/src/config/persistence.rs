@@ -1,7 +1,7 @@
-use anyhow::Result;
 use std::path::PathBuf;
 
 use super::schema::Config;
+use crate::error::ConfigError;
 
 impl Config {
     pub fn dir() -> PathBuf {
@@ -14,21 +14,27 @@ impl Config {
         Self::dir().join("config.json")
     }
 
+    /// Load config from the default path, falling back to defaults on any error.
     pub fn load() -> Self {
-        Self::load_from(&Self::file_path())
+        Self::load_from(&Self::file_path()).unwrap_or_else(|_| {
+            let config = Self::default();
+            let _ = config.save_to(&Self::file_path());
+            config
+        })
     }
 
-    pub fn load_from(path: &std::path::Path) -> Self {
-        match std::fs::read_to_string(path) {
-            Ok(contents) => Self::parse(&contents, path),
-            Err(_) => {
-                let config = Self::default();
-                let _ = config.save_to(path);
-                config
-            }
-        }
+    /// Load and parse config from a specific path.
+    ///
+    /// Returns [`ConfigError::ParseFailed`] if the file cannot be read or
+    /// contains invalid JSON.
+    pub fn load_from(path: &std::path::Path) -> Result<Config, ConfigError> {
+        let contents = std::fs::read_to_string(path)
+            .map_err(|e| ConfigError::ParseFailed(format!("{}: {e}", path.display())))?;
+        serde_json::from_str::<Config>(&contents)
+            .map_err(|e| ConfigError::ParseFailed(format!("{}: {e}", path.display())))
     }
 
+    /// Best-effort parse: returns defaults on invalid JSON (used by `load()`).
     pub fn parse(contents: &str, source: &std::path::Path) -> Self {
         match serde_json::from_str::<Config>(contents) {
             Ok(config) => config,
@@ -39,16 +45,20 @@ impl Config {
         }
     }
 
-    pub fn save(&self) -> Result<()> {
-        self.save_to(&Self::file_path())
+    pub fn save(&self) -> anyhow::Result<()> {
+        self.save_to(&Self::file_path())?;
+        Ok(())
     }
 
-    pub fn save_to(&self, path: &std::path::Path) -> Result<()> {
+    pub fn save_to(&self, path: &std::path::Path) -> Result<(), ConfigError> {
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+            std::fs::create_dir_all(dir)
+                .map_err(|e| ConfigError::SaveFailed(format!("{}: {e}", path.display())))?;
         }
-        let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)?;
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| ConfigError::SaveFailed(e.to_string()))?;
+        std::fs::write(path, json)
+            .map_err(|e| ConfigError::SaveFailed(format!("{}: {e}", path.display())))?;
         Ok(())
     }
 }

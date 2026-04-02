@@ -1,4 +1,5 @@
 pub mod engine;
+pub mod factory;
 #[cfg(any(feature = "onnx", feature = "mlx"))]
 pub mod mel;
 #[cfg(feature = "mlx")]
@@ -18,6 +19,7 @@ pub mod vad;
 pub mod whisper_engine;
 
 pub use engine::{AsrEngine, StreamingState, TranscriptionResult};
+pub use factory::{DefaultEngineFactory, EngineFactory};
 #[cfg(feature = "mlx")]
 pub use mlx::MlxEngine;
 pub use model::{

@@ -78,6 +78,18 @@ pub enum AppEffect {
     SetBackend(murmur_core::config::AsrBackend),
     /// Download the model if needed and rebuild the Transcriber in a background thread.
     ReloadTranscriber(u64),
+    /// Move the pending engine from AppState into the active engine slot.
+    SwapEngine,
+    /// Pre-spawn the streaming worker subprocess (Whisper only).
+    SpawnStreamingWorker,
+    /// Show an update-available notice in the tray.
+    SetTrayUpdateAvailable(String),
+    /// Set the tray status text.
+    SetTrayStatus(String),
+    /// Spawn a background thread to check for updates.
+    CheckForUpdates,
+    /// Print "Ready." to stdout (initial engine load).
+    PrintReady,
     /// Enter hotkey capture mode — the listener should capture the next key press.
     EnterHotkeyCaptureMode,
     /// Save the captured hotkey and update the listener.

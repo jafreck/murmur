@@ -1,16 +1,19 @@
-//! Wake word detection using a dedicated Whisper tiny model.
+//! Wake word detection using a dedicated ASR engine.
 //!
 //! Continuously captures audio via a dedicated cpal stream, runs VAD to
-//! detect speech, and transcribes short windows with Whisper tiny to check
-//! for the configured wake/stop phrase. This keeps CPU usage low: the
-//! neural network only runs when the VAD detects speech.
+//! detect speech, and transcribes short windows to check for the configured
+//! wake/stop phrase. This keeps CPU usage low: the neural network only runs
+//! when the VAD detects speech.
+//!
+//! The module is engine-agnostic — callers supply a factory closure that
+//! constructs the [`AsrEngine`] used for recognition.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use crate::audio::TARGET_RATE;
-use crate::transcription::transcriber::Transcriber;
+use crate::transcription::engine::AsrEngine;
 use crate::transcription::vad;
 
 /// Duration of the detection window in seconds.
@@ -77,19 +80,32 @@ impl Drop for WakeWordHandle {
 
 /// Start the wake word detector.
 ///
-/// Loads Whisper tiny (downloading if needed), opens a dedicated audio
-/// stream, and monitors for the wake/stop phrases. Sends events via `tx`.
-pub fn start_detector(
+/// Opens a dedicated audio stream and monitors for the wake/stop phrases
+/// using the engine constructed by `create_engine`. The factory runs on the
+/// detector thread so model loading does not block the caller.
+/// Sends events via `tx`.
+pub fn start_detector<F>(
     wake_phrase: String,
     stop_phrase: String,
     tx: mpsc::Sender<WakeWordEvent>,
-) -> anyhow::Result<WakeWordHandle> {
+    create_engine: F,
+) -> anyhow::Result<WakeWordHandle>
+where
+    F: FnOnce() -> anyhow::Result<Arc<dyn AsrEngine + Send + Sync>> + Send + 'static,
+{
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
     let paused = Arc::new(AtomicBool::new(false));
     let paused_clone = paused.clone();
 
     let join_handle = std::thread::spawn(move || {
-        if let Err(e) = detector_thread(wake_phrase, stop_phrase, tx, stop_rx, paused_clone) {
+        if let Err(e) = detector_thread(
+            wake_phrase,
+            stop_phrase,
+            tx,
+            stop_rx,
+            paused_clone,
+            create_engine,
+        ) {
             log::error!("Wake word detector failed: {e}");
         }
     });
@@ -101,24 +117,18 @@ pub fn start_detector(
     })
 }
 
-fn detector_thread(
+fn detector_thread<F>(
     wake_phrase: String,
     stop_phrase: String,
     tx: mpsc::Sender<WakeWordEvent>,
     stop_rx: mpsc::Receiver<()>,
     paused: Arc<AtomicBool>,
-) -> anyhow::Result<()> {
-    // Ensure the tiny model is available
-    let model_size = "tiny.en";
-    if !crate::transcription::model_discovery::model_exists(model_size) {
-        log::info!("Downloading {model_size} model for wake word detection...");
-        crate::transcription::model::download(model_size, |_| {})?;
-    }
-
-    let model_path = crate::transcription::model_discovery::find_model(model_size)
-        .ok_or_else(|| anyhow::anyhow!("Wake word model '{model_size}' not found"))?;
-
-    let transcriber = Transcriber::new(&model_path, "en")?;
+    create_engine: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce() -> anyhow::Result<Arc<dyn AsrEngine + Send + Sync>>,
+{
+    let engine = create_engine()?;
     log::info!("Wake word detector ready (phrase: \"{wake_phrase}\")");
 
     // Audio capture ring buffer shared with the cpal callback
@@ -193,8 +203,9 @@ fn detector_thread(
         }
 
         // Transcribe the window
-        match transcriber.transcribe_samples(&samples, false) {
-            Ok(text) => {
+        match engine.transcribe(&samples, false) {
+            Ok(result) => {
+                let text = result.text;
                 let text_lower = text.to_lowercase();
                 log::debug!("Wake word heard: \"{text}\"");
 

@@ -18,7 +18,7 @@ use crate::transcription::streaming;
 use crate::ui::overlay::OverlayHandle;
 use crate::ui::tray::{TrayController, TrayState};
 use murmur_core::input::wake_word::WakeWordHandle;
-use murmur_core::transcription::AsrEngine;
+use murmur_core::transcription::{AsrEngine, EngineFactory};
 
 use super::{AppEffect, AppMessage, AppState};
 
@@ -77,6 +77,7 @@ pub(crate) fn check_streaming_readiness(
 pub struct EffectContext<'a> {
     pub recorder: &'a mut AudioRecorder,
     pub engine: &'a mut Option<Arc<dyn AsrEngine + Send + Sync>>,
+    pub engine_factory: &'a Arc<dyn EngineFactory>,
     pub tray: &'a mut TrayController,
     pub config: &'a mut Config,
     pub state: &'a mut AppState,
@@ -186,6 +187,61 @@ pub fn apply_effect(
             *ctx.engine = None;
             ctx.tray.set_state(TrayState::Loading);
             engine::reload_transcriber(ctx, generation);
+        }
+        AppEffect::SwapEngine => {
+            if let Some(e) = ctx.state.pending_engine.take() {
+                *ctx.engine = Some(e);
+                info!("ASR engine ready");
+            }
+        }
+        AppEffect::SpawnStreamingWorker => {
+            if matches!(
+                ctx.config.asr_backend,
+                murmur_core::config::AsrBackend::Whisper
+            ) {
+                if let Some(model_path) =
+                    murmur_core::transcription::find_model(&ctx.config.model_size)
+                {
+                    match murmur_core::transcription::SubprocessTranscriber::new(
+                        &model_path,
+                        &ctx.config.language,
+                    ) {
+                        Ok(w) => {
+                            *ctx.streaming_worker = Some(w);
+                            info!("Whisper worker subprocess ready");
+                        }
+                        Err(e) => {
+                            error!("Failed to spawn whisper worker: {e}");
+                        }
+                    }
+                }
+            }
+        }
+        AppEffect::SetTrayUpdateAvailable(version) => {
+            ctx.tray.set_update_available(&version);
+        }
+        AppEffect::SetTrayStatus(msg) => {
+            ctx.tray.set_status(&msg);
+        }
+        AppEffect::CheckForUpdates => {
+            let tx = ctx.tx.clone();
+            std::thread::spawn(move || {
+                match murmur_core::update::check_for_update(crate::VERSION) {
+                    Ok(Some(info)) => {
+                        let _ = tx.send(AppMessage::UpdateAvailable(info));
+                    }
+                    Ok(None) => {
+                        info!("Already up to date (v{})", crate::VERSION);
+                    }
+                    Err(e) => {
+                        error!("Update check failed: {e}");
+                        let _ = tx.send(AppMessage::UpdateError(format!("{e}")));
+                    }
+                }
+            });
+        }
+        AppEffect::PrintReady => {
+            println!("Ready.");
         }
         AppEffect::EnterHotkeyCaptureMode => {
             ctx.capture_flag

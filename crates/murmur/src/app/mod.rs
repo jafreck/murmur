@@ -23,7 +23,7 @@ use crate::input::keycodes;
 use crate::platform::permissions;
 use crate::ui::tray::{TrayAction, TrayController};
 use crate::VERSION;
-use murmur_core::transcription::AsrEngine;
+use murmur_core::transcription::{AsrEngine, DefaultEngineFactory, EngineFactory};
 
 use tray_icon::menu::MenuEvent;
 use tray_icon::TrayIconEvent;
@@ -182,6 +182,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
 
     // Load the model on a background thread so the tray appears immediately.
     let mut engine: Option<Arc<dyn AsrEngine + Send + Sync>> = None;
+    let engine_factory: Arc<dyn EngineFactory> = Arc::new(DefaultEngineFactory::new());
     let mut streaming_worker: Option<murmur_core::transcription::SubprocessTranscriber> = None;
     {
         let backend = config.asr_backend;
@@ -189,6 +190,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
         let language = config.language.clone();
         let quantization = config.asr_quantization;
         let tx_load = tx.clone();
+        let factory = Arc::clone(&engine_factory);
 
         // Warn about streaming limitations for non-Whisper backends
         if config.streaming && !matches!(backend, murmur_core::config::AsrBackend::Whisper) {
@@ -199,7 +201,13 @@ pub fn run(notes_mode: bool) -> Result<()> {
         }
 
         std::thread::spawn(move || {
-            match effects::create_engine_on_thread(backend, &model_size, &language, quantization) {
+            match effects::create_engine_on_thread(
+                &*factory,
+                backend,
+                &model_size,
+                &language,
+                quantization,
+            ) {
                 Ok(e) => {
                     info!("{backend} model '{model_size}' loaded");
                     let _ = tx_load.send(AppMessage::EngineReady(Arc::from(e), 0));
@@ -304,132 +312,18 @@ pub fn run(notes_mode: bool) -> Result<()> {
         // Block on the message channel instead of busy-polling.
         // `recv_timeout` wakes immediately when a message arrives, or after
         // `tick_ms` so we can still pump UI events and check timeouts.
-        match rx.recv_timeout(std::time::Duration::from_millis(tick_ms)) {
-            Ok(msg) => {
-                // Process this message, then drain any remaining pending messages.
-                let _ = tx.send(msg); // re-enqueue so the drain loop below handles it
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        let first_msg = match rx.recv_timeout(std::time::Duration::from_millis(tick_ms)) {
+            Ok(msg) => Some(msg),
+            Err(mpsc::RecvTimeoutError::Timeout) => None,
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
+        };
 
-        while let Ok(msg) = rx.try_recv() {
-            // EngineReady carries an Arc that must be moved out,
-            // so handle it directly instead of going through the state machine.
-            if let AppMessage::EngineReady(new_engine, generation) = msg {
-                if generation == state.reload_generation {
-                    // Pre-spawn the whisper worker subprocess so streaming
-                    // starts instantly without model-loading delay.
-                    // Only applicable for the Whisper backend.
-                    if matches!(config.asr_backend, murmur_core::config::AsrBackend::Whisper) {
-                        if let Some(model_path) =
-                            murmur_core::transcription::find_model(&config.model_size)
-                        {
-                            match murmur_core::transcription::SubprocessTranscriber::new(
-                                &model_path,
-                                &config.language,
-                            ) {
-                                Ok(w) => {
-                                    streaming_worker = Some(w);
-                                    info!("Whisper worker subprocess ready");
-                                }
-                                Err(e) => {
-                                    error!("Failed to spawn whisper worker: {e}");
-                                }
-                            }
-                        }
-                    }
-                    engine = Some(new_engine);
-                    tray.set_state(crate::ui::tray::TrayState::Idle);
-                    info!("ASR engine ready");
-                    if generation == 0 {
-                        println!("Ready.");
-                        // Start wake word detector now that the main model is loaded
-                        if config.is_notes_mode() && wake_word.is_none() {
-                            let wake_phrase = config.wake_word.clone();
-                            let stop_phrase = config.stop_phrase.clone();
-                            let ww_tx = tx.clone();
-                            let (event_tx, event_rx) = mpsc::channel();
-                            std::thread::spawn(move || {
-                                use murmur_core::input::wake_word::WakeWordEvent;
-                                while let Ok(event) = event_rx.recv() {
-                                    let msg = match event {
-                                        WakeWordEvent::WakeWordDetected => {
-                                            AppMessage::WakeWordDetected
-                                        }
-                                        WakeWordEvent::StopPhraseDetected => {
-                                            AppMessage::StopPhraseDetected
-                                        }
-                                    };
-                                    if ww_tx.send(msg).is_err() {
-                                        break;
-                                    }
-                                }
-                            });
-                            match murmur_core::input::wake_word::start_detector(
-                                wake_phrase,
-                                stop_phrase,
-                                event_tx,
-                            ) {
-                                Ok(handle) => {
-                                    info!("Wake word detector started");
-                                    wake_word = Some(handle);
-                                }
-                                Err(e) => {
-                                    error!("Failed to start wake word detector: {e}");
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    info!(
-                        "Discarding stale engine reload (gen {generation}, current {})",
-                        state.reload_generation
-                    );
-                }
-                continue;
-            }
-            // Handle update messages directly (they carry owned data or
-            // trigger side-effects that the pure state machine can't do).
-            match msg {
-                AppMessage::UpdateAvailable(info) => {
-                    info!(
-                        "Update available: v{} → v{}",
-                        info.current_version, info.latest_version
-                    );
-                    tray.set_update_available(&info.latest_version);
-                    continue;
-                }
-                AppMessage::UpdateApplied(version) => {
-                    info!("Update applied: v{version}. Restart to use new version.");
-                    tray.set_status(&format!("Updated to v{version} — restart to apply"));
-                    continue;
-                }
-                AppMessage::UpdateError(e) => {
-                    error!("Update error: {e}");
-                    continue;
-                }
-                AppMessage::TrayCheckForUpdates => {
-                    let tx_update = tx.clone();
-                    std::thread::spawn(move || {
-                        match murmur_core::update::check_for_update(crate::VERSION) {
-                            Ok(Some(info)) => {
-                                let _ = tx_update.send(AppMessage::UpdateAvailable(info));
-                            }
-                            Ok(None) => {
-                                info!("Already up to date (v{})", crate::VERSION);
-                            }
-                            Err(e) => {
-                                error!("Update check failed: {e}");
-                                let _ = tx_update.send(AppMessage::UpdateError(format!("{e}")));
-                            }
-                        }
-                    });
-                    continue;
-                }
-                _ => {}
-            }
-            let mut effects = VecDeque::from(state.handle_message(&msg));
+        let msgs = first_msg
+            .into_iter()
+            .chain(std::iter::from_fn(|| rx.try_recv().ok()));
+
+        for msg in msgs {
+            let mut effects = VecDeque::from(state.handle_message(msg));
             while let Some(effect) = effects.pop_front() {
                 // Keep the tray animation smooth between potentially-blocking
                 // effects (e.g. typing, clipboard, worker respawn).
@@ -440,6 +334,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
                     &mut EffectContext {
                         recorder: &mut recorder,
                         engine: &mut engine,
+                        engine_factory: &engine_factory,
                         tray: &mut tray,
                         config: &mut config,
                         state: &mut state,
@@ -488,6 +383,7 @@ pub fn run(notes_mode: bool) -> Result<()> {
                 &mut EffectContext {
                     recorder: &mut recorder,
                     engine: &mut engine,
+                    engine_factory: &engine_factory,
                     tray: &mut tray,
                     config: &mut config,
                     state: &mut state,

@@ -110,12 +110,12 @@ fn detector_thread(
 ) -> anyhow::Result<()> {
     // Ensure the tiny model is available
     let model_size = "tiny.en";
-    if !crate::transcription::transcriber::model_exists(model_size) {
+    if !crate::transcription::model_discovery::model_exists(model_size) {
         log::info!("Downloading {model_size} model for wake word detection...");
         crate::transcription::model::download(model_size, |_| {})?;
     }
 
-    let model_path = crate::transcription::transcriber::find_model(model_size)
+    let model_path = crate::transcription::model_discovery::find_model(model_size)
         .ok_or_else(|| anyhow::anyhow!("Wake word model '{model_size}' not found"))?;
 
     let transcriber = Transcriber::new(&model_path, "en")?;

@@ -1,7 +1,7 @@
 use murmur::app;
 use murmur::config;
 use murmur::input::keycodes;
-use murmur::transcription::{model, transcriber};
+use murmur::transcription::{model, model_discovery};
 use murmur::VERSION;
 use murmur_core::config::AsrBackend;
 
@@ -172,7 +172,7 @@ fn cmd_set_model(size: &str) -> Result<()> {
     cfg.save()?;
 
     println!("Model set to: {size}");
-    if !transcriber::model_exists(size) {
+    if !model_discovery::model_exists(size) {
         println!("Model will be downloaded on next start.");
     }
     Ok(())
@@ -309,7 +309,7 @@ fn cmd_update(check_only: bool) -> Result<()> {
 
 fn cmd_status() -> Result<()> {
     let cfg = config::Config::load();
-    let model_ready = transcriber::model_exists(&cfg.model_size);
+    let model_ready = model_discovery::model_exists(&cfg.model_size);
     println!("{}", format_status(&cfg, model_ready));
     Ok(())
 }

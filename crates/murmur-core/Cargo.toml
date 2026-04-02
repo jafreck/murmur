@@ -7,7 +7,7 @@ repository.workspace = true
 description = "Core transcription engine for murmur — audio capture, Whisper transcription, VAD, and context abstractions."
 
 [dependencies]
-whisper-rs = "0.16"
+whisper-rs = { version = "0.16", optional = true }
 cpal = "0.17"
 hound = "3.5"
 arboard = "3"
@@ -23,7 +23,7 @@ log = "0.4"
 nnnoiseless = "0.5"
 env_logger = "0.11"
 ort = { version = "2.0.0-rc.10", optional = true }
-ndarray = { version = "0.17", optional = true, default-features = false, features = ["std"] }
+ndarray = { version = "0.16", optional = true, default-features = false, features = ["std"] }
 tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
 half = { version = "2", optional = true }
 realfft = { version = "3", optional = true }
@@ -32,14 +32,16 @@ mlx-rs = { version = "0.25", optional = true }
 [[bin]]
 name = "murmur-whisper-worker"
 path = "src/bin/whisper_worker.rs"
+required-features = ["whisper"]
 
 [features]
-default = []
+default = ["onnx"]
+whisper = ["dep:whisper-rs"]
 onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:half", "dep:realfft"]
 mlx = ["dep:mlx-rs", "dep:tokenizers", "dep:half", "dep:realfft"]
-cuda = ["whisper-rs/cuda"]
-metal = ["whisper-rs/metal"]
-vulkan = ["whisper-rs/vulkan"]
+cuda = ["whisper", "whisper-rs/cuda"]
+metal = ["whisper", "whisper-rs/metal"]
+vulkan = ["whisper", "whisper-rs/vulkan"]
 
 [dev-dependencies]
 tempfile = "3"

@@ -6,7 +6,7 @@ license.workspace = true
 description = "Tauri-based meeting copilot with live streaming transcription overlay."
 
 [dependencies]
-murmur-core = { version = "0.1.3", path = "../../murmur-core" }
+murmur-core = { version = "0.1.3", path = "../../murmur-core", features = ["whisper"] }
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tokio = { version = "1", features = ["rt"] }
 serde = { version = "1", features = ["derive"] }

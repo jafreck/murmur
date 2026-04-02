@@ -23,8 +23,8 @@ log = "0.4"
 env_logger = "0.11"
 png = "0.18.1"
 dirs = "6"
-eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
-egui = "0.33"
+eframe = { version = "0.34", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+egui = "0.34"
 chrono = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -36,12 +36,13 @@ objc2 = "0.6"
 libappindicator = "0.9"
 
 [features]
-default = []
+default = ["onnx"]
+whisper = ["murmur-core/whisper"]
 onnx = ["murmur-core/onnx"]
 mlx = ["murmur-core/mlx"]
-cuda = ["murmur-core/cuda"]
-metal = ["murmur-core/metal"]
-vulkan = ["murmur-core/vulkan"]
+cuda = ["whisper", "murmur-core/cuda"]
+metal = ["whisper", "murmur-core/metal"]
+vulkan = ["whisper", "murmur-core/vulkan"]
 
 [dev-dependencies]
 tempfile = "3"

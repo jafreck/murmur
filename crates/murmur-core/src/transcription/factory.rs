@@ -29,15 +29,23 @@ impl DefaultEngineFactory {
         &self,
         backend: AsrBackend,
         model: &str,
-        language: &str,
+        #[allow(unused_variables)] language: &str,
         #[allow(unused_variables)] quantization: AsrQuantization,
     ) -> Result<Box<dyn AsrEngine + Send + Sync>> {
         match backend {
+            #[cfg(feature = "whisper")]
             AsrBackend::Whisper => {
                 let model_path = super::model_discovery::find_model(model)
                     .ok_or_else(|| anyhow::anyhow!("Model not found: {model}"))?;
                 let engine = super::whisper_engine::WhisperEngine::new(&model_path, language)?;
                 Ok(Box::new(engine))
+            }
+            #[cfg(not(feature = "whisper"))]
+            AsrBackend::Whisper => {
+                anyhow::bail!(
+                    "Whisper backend requires the 'whisper' feature. \
+                     Rebuild with: cargo build --features whisper"
+                );
             }
             #[cfg(feature = "onnx")]
             AsrBackend::Qwen3Asr => {
@@ -110,6 +118,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "whisper")]
     #[test]
     fn default_factory_create_engine_fails_for_missing_model() {
         let factory = DefaultEngineFactory::new();

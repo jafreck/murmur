@@ -81,7 +81,8 @@ impl TrayController {
             if !used_cache {
                 let icon = match &state {
                     TrayState::Idle => &self.idle_icon,
-                    TrayState::Recording | TrayState::Error => &self.recording_icon,
+                    TrayState::Recording => &self.recording_icon,
+                    TrayState::Error => &self.idle_icon,
                     TrayState::Transcribing => &self.transcribing_icon,
                     TrayState::Loading => &self.loading_icon,
                 };

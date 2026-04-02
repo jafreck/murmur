@@ -14,8 +14,10 @@ pub mod prompt;
 pub mod qwen_engine;
 pub mod streaming;
 pub mod subprocess;
+#[cfg(feature = "whisper")]
 pub mod transcriber;
 pub mod vad;
+#[cfg(feature = "whisper")]
 pub mod whisper_engine;
 
 pub use engine::{AsrEngine, StreamingState, TranscriptionResult};
@@ -30,12 +32,14 @@ pub use model_discovery::{find_model, model_exists, read_wav_samples};
 #[cfg(feature = "onnx")]
 pub use parakeet_engine::ParakeetEngine;
 pub use postprocess::process;
-pub use prompt::{
-    build_initial_prompt, filter_novel_terms, rank_vocabulary, RankedTerm, TranscriptionContext,
-};
+#[cfg(feature = "whisper")]
+pub use prompt::rank_vocabulary;
+pub use prompt::{build_initial_prompt, filter_novel_terms, RankedTerm, TranscriptionContext};
 #[cfg(feature = "onnx")]
 pub use qwen_engine::QwenEngine;
 pub use streaming::{start_native_streaming, start_streaming, StreamingEvent};
 pub use subprocess::SubprocessTranscriber;
+#[cfg(feature = "whisper")]
 pub use transcriber::Transcriber;
+#[cfg(feature = "whisper")]
 pub use whisper_engine::WhisperEngine;

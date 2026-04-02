@@ -139,7 +139,8 @@ impl NativeIconCache {
     pub fn set_icon_for_state(&self, state: &TrayState) {
         let image = match state {
             TrayState::Idle => &self.idle,
-            TrayState::Recording | TrayState::Error => &self.recording,
+            TrayState::Recording => &self.recording,
+            TrayState::Error => &self.idle,
             TrayState::Transcribing => &self.transcribing,
             TrayState::Loading => &self.loading,
         };

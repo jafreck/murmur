@@ -88,8 +88,14 @@ impl QwenEngine {
             std::fs::read_to_string(&config_path).context("Failed to read config.json")?;
         let cj: serde_json::Value = serde_json::from_str(&config_str)?;
 
-        let hidden_size = cj["hidden_size"].as_u64().unwrap_or(1024) as usize;
-        let vocab_size = cj["vocab_size"].as_u64().unwrap_or(151936) as usize;
+        let hidden_size = cj["decoder"]["hidden_size"]
+            .as_u64()
+            .or_else(|| cj["hidden_size"].as_u64())
+            .unwrap_or(1024) as usize;
+        let vocab_size = cj["decoder"]["vocab_size"]
+            .as_u64()
+            .or_else(|| cj["vocab_size"].as_u64())
+            .unwrap_or(151936) as usize;
 
         // eos_token_id may be a scalar or an array in config.json.
         // Both 151643 (<|endoftext|>) and 151645 (<|im_end|>) are EOS.

@@ -143,7 +143,10 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
             dest_path.display()
         );
         if let Err(e) = std::fs::remove_file(&dest_path) {
-            log::warn!("Failed to remove invalid model file {}: {e}", dest_path.display());
+            log::warn!(
+                "Failed to remove invalid model file {}: {e}",
+                dest_path.display()
+            );
         }
     }
 
@@ -189,7 +192,10 @@ pub fn download(model_size: &str, on_progress: impl Fn(f64)) -> Result<PathBuf> 
     // Validate before promoting to the final path
     if !is_valid_ggml_file(&part_path) {
         if let Err(e) = std::fs::remove_file(&part_path) {
-            log::warn!("Failed to clean up partial download {}: {e}", part_path.display());
+            log::warn!(
+                "Failed to clean up partial download {}: {e}",
+                part_path.display()
+            );
         }
         anyhow::bail!(
             "Downloaded file is not a valid GGML model. \

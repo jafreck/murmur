@@ -8,10 +8,10 @@
 mod helpers;
 
 use murmur::app::{AppEffect, AppMessage, AppState};
+use murmur::ui::tray::TrayState;
 use murmur_core::config::{Config, InputMode};
 use murmur_core::transcription::model;
 use murmur_core::transcription::streaming;
-use murmur::ui::tray::TrayState;
 
 // ── Test Harness ────────────────────────────────────────────────────────
 

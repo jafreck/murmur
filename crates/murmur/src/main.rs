@@ -1,9 +1,9 @@
 use murmur::app;
 use murmur::config;
 use murmur::input::keycodes;
-use murmur_core::transcription::{model, model_discovery};
 use murmur::VERSION;
 use murmur_core::config::AsrBackend;
+use murmur_core::transcription::{model, model_discovery};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

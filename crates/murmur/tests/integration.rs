@@ -5,8 +5,8 @@
 //! (microphone, display, model files).
 
 use murmur::app::{AppEffect, AppMessage, AppState};
-use murmur_core::config::{Config, InputMode};
 use murmur::ui::tray::TrayState;
+use murmur_core::config::{Config, InputMode};
 
 // ── Test Harness ──────────────────────────────────────────────────────
 

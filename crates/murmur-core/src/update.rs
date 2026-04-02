@@ -176,7 +176,10 @@ pub fn apply_update(info: &UpdateInfo, progress: impl Fn(&str)) -> Result<()> {
 
     // Clean up
     if let Err(e) = fs::remove_dir_all(&tmp_dir) {
-        log::warn!("Failed to clean up temp directory {}: {e}", tmp_dir.display());
+        log::warn!(
+            "Failed to clean up temp directory {}: {e}",
+            tmp_dir.display()
+        );
     }
 
     info!(

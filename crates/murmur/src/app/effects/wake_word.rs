@@ -1,9 +1,13 @@
 use log::{error, info};
+#[cfg(feature = "whisper")]
 use std::sync::mpsc;
+#[cfg(feature = "whisper")]
 use std::sync::Arc;
 
 use super::EffectContext;
+#[cfg(feature = "whisper")]
 use crate::app::AppMessage;
+#[cfg(feature = "whisper")]
 use murmur_core::transcription::AsrEngine;
 
 // ---------------------------------------------------------------------------
@@ -13,6 +17,7 @@ use murmur_core::transcription::AsrEngine;
 /// Create the ASR engine used for wake word detection (Whisper tiny).
 ///
 /// Downloads the model if it is not already present on disk.
+#[cfg(feature = "whisper")]
 pub(in crate::app) fn create_wake_word_engine() -> anyhow::Result<Arc<dyn AsrEngine + Send + Sync>>
 {
     let model_size = "tiny.en";
@@ -27,43 +32,52 @@ pub(in crate::app) fn create_wake_word_engine() -> anyhow::Result<Arc<dyn AsrEng
 }
 
 pub(super) fn start(ctx: &mut EffectContext<'_>) {
-    // Stop existing detector if running
-    if let Some(ww) = ctx.wake_word.take() {
-        ww.stop();
+    #[cfg(not(feature = "whisper"))]
+    {
+        let _ = ctx;
+        error!("Wake word detection requires the 'whisper' feature");
     }
 
-    let wake_phrase = ctx.config.wake_word.clone();
-    let stop_phrase = ctx.config.stop_phrase.clone();
-    let tx = ctx.tx.clone();
+    #[cfg(feature = "whisper")]
+    {
+        // Stop existing detector if running
+        if let Some(ww) = ctx.wake_word.take() {
+            ww.stop();
+        }
 
-    let (event_tx, event_rx) = mpsc::channel();
+        let wake_phrase = ctx.config.wake_word.clone();
+        let stop_phrase = ctx.config.stop_phrase.clone();
+        let tx = ctx.tx.clone();
 
-    // Forward wake word events to app messages
-    std::thread::spawn(move || {
-        use murmur_core::input::wake_word::WakeWordEvent;
-        while let Ok(event) = event_rx.recv() {
-            let msg = match event {
-                WakeWordEvent::WakeWordDetected => AppMessage::WakeWordDetected,
-                WakeWordEvent::StopPhraseDetected => AppMessage::StopPhraseDetected,
-            };
-            if tx.send(msg).is_err() {
-                break;
+        let (event_tx, event_rx) = mpsc::channel();
+
+        // Forward wake word events to app messages
+        std::thread::spawn(move || {
+            use murmur_core::input::wake_word::WakeWordEvent;
+            while let Ok(event) = event_rx.recv() {
+                let msg = match event {
+                    WakeWordEvent::WakeWordDetected => AppMessage::WakeWordDetected,
+                    WakeWordEvent::StopPhraseDetected => AppMessage::StopPhraseDetected,
+                };
+                if tx.send(msg).is_err() {
+                    break;
+                }
             }
-        }
-    });
+        });
 
-    match murmur_core::input::wake_word::start_detector(
-        wake_phrase,
-        stop_phrase,
-        event_tx,
-        create_wake_word_engine,
-    ) {
-        Ok(handle) => {
-            info!("Wake word detector started");
-            *ctx.wake_word = Some(handle);
-        }
-        Err(e) => {
-            error!("Failed to start wake word detector: {e}");
+        match murmur_core::input::wake_word::start_detector(
+            wake_phrase,
+            stop_phrase,
+            event_tx,
+            create_wake_word_engine,
+        ) {
+            Ok(handle) => {
+                info!("Wake word detector started");
+                *ctx.wake_word = Some(handle);
+            }
+            Err(e) => {
+                error!("Failed to start wake word detector: {e}");
+            }
         }
     }
 }

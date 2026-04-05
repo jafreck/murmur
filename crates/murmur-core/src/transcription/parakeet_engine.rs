@@ -1,7 +1,5 @@
 //! Parakeet-TDT backend implementing [`AsrEngine`] via ONNX Runtime.
 
-#![cfg(feature = "onnx")]
-
 use super::engine::{AsrEngine, StreamingState, TranscriptionResult};
 use anyhow::{Context, Result};
 use ort::session::Session;

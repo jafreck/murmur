@@ -33,7 +33,8 @@ pub enum IconKey {
 pub fn state_icon_key(state: &TrayState) -> IconKey {
     match state {
         TrayState::Idle => IconKey::Idle,
-        TrayState::Recording | TrayState::Error => IconKey::Recording,
+        TrayState::Recording => IconKey::Recording,
+        TrayState::Error => IconKey::Idle,
         TrayState::Transcribing => IconKey::Transcribing,
         TrayState::Loading => IconKey::Loading,
     }

@@ -165,9 +165,9 @@ fn cmd_get_hotkey() -> Result<()> {
 }
 
 fn cmd_set_model(size: &str) -> Result<()> {
-    validate_model(size)?;
-
     let mut cfg = config::Config::load();
+    validate_model_for_backend(size, cfg.asr_backend)?;
+
     cfg.model_size = size.to_string();
     cfg.save()?;
 
@@ -318,6 +318,10 @@ fn cmd_status() -> Result<()> {
 mod tests {
     use super::*;
 
+    /// Tests that read/write the shared config file must hold this lock to
+    /// prevent TOCTOU races (the config is a single JSON file on disk).
+    static CONFIG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_version_is_set() {
         assert!(!VERSION.is_empty());
@@ -412,12 +416,13 @@ mod tests {
 
     #[test]
     fn test_cmd_get_hotkey() {
-        // This reads from real config but doesn't modify it
+        let _guard = CONFIG_MUTEX.lock().unwrap();
         assert!(cmd_get_hotkey().is_ok());
     }
 
     #[test]
     fn test_cmd_set_hotkey_valid() {
+        let _guard = CONFIG_MUTEX.lock().unwrap();
         // Save current config
         let original = config::Config::load();
         // Set a known valid hotkey
@@ -440,6 +445,7 @@ mod tests {
 
     #[test]
     fn test_cmd_set_model_valid() {
+        let _guard = CONFIG_MUTEX.lock().unwrap();
         let original = config::Config::load();
         // Ensure Whisper backend so "base.en" is valid
         let mut tmp = original.clone();
@@ -452,6 +458,7 @@ mod tests {
 
     #[test]
     fn test_cmd_set_model_prints_download_hint() {
+        let _guard = CONFIG_MUTEX.lock().unwrap();
         let original = config::Config::load();
         let mut tmp = original.clone();
         tmp.asr_backend = AsrBackend::Whisper;
@@ -463,11 +470,13 @@ mod tests {
 
     #[test]
     fn test_cmd_set_model_invalid() {
+        let _guard = CONFIG_MUTEX.lock().unwrap();
         assert!(cmd_set_model("nonexistent_model").is_err());
     }
 
     #[test]
     fn test_cmd_set_language_valid() {
+        let _guard = CONFIG_MUTEX.lock().unwrap();
         let original = config::Config::load();
         assert!(cmd_set_language("en").is_ok());
         let _ = original.save();
@@ -480,6 +489,7 @@ mod tests {
 
     #[test]
     fn test_cmd_status() {
+        let _guard = CONFIG_MUTEX.lock().unwrap();
         assert!(cmd_status().is_ok());
     }
 }

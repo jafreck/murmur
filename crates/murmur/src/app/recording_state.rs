@@ -199,12 +199,11 @@ impl AppState {
     }
 
     pub(super) fn on_transcription_error(&mut self, error: &str) -> Vec<AppEffect> {
-        // Only reset state if not currently recording — the error may be
-        // from a previous cycle's transcription thread.
         let mut effects = vec![AppEffect::LogError(error.to_string())];
         if !self.is_pressed {
             self.streaming_active = false;
             effects.push(AppEffect::SetTrayState(TrayState::Error));
+            effects.push(AppEffect::SetTrayStatus(error.to_string()));
         }
         effects
     }

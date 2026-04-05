@@ -28,8 +28,9 @@ pub struct QwenEngine {
     encoder: Mutex<Session>,
     decoder_init: Mutex<Session>,
     decoder_step: Mutex<Session>,
-    /// Flattened `[vocab_size, hidden_size]` embedding table (FP16 → FP32).
-    embed_tokens: Vec<f32>,
+    /// Raw FP16 embedding table, kept compact to save ~600MB on the 1.7b model.
+    /// Converted to FP32 on-the-fly during single-token lookups.
+    embed_tokens_fp16: Vec<u8>,
     config: QwenModelConfig,
     tokenizer: tokenizers::Tokenizer,
     /// Token IDs before the `<|audio_pad|>` block.
@@ -132,9 +133,9 @@ impl QwenEngine {
             .commit_from_file(&decoder_step_path)
             .context("Failed to load decoder_step ONNX")?;
 
-        // -- Embeddings (FP16 → FP32) -----------------------------------------
-        let embed_bytes = std::fs::read(&embed_path).context("Failed to read embed_tokens.bin")?;
-        let embed_tokens = load_fp16_to_f32(&embed_bytes);
+        // -- Embeddings (kept as FP16 to save memory) ----------------------------
+        let embed_tokens_fp16 =
+            std::fs::read(&embed_path).context("Failed to read embed_tokens.bin")?;
 
         // -- Tokenizer --------------------------------------------------------
         let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
@@ -160,7 +161,7 @@ impl QwenEngine {
             encoder: Mutex::new(encoder),
             decoder_init: Mutex::new(decoder_init),
             decoder_step: Mutex::new(decoder_step),
-            embed_tokens,
+            embed_tokens_fp16,
             config,
             tokenizer,
             prefix_tokens,
@@ -256,7 +257,7 @@ impl QwenEngine {
         ndarray::ArrayD<f32>,
     )> {
         let hs = self.config.hidden_size;
-        let embed = lookup_embedding(&self.embed_tokens, token_id, hs);
+        let embed = lookup_embedding_fp16(&self.embed_tokens_fp16, token_id, hs);
 
         let embed_tensor = ndarray::Array3::from_shape_vec((1, 1, hs), embed)?;
         let pos_tensor = ndarray::Array2::from_elem((1, 1), position as i64);
@@ -407,12 +408,20 @@ fn argmax(logits: &[f32]) -> u32 {
         .unwrap_or(0)
 }
 
-/// Look up a single token's embedding from the flattened table.
-fn lookup_embedding(embed_tokens: &[f32], token_id: u32, hidden_size: usize) -> Vec<f32> {
-    let start = token_id as usize * hidden_size;
-    let end = start + hidden_size;
-    if end <= embed_tokens.len() {
-        embed_tokens[start..end].to_vec()
+/// Look up a single token's embedding from the FP16 table, converting to FP32.
+///
+/// Each token occupies `hidden_size * 2` bytes (FP16). Only the requested
+/// token's slice is converted, keeping the full table compact in memory.
+fn lookup_embedding_fp16(fp16_bytes: &[u8], token_id: u32, hidden_size: usize) -> Vec<f32> {
+    use half::f16;
+    let bytes_per_token = hidden_size * 2;
+    let start = token_id as usize * bytes_per_token;
+    let end = start + bytes_per_token;
+    if end <= fp16_bytes.len() {
+        fp16_bytes[start..end]
+            .chunks_exact(2)
+            .map(|c| f16::from_bits(u16::from_le_bytes([c[0], c[1]])).to_f32())
+            .collect()
     } else {
         vec![0.0; hidden_size]
     }
@@ -477,16 +486,4 @@ fn num_inference_threads() -> usize {
         .map(|n| n.get())
         .unwrap_or(4);
     (cpus / 2).max(1)
-}
-
-/// Load FP16 binary data into an f32 vec.
-fn load_fp16_to_f32(bytes: &[u8]) -> Vec<f32> {
-    use half::f16;
-    bytes
-        .chunks_exact(2)
-        .map(|chunk| {
-            let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
-            f16::from_bits(bits).to_f32()
-        })
-        .collect()
 }

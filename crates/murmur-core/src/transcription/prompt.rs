@@ -1,3 +1,4 @@
+#[cfg(feature = "whisper")]
 use whisper_rs::WhisperContext;
 
 /// Optional context to improve transcription accuracy via Whisper's initial_prompt.
@@ -15,6 +16,7 @@ pub struct TranscriptionContext {
 const MAX_PROMPT_CHARS: usize = 500;
 
 /// Maximum tokens to allocate when tokenizing a single term for ranking.
+#[cfg(feature = "whisper")]
 const MAX_TOKENS_PER_TERM: usize = 32;
 
 /// Terms producing fewer BPE tokens than this are considered "known" to Whisper
@@ -38,6 +40,7 @@ pub struct RankedTerm {
 ///
 /// Returns terms sorted by token count descending (most novel first).
 /// Terms that fail to tokenize are kept and treated as maximally novel.
+#[cfg(feature = "whisper")]
 pub fn rank_vocabulary(ctx: &WhisperContext, terms: &[String]) -> Vec<RankedTerm> {
     let mut ranked: Vec<RankedTerm> = terms
         .iter()

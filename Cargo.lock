@@ -3742,7 +3742,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tray-icon",
+ "tray-icon 0.22.0",
 ]
 
 [[package]]
@@ -6530,7 +6530,7 @@ dependencies = [
  "tauri-utils",
  "thiserror 2.0.18",
  "tokio",
- "tray-icon",
+ "tray-icon 0.21.3",
  "url",
  "webkit2gtk",
  "webview2-com",
@@ -7128,6 +7128,27 @@ dependencies = [
  "once_cell",
  "png 0.17.16",
  "serde",
+ "thiserror 2.0.18",
+ "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "tray-icon"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93e1484378c343c5a9b291188fa58917c7184967683f8cfe4a05461986970553"
+dependencies = [
+ "crossbeam-channel",
+ "dirs",
+ "libappindicator",
+ "muda",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation 0.3.2",
+ "once_cell",
+ "png 0.18.1",
  "thiserror 2.0.18",
  "windows-sys 0.60.2",
 ]

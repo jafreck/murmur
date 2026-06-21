@@ -8,6 +8,12 @@ declare global {
       core: {
         invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
       };
+      event: {
+        listen: (
+          event: string,
+          handler: (event: { payload: unknown }) => void
+        ) => Promise<() => void>;
+      };
     };
   }
 }

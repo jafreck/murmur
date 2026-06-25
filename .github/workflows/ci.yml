@@ -17,7 +17,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Pin to 1.91 until winit 0.30 is compatible with Rust 1.92+
       # (https://github.com/rust-windowing/winit/issues/4486)
@@ -55,7 +55,7 @@ jobs:
     name: Validate GitHub Pages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Check docs/index.html exists
         run: test -f docs/index.html
